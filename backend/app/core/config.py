@@ -1,0 +1,1 @@
+"""Pydantic Settings configuration boundary."""

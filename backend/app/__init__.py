@@ -1,0 +1,1 @@
+"""KrishiSathi backend application package."""

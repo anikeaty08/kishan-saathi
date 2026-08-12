@@ -1,1 +1,19 @@
-# Local PostgreSQL and backend development services will be defined here.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: krishisathi
+      POSTGRES_USER: krishisathi
+      POSTGRES_PASSWORD: krishisathi
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U krishisathi -d krishisathi"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:

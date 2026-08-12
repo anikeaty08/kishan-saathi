@@ -16,8 +16,10 @@ from app.modules.farms.schemas import (
     ActivityResponse,
     ActivityUpdate,
     CropCreate,
+    CropCycleClose,
     CropResponse,
     CropStageUpdate,
+    CropUpdate,
     DeletionImpactResponse,
     FarmCreate,
     FarmResponse,
@@ -126,6 +128,20 @@ async def update_crop_stage(
     crop_id: UUID, data: CropStageUpdate, farmer_id: FarmerId, service: Service
 ) -> CropResponse:
     return await service.update_crop_stage(farmer_id, crop_id, data)
+
+
+@router.patch("/crops/{crop_id}", response_model=CropResponse)
+async def update_crop(
+    crop_id: UUID, data: CropUpdate, farmer_id: FarmerId, service: Service
+) -> CropResponse:
+    return await service.update_crop(farmer_id, crop_id, data)
+
+
+@router.post("/crops/{crop_id}/close-cycle", response_model=CropResponse)
+async def close_crop_cycle(
+    crop_id: UUID, data: CropCycleClose, farmer_id: FarmerId, service: Service
+) -> CropResponse:
+    return await service.close_crop_cycle(farmer_id, crop_id, data)
 
 
 @router.delete("/crops/{crop_id}", status_code=status.HTTP_204_NO_CONTENT)

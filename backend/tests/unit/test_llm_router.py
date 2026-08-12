@@ -7,6 +7,7 @@ import pytest
 from app.core.config import Settings
 from app.integrations.llm.provider import (
     AssistantReply,
+    GeneratedTitle,
     LLMProvider,
     LLMRequest,
     LLMResult,
@@ -35,6 +36,13 @@ class RecordingProvider(LLMProvider):
         del request, model
         return MemoryExtraction()
 
+    async def generate_title(
+        self, *, content: str, language: str, farmer_id: UUID, model: str
+    ) -> GeneratedTitle:
+        del content, language, farmer_id
+        self.models.append(model)
+        return GeneratedTitle(title="Generated title")
+
 
 @pytest.mark.asyncio
 async def test_router_uses_mini_for_titles_and_primary_for_guidance() -> None:
@@ -46,8 +54,12 @@ async def test_router_uses_mini_for_titles_and_primary_for_guidance() -> None:
     await router.respond(
         LLMRequest(LLMTask.AGRICULTURAL_GUIDANCE, "test", "test", farmer_id)
     )
+    title = await router.generate_title(
+        content="tomato spots", language="hi", farmer_id=farmer_id
+    )
 
-    assert provider.models == ["gpt-5-mini", "gpt-5"]
+    assert provider.models == ["gpt-5-mini", "gpt-5", "gpt-5-mini"]
+    assert title.title == "Generated title"
 
 
 @pytest.mark.asyncio
@@ -60,7 +72,7 @@ async def test_router_preserves_backend_controlled_tools() -> None:
         return "forecast"
 
     tool = LLMTool(
-        name="get_plot_forecast",
+        name="get_plot_weather",
         description="Owned plot only",
         execute=execute,
     )

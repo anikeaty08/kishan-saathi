@@ -35,7 +35,7 @@ from app.modules.reminders.models import ReminderProposal
 from app.modules.reminders.repository import ReminderRepository
 from app.modules.reminders.schemas import ProposalResponse
 from app.modules.users.schemas import SupportedLanguage
-from app.modules.weather.tool import PlotForecastTool
+from app.modules.weather.tool import PlotWeatherTool
 
 
 class ChatService:
@@ -49,7 +49,7 @@ class ChatService:
         diagnoses: DiagnosisRepository,
         memory: MemoryProvider,
         llm: LLMRouter,
-        plot_forecast: PlotForecastTool,
+        plot_weather: PlotWeatherTool,
         reminders: ReminderRepository,
         canonical_memory: MemoryRepository,
     ) -> None:
@@ -58,7 +58,7 @@ class ChatService:
         self._diagnoses = diagnoses
         self._memory = memory
         self._llm = llm
-        self._plot_forecast = plot_forecast
+        self._plot_weather = plot_weather
         self._reminders = reminders
         self._canonical_memory = canonical_memory
 
@@ -164,7 +164,15 @@ class ChatService:
             if reminder_proposal is not None:
                 self._reminders.add(reminder_proposal)
             if chat.title == "New conversation":
-                chat.title = self._local_title(data.content)
+                try:
+                    generated = await self._llm.generate_title(
+                        content=data.content,
+                        language=(preferred_language.value if preferred_language else "en"),
+                        farmer_id=farmer_id,
+                    )
+                    chat.title = generated.title.strip()
+                except ApplicationError:
+                    chat.title = self._local_title(data.content)
             await self._repository.commit()
         except Exception:
             await self._repository.rollback()
@@ -210,21 +218,22 @@ class ChatService:
             return ()
         plot_id = chat.plot_id
 
-        async def get_plot_forecast() -> str:
+        async def get_plot_weather() -> str:
             try:
-                response = await self._plot_forecast.get(farmer_id, plot_id)
+                response = await self._plot_weather.get(farmer_id, plot_id)
                 return response.model_dump_json()
             except ApplicationError as exc:
                 return json.dumps({"error": exc.code})
 
         return (
             LLMTool(
-                name="get_plot_forecast",
+                name="get_plot_weather",
                 description=(
-                    "Get the seven-day Open-Meteo forecast for the plot already linked "
-                    "to this chat. Use it when weather can affect agricultural guidance."
+                    "Get current OpenWeather conditions and the seven-day Open-Meteo forecast "
+                    "for the plot already linked to this chat. Use it when weather can affect "
+                    "agricultural guidance."
                 ),
-                execute=get_plot_forecast,
+                execute=get_plot_weather,
             ),
         )
 
@@ -275,6 +284,20 @@ class ChatService:
             case = await self._diagnoses.get_case(farmer_id, chat.diagnosis_case_id)
             if case is None:
                 raise ApplicationError(code="DIAGNOSIS_CASE_NOT_FOUND", status_code=404)
+            if case.crop_id is not None:
+                case_crop = await self._farms.get_crop(farmer_id, case.crop_id)
+                if case_crop is None:
+                    raise ApplicationError(code="CROP_NOT_FOUND", status_code=404)
+                cycle_end = (
+                    case_crop.cycle_ended_on.isoformat()
+                    if case_crop.cycle_ended_on
+                    else "active"
+                )
+                context.append(
+                    "Diagnosis-linked crop: "
+                    f"{case_crop.name}; variety={case_crop.variety or 'unknown'}; "
+                    f"stage={case_crop.stage}; cycle_ended_on={cycle_end}"
+                )
             assessment = await self._diagnoses.get_active_assessment(farmer_id, case.id)
             if assessment:
                 context.append(
@@ -291,6 +314,15 @@ class ChatService:
             flags = sorted({flag for image in images for flag in image.quality_flags})
             context.append(
                 f"Diagnosis images: {len(images)}; quality flags: {', '.join(flags) or 'none'}"
+            )
+            assessments = await self._diagnoses.list_assessments(
+                farmer_id, case.id, limit=5
+            )
+            context.extend(
+                "Diagnosis history: "
+                f"{item.predicted_crop} / {item.primary_disease}; "
+                f"confidence={item.confidence_label}; assessed_at={item.created_at.isoformat()}"
+                for item in reversed(assessments)
             )
         return context
 
@@ -354,7 +386,7 @@ class ChatService:
             "Ask targeted follow-up questions when context is insufficient. Never invent facts, "
             "diagnoses, weather, product brands, or local approvals. Treatment detail must state "
             "uncertainty and safety precautions. A reminder may only be proposed, never claimed "
-            "as created. When a plot forecast could affect guidance, call get_plot_forecast; "
+            "as created. When plot weather could affect guidance, call get_plot_weather; "
             "do not invent or request different coordinates."
         )
 

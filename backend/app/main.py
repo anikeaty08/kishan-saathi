@@ -12,6 +12,7 @@ from app.core.container import (
     build_auth_provider,
     build_current_weather_provider,
     build_forecast_weather_provider,
+    build_geocoding_provider,
     build_leaf_inference_provider,
     build_llm_provider,
     build_memory_provider,
@@ -21,6 +22,7 @@ from app.core.errors import register_error_handlers
 from app.core.logging import configure_logging, request_context_middleware
 from app.database.session import Database, DatabasePort
 from app.integrations.auth.provider import AuthProvider
+from app.integrations.geocoding.provider import GeocodingProvider
 from app.integrations.inference.provider import LeafInferenceProvider
 from app.integrations.llm.provider import LLMProvider
 from app.integrations.memory.provider import MemoryProvider
@@ -39,6 +41,7 @@ def create_app(
     memory_provider: MemoryProvider | None = None,
     current_weather_provider: CurrentWeatherProvider | None = None,
     forecast_weather_provider: ForecastWeatherProvider | None = None,
+    geocoding_provider: GeocodingProvider | None = None,
 ) -> FastAPI:
     """Build an application with explicit, replaceable process dependencies."""
 
@@ -58,6 +61,7 @@ def create_app(
     resolved_forecast_weather = forecast_weather_provider or build_forecast_weather_provider(
         resolved_settings
     )
+    resolved_geocoding = geocoding_provider or build_geocoding_provider(resolved_settings)
     cleanup_worker = ObjectCleanupWorker(
         settings=resolved_settings,
         database=resolved_database,
@@ -73,6 +77,7 @@ def create_app(
             yield
         finally:
             await cleanup_worker.stop()
+            await application.state.geocoding_provider.close()
             await application.state.forecast_weather_provider.close()
             await application.state.current_weather_provider.close()
             await application.state.memory_provider.close()
@@ -98,6 +103,7 @@ def create_app(
     application.state.memory_provider = resolved_memory_provider
     application.state.current_weather_provider = resolved_current_weather
     application.state.forecast_weather_provider = resolved_forecast_weather
+    application.state.geocoding_provider = resolved_geocoding
     application.middleware("http")(request_context_middleware)
     register_error_handlers(application)
     application.include_router(api_router)

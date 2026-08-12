@@ -1,9 +1,11 @@
 """Task-policy based model routing without feature-specific condition chains."""
 
 from dataclasses import dataclass
+from uuid import UUID
 
 from app.core.config import Settings
 from app.integrations.llm.provider import (
+    GeneratedTitle,
     LLMProvider,
     LLMRequest,
     LLMResult,
@@ -41,4 +43,14 @@ class LLMRouter:
     ) -> MemoryExtraction:
         return await self._provider.extract_memories(
             request, model=self._policies[LLMTask.EXTRACTION].model
+        )
+
+    async def generate_title(
+        self, *, content: str, language: str, farmer_id: UUID
+    ) -> GeneratedTitle:
+        return await self._provider.generate_title(
+            content=content,
+            language=language,
+            farmer_id=farmer_id,
+            model=self._policies[LLMTask.TITLE].model,
         )

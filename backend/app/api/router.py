@@ -7,6 +7,7 @@ from app.modules.diagnoses.router import router as diagnoses_router
 from app.modules.farms.router import router as farms_router
 from app.modules.health.router import router as health_router
 from app.modules.history.router import router as history_router
+from app.modules.locations.router import router as locations_router
 from app.modules.memories.router import router as memories_router
 from app.modules.reminders.router import router as reminders_router
 from app.modules.reports.router import router as reports_router
@@ -24,6 +25,7 @@ versioned_api_router.include_router(diagnoses_router)
 versioned_api_router.include_router(history_router)
 versioned_api_router.include_router(chats_router)
 versioned_api_router.include_router(memories_router)
+versioned_api_router.include_router(locations_router)
 versioned_api_router.include_router(reminders_router)
 versioned_api_router.include_router(reports_router)
 versioned_api_router.include_router(storage_cleanup_router)

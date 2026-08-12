@@ -26,7 +26,7 @@ from app.modules.diagnoses.repository import DiagnosisRepository
 from app.modules.farms.repository import FarmRepository
 from app.modules.memories.repository import MemoryRepository
 from app.modules.reminders.repository import ReminderRepository
-from app.modules.weather.tool import DatabasePlotForecastTool
+from app.modules.weather.tool import DatabasePlotWeatherTool
 
 
 def get_chat_service(
@@ -48,7 +48,7 @@ def get_chat_service(
         diagnoses=DiagnosisRepository(session),
         memory=memory_provider,
         llm=LLMRouter(llm_provider, settings),
-        plot_forecast=DatabasePlotForecastTool(
+        plot_weather=DatabasePlotWeatherTool(
             settings=settings,
             database=database,
             current_provider=current_weather_provider,

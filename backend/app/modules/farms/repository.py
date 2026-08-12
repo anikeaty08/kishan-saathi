@@ -97,10 +97,15 @@ class FarmRepository:
         )
         return list(result)
 
-    async def get_crop(self, farmer_id: UUID, crop_id: UUID) -> Crop | None:
-        result = await self.session.execute(
-            select(Crop).where(Crop.id == crop_id, Crop.farmer_id == farmer_id)
+    async def get_crop(
+        self, farmer_id: UUID, crop_id: UUID, *, for_update: bool = False
+    ) -> Crop | None:
+        statement = select(Crop).where(
+            Crop.id == crop_id, Crop.farmer_id == farmer_id
         )
+        if for_update:
+            statement = statement.with_for_update()
+        result = await self.session.execute(statement)
         return result.scalar_one_or_none()
 
     async def get_activity(self, farmer_id: UUID, activity_id: UUID) -> Activity | None:

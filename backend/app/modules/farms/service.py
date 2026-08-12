@@ -13,8 +13,10 @@ from app.modules.farms.schemas import (
     ActivityResponse,
     ActivityUpdate,
     CropCreate,
+    CropCycleClose,
     CropResponse,
     CropStageUpdate,
+    CropUpdate,
     DeletionImpactResponse,
     FarmCreate,
     FarmResponse,
@@ -120,7 +122,9 @@ class FarmService:
     async def update_crop_stage(
         self, farmer_id: UUID, crop_id: UUID, data: CropStageUpdate
     ) -> CropResponse:
-        crop = await self._crop(farmer_id, crop_id)
+        crop = await self._crop(farmer_id, crop_id, for_update=True)
+        if crop.cycle_ended_on is not None:
+            raise ApplicationError(code="CROP_CYCLE_CLOSED", status_code=409)
         crop.stage = data.stage
         self.repository.add(
             CropStageEvent(
@@ -130,6 +134,42 @@ class FarmService:
                 observed_at=datetime.now(tz=UTC),
             )
         )
+        await self.repository.commit()
+        await self.repository.refresh(crop)
+        return CropResponse.model_validate(crop)
+
+    async def update_crop(
+        self, farmer_id: UUID, crop_id: UUID, data: CropUpdate
+    ) -> CropResponse:
+        crop = await self._crop(farmer_id, crop_id, for_update=True)
+        if crop.cycle_ended_on is not None and "stage" in data.model_fields_set:
+            raise ApplicationError(code="CROP_CYCLE_CLOSED", status_code=409)
+        stage_changed = "stage" in data.model_fields_set and data.stage != crop.stage
+        for field in data.model_fields_set:
+            setattr(crop, field, getattr(data, field))
+        if stage_changed:
+            assert data.stage is not None
+            self.repository.add(
+                CropStageEvent(
+                    farmer_id=farmer_id,
+                    crop_id=crop.id,
+                    stage=data.stage,
+                    observed_at=datetime.now(tz=UTC),
+                )
+            )
+        await self.repository.commit()
+        await self.repository.refresh(crop)
+        return CropResponse.model_validate(crop)
+
+    async def close_crop_cycle(
+        self, farmer_id: UUID, crop_id: UUID, data: CropCycleClose
+    ) -> CropResponse:
+        crop = await self._crop(farmer_id, crop_id, for_update=True)
+        if crop.cycle_ended_on is not None:
+            raise ApplicationError(code="CROP_CYCLE_ALREADY_CLOSED", status_code=409)
+        if data.ended_on < crop.cycle_started_on or data.ended_on > datetime.now(tz=UTC).date():
+            raise ApplicationError(code="CROP_CYCLE_END_DATE_INVALID", status_code=422)
+        crop.cycle_ended_on = data.ended_on
         await self.repository.commit()
         await self.repository.refresh(crop)
         return CropResponse.model_validate(crop)
@@ -253,8 +293,12 @@ class FarmService:
             raise ApplicationError(code="PLOT_NOT_FOUND", status_code=404)
         return plot
 
-    async def _crop(self, farmer_id: UUID, crop_id: UUID) -> Crop:
-        crop = await self.repository.get_crop(farmer_id, crop_id)
+    async def _crop(
+        self, farmer_id: UUID, crop_id: UUID, *, for_update: bool = False
+    ) -> Crop:
+        crop = await self.repository.get_crop(
+            farmer_id, crop_id, for_update=for_update
+        )
         if crop is None:
             raise ApplicationError(code="CROP_NOT_FOUND", status_code=404)
         return crop

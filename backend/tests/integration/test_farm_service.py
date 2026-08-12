@@ -1,6 +1,6 @@
 """Integration tests for owner-scoped farm organization."""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -13,7 +13,9 @@ from app.modules.farms.repository import FarmRepository
 from app.modules.farms.schemas import (
     ActivityCreate,
     CropCreate,
+    CropCycleClose,
     CropStageUpdate,
+    CropUpdate,
     FarmCreate,
     PlotCreate,
 )
@@ -68,6 +70,11 @@ async def test_farm_plot_crop_and_activity_lifecycle_is_owner_scoped() -> None:
             updated_crop = await service.update_crop_stage(
                 FARMER_A, crop.id, CropStageUpdate(stage="flowering")
             )
+            renamed_crop = await service.update_crop(
+                FARMER_A,
+                crop.id,
+                CropUpdate(name="Cherry Tomato", variety="Local Red"),
+            )
             activity = await service.create_activity(
                 FARMER_A,
                 plot.id,
@@ -95,9 +102,62 @@ async def test_farm_plot_crop_and_activity_lifecycle_is_owner_scoped() -> None:
         await engine.dispose()
 
     assert updated_crop.stage == "flowering"
+    assert renamed_crop.name == "Cherry Tomato"
     assert hidden.value.code == "PLOT_NOT_FOUND"
     assert blocked.value.code == "FARM_HAS_LINKED_DATA"
     assert crop_blocked.value.code == "CROP_HAS_LINKED_DATA"
+
+
+@pytest.mark.asyncio
+async def test_crop_cycle_can_close_but_not_move_or_reopen() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with sessions() as session:
+            session.add(
+                FarmerProfile(
+                    id=FARMER_A,
+                    cognito_sub="cycle",
+                    cognito_username="cycle@example.com",
+                    email="cycle@example.com",
+                )
+            )
+            await session.commit()
+            service = FarmService(FarmRepository(session))
+            plot = await service.create_plot(
+                FARMER_A,
+                PlotCreate(
+                    name="Cycle Plot",
+                    latitude=Decimal("18"),
+                    longitude=Decimal("74"),
+                    crops=[CropCreate(name="Rice", stage="harvest")],
+                ),
+            )
+            closed = await service.close_crop_cycle(
+                FARMER_A,
+                plot.crops[0].id,
+                CropCycleClose(ended_on=date.today()),
+            )
+            renamed = await service.update_crop(
+                FARMER_A, closed.id, CropUpdate(name="Archived Rice")
+            )
+            with pytest.raises(ApplicationError) as immutable:
+                await service.update_crop(
+                    FARMER_A, closed.id, CropUpdate(stage="post-harvest")
+                )
+            with pytest.raises(ApplicationError) as stage_immutable:
+                await service.update_crop_stage(
+                    FARMER_A, closed.id, CropStageUpdate(stage="post-harvest")
+                )
+    finally:
+        await engine.dispose()
+
+    assert closed.cycle_ended_on == date.today()
+    assert renamed.name == "Archived Rice"
+    assert immutable.value.code == "CROP_CYCLE_CLOSED"
+    assert stage_immutable.value.code == "CROP_CYCLE_CLOSED"
 
 
 @pytest.mark.asyncio

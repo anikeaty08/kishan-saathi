@@ -11,9 +11,11 @@ from app.core.errors import ApplicationError
 from app.database.base import Base
 from app.integrations.llm.provider import (
     AssistantReply,
+    GeneratedTitle,
     LLMProvider,
     LLMRequest,
     LLMResult,
+    LLMTask,
     MemoryExtraction,
     MemoryExtractionRequest,
     ReminderProposalDraft,
@@ -34,7 +36,8 @@ from app.modules.farms.repository import FarmRepository
 from app.modules.memories.repository import MemoryRepository
 from app.modules.reminders.repository import ReminderRepository
 from app.modules.users.models import FarmerProfile
-from app.modules.weather.schemas import PlotForecastResponse
+from app.modules.weather.schemas import CurrentWeatherResponse, PlotForecastResponse
+from app.modules.weather.tool import PlotWeatherContext
 
 FARMER = UUID("00000000-0000-0000-0000-000000000001")
 OTHER = UUID("00000000-0000-0000-0000-000000000002")
@@ -61,6 +64,15 @@ class CapturingLLM(LLMProvider):
     ) -> MemoryExtraction:
         del request, model
         return MemoryExtraction()
+
+    async def generate_title(
+        self, *, content: str, language: str, farmer_id: UUID, model: str
+    ) -> GeneratedTitle:
+        del content, language, farmer_id
+        self.requests.append(
+            (LLMRequest(LLMTask.TITLE, "title", "title", FARMER), model)
+        )
+        return GeneratedTitle(title="Leaf inspection guidance")
 
 
 class ScopedMemory(MemoryProvider):
@@ -131,14 +143,22 @@ class StubForecastWeather:
         return None
 
 
-class StubPlotForecastTool:
-    async def get(self, farmer_id: UUID, plot_id: UUID) -> PlotForecastResponse:
+class StubPlotWeatherTool:
+    async def get(self, farmer_id: UUID, plot_id: UUID) -> PlotWeatherContext:
         del farmer_id, plot_id
-        return PlotForecastResponse(
-            forecast=await StubForecastWeather().forecast(latitude=0, longitude=0),
-            provider="open-meteo",
-            fetched_at=datetime.now(tz=UTC),
-            is_stale=False,
+        return PlotWeatherContext(
+            current=CurrentWeatherResponse(
+                weather=await StubCurrentWeather().current(latitude=0, longitude=0),
+                provider="openweather",
+                fetched_at=datetime.now(tz=UTC),
+                is_stale=False,
+            ),
+            forecast=PlotForecastResponse(
+                forecast=await StubForecastWeather().forecast(latitude=0, longitude=0),
+                provider="open-meteo",
+                fetched_at=datetime.now(tz=UTC),
+                is_stale=False,
+            ),
         )
 
 
@@ -175,7 +195,7 @@ async def test_general_and_plot_chats_use_distinct_context_and_models() -> None:
                 diagnoses=DiagnosisRepository(session),
                 memory=memory,
                 llm=LLMRouter(llm, Settings(_env_file=None)),
-                plot_forecast=StubPlotForecastTool(),
+                plot_weather=StubPlotWeatherTool(),
                 reminders=ReminderRepository(session),
                 canonical_memory=MemoryRepository(session),
             )
@@ -211,8 +231,9 @@ async def test_general_and_plot_chats_use_distinct_context_and_models() -> None:
     finally:
         await engine.dispose()
 
-    general_request, general_model = llm.requests[0]
-    plot_request, plot_model = llm.requests[1]
+    guidance_requests = [item for item in llm.requests if item[0].task is not LLMTask.TITLE]
+    general_request, general_model = guidance_requests[0]
+    plot_request, plot_model = guidance_requests[1]
     assert general_model == "gpt-5"
     assert plot_model == "gpt-5"
     assert "No farm, plot, scan" in general_request.input_text
@@ -221,7 +242,7 @@ async def test_general_and_plot_chats_use_distinct_context_and_models() -> None:
     assert "Irrigation was completed yesterday" not in plot_request.input_text
     assert memory.searches == [(FARMER, plot.id, "What should I do next?")]
     assert general_request.tools == ()
-    assert [tool.name for tool in plot_request.tools] == ["get_plot_forecast"]
+    assert [tool.name for tool in plot_request.tools] == ["get_plot_weather"]
     assert plot_reply.reminder_proposal is None
     assert hidden.value.code == "CHAT_NOT_FOUND"
     assert archived.value.code == "CHAT_ARCHIVED"
@@ -254,7 +275,7 @@ async def test_typed_agent_reminder_is_persisted_with_chat_scope() -> None:
                 diagnoses=DiagnosisRepository(session),
                 memory=ScopedMemory(),
                 llm=LLMRouter(llm, Settings(_env_file=None)),
-                plot_forecast=StubPlotForecastTool(),
+                plot_weather=StubPlotWeatherTool(),
                 reminders=reminders,
                 canonical_memory=MemoryRepository(session),
             )

@@ -22,6 +22,7 @@ FARMER = UUID("00000000-0000-0000-0000-0000000000a1")
 class FlakyStorage(ObjectStorageProvider):
     def __init__(self) -> None:
         self.fail = True
+        self.deleted = asyncio.Event()
 
     async def put_private_image(
         self, *, owner_id: UUID, category: str, content: bytes
@@ -34,6 +35,7 @@ class FlakyStorage(ObjectStorageProvider):
     async def delete_private(self, *, owner_id: UUID, key: str) -> None:
         if self.fail:
             raise RuntimeError(f"temporary failure for {owner_id}/{key}")
+        self.deleted.set()
 
     async def close(self) -> None:
         return None
@@ -122,6 +124,7 @@ async def test_background_worker_automatically_reconciles_due_jobs() -> None:
             storage=storage,
         )
         await worker.start()
+        await asyncio.wait_for(storage.deleted.wait(), timeout=5)
         for _ in range(100):
             async with sessions() as session:
                 count = await session.scalar(
@@ -129,7 +132,7 @@ async def test_background_worker_automatically_reconciles_due_jobs() -> None:
                 )
             if count == 0:
                 break
-            await asyncio.sleep(0.02)
+            await asyncio.sleep(0.01)
         await worker.stop()
     finally:
         await engine.dispose()

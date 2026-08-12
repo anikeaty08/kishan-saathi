@@ -82,6 +82,10 @@ class MemoryExtraction(BaseModel):
     facts: list[MemoryCandidate] = Field(default_factory=list, max_length=20)
 
 
+class GeneratedTitle(BaseModel):
+    title: str = Field(min_length=1, max_length=150)
+
+
 @dataclass(frozen=True, slots=True)
 class LLMTool:
     """A narrowly scoped backend function the provider may let the model request."""
@@ -122,6 +126,10 @@ class LLMProvider(Protocol):
         self, request: MemoryExtractionRequest, *, model: str
     ) -> MemoryExtraction: ...
 
+    async def generate_title(
+        self, *, content: str, language: str, farmer_id: UUID, model: str
+    ) -> GeneratedTitle: ...
+
     async def close(self) -> None: ...
 
 
@@ -134,6 +142,12 @@ class UnavailableLLMProvider:
         self, request: MemoryExtractionRequest, *, model: str
     ) -> MemoryExtraction:
         del request, model
+        raise ApplicationError(code="LLM_NOT_CONFIGURED", status_code=503)
+
+    async def generate_title(
+        self, *, content: str, language: str, farmer_id: UUID, model: str
+    ) -> GeneratedTitle:
+        del content, language, farmer_id, model
         raise ApplicationError(code="LLM_NOT_CONFIGURED", status_code=503)
 
     async def close(self) -> None:

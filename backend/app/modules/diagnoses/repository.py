@@ -76,6 +76,20 @@ class DiagnosisRepository:
         )
         return result.scalar_one_or_none()
 
+    async def list_assessments(
+        self, farmer_id: UUID, case_id: UUID, *, limit: int = 5
+    ) -> list[DiagnosisAssessment]:
+        result = await self.session.scalars(
+            select(DiagnosisAssessment)
+            .where(
+                DiagnosisAssessment.farmer_id == farmer_id,
+                DiagnosisAssessment.case_id == case_id,
+            )
+            .order_by(DiagnosisAssessment.created_at.desc())
+            .limit(limit)
+        )
+        return list(result)
+
     async def combined_predictions(
         self, assessment_id: UUID
     ) -> list[DiagnosisPrediction]:

@@ -12,6 +12,7 @@ from app.core.errors import ApplicationError
 from app.core.security import AuthContext
 from app.database.session import DatabasePort
 from app.integrations.auth.provider import AuthProvider
+from app.integrations.geocoding.provider import GeocodingProvider
 from app.integrations.inference.provider import LeafInferenceProvider
 from app.integrations.llm.provider import LLMProvider
 from app.integrations.memory.provider import MemoryProvider
@@ -65,6 +66,10 @@ def get_current_weather_provider(request: Request) -> CurrentWeatherProvider:
 
 def get_forecast_weather_provider(request: Request) -> ForecastWeatherProvider:
     return cast(ForecastWeatherProvider, request.app.state.forecast_weather_provider)
+
+
+def get_geocoding_provider(request: Request) -> GeocodingProvider:
+    return cast(GeocodingProvider, request.app.state.geocoding_provider)
 
 
 async def get_auth_context(

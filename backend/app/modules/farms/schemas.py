@@ -132,6 +132,30 @@ class CropStageUpdate(BaseModel):
     stage: Stage
 
 
+class CropUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: Name | None = None
+    stage: Stage | None = None
+    variety: Name | None = None
+    sowing_or_transplant_date: date | None = None
+
+    @model_validator(mode="after")
+    def require_change(self) -> Self:
+        if not self.model_fields_set:
+            raise ValueError("CROP_UPDATE_EMPTY")
+        if any(
+            getattr(self, field) is None
+            for field in self.model_fields_set & {"name", "stage"}
+        ):
+            raise ValueError("CROP_REQUIRED_FIELD_NULL")
+        return self
+
+
+class CropCycleClose(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ended_on: date
+
+
 class ActivityCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     crop_id: UUID | None = None

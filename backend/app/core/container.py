@@ -3,6 +3,8 @@
 from app.core.config import Settings
 from app.integrations.auth.cognito import CognitoAuthProvider
 from app.integrations.auth.provider import AuthProvider, UnavailableAuthProvider
+from app.integrations.geocoding.open_meteo import OpenMeteoGeocodingProvider
+from app.integrations.geocoding.provider import GeocodingProvider
 from app.integrations.inference.provider import (
     LeafInferenceProvider,
     UnavailableLeafInferenceProvider,
@@ -61,3 +63,7 @@ def build_current_weather_provider(settings: Settings) -> CurrentWeatherProvider
 
 def build_forecast_weather_provider(settings: Settings) -> ForecastWeatherProvider:
     return OpenMeteoForecastProvider(settings)
+
+
+def build_geocoding_provider(settings: Settings) -> GeocodingProvider:
+    return OpenMeteoGeocodingProvider(settings)

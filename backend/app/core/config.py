@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     openweather_api_key: str = ""
     openweather_base_url: str = "https://api.openweathermap.org/data/2.5"
     open_meteo_base_url: str = "https://api.open-meteo.com/v1"
+    open_meteo_geocoding_base_url: str = "https://geocoding-api.open-meteo.com/v1"
     weather_cache_seconds: int = Field(default=3600, ge=300, le=21600)
     weather_max_stale_seconds: int = Field(default=21600, ge=3600, le=86400)
 

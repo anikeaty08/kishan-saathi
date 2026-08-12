@@ -18,6 +18,9 @@ def configure_logging(log_level: str) -> None:
 
     level = getattr(logging, log_level.upper(), logging.INFO)
     logging.basicConfig(stream=sys.stdout, level=level, format="%(message)s", force=True)
+    # httpx's INFO record contains the complete request URL, including private
+    # village/postcode search terms. Application request logs remain template-based.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,

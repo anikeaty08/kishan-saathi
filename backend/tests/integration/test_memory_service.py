@@ -10,6 +10,7 @@ from app.core.errors import ApplicationError
 from app.database.base import Base
 from app.integrations.llm.provider import (
     AssistantReply,
+    GeneratedTitle,
     LLMProvider,
     LLMRequest,
     LLMResult,
@@ -68,6 +69,12 @@ class ExtractingLLM(LLMProvider):
 
     async def close(self) -> None:
         return None
+
+    async def generate_title(
+        self, *, content: str, language: str, farmer_id: UUID, model: str
+    ) -> GeneratedTitle:
+        del content, language, farmer_id, model
+        return GeneratedTitle(title="Memory chat")
 
 
 class RecordingMemory(MemoryProvider):

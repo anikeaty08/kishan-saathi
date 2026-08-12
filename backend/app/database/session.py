@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Protocol
 
 from sqlalchemy import text
@@ -22,6 +22,8 @@ class DatabasePort(Protocol):
     async def ping(self) -> None: ...
 
     async def dispose(self) -> None: ...
+
+    def session(self) -> AbstractAsyncContextManager[AsyncSession]: ...
 
 
 class Database:

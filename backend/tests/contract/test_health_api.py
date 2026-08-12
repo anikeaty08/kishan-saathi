@@ -1,11 +1,14 @@
 """Contract tests for public health endpoints."""
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Self
 
 import pytest
 from asgi_lifespan import LifespanManager
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient, Response
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.main import create_app
@@ -26,6 +29,11 @@ class FakeDatabase:
 
     async def dispose(self) -> None:
         self.disposed = True
+
+    @asynccontextmanager
+    async def session(self) -> AsyncIterator[AsyncSession]:
+        raise AssertionError("Health contract tests must not open a database session")
+        yield  # pragma: no cover
 
     def fail(self) -> Self:
         self.available = False
@@ -89,8 +97,7 @@ async def test_unknown_route_uses_structured_error_contract() -> None:
 
     body = response.json()
     assert response.status_code == 404
-    assert body["error"]["code"] == "http_error"
-    assert body["error"]["message"] == "Not Found"
+    assert body["error"]["code"] == "RESOURCE_NOT_FOUND"
     assert body["error"]["request_id"] == response.headers["X-Request-ID"]
 
 
@@ -107,7 +114,7 @@ async def test_validation_failure_uses_structured_error_contract() -> None:
 
     body = response.json()
     assert response.status_code == 422
-    assert body["error"]["code"] == "validation_error"
+    assert body["error"]["code"] == "VALIDATION_ERROR"
     assert body["error"]["details"]
     assert body["error"]["request_id"] == response.headers["X-Request-ID"]
 
@@ -125,7 +132,7 @@ async def test_unexpected_failure_does_not_leak_internal_details() -> None:
 
     body = response.json()
     assert response.status_code == 500
-    assert body["error"]["code"] == "internal_error"
+    assert body["error"]["code"] == "INTERNAL_ERROR"
     assert "private failure detail" not in response.text
     assert body["error"]["request_id"] == response.headers["X-Request-ID"]
 

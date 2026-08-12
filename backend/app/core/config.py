@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     aws_region: str = "ap-south-1"
     cognito_user_pool_id: str = ""
     cognito_app_client_id: str = ""
+    cognito_jwks_cache_seconds: int = Field(default=3600, ge=60, le=86400)
+    external_request_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
 
     openai_api_key: str = ""
     openai_primary_model: str = "gpt-5"

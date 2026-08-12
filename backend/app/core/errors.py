@@ -15,7 +15,6 @@ class ErrorBody(BaseModel):
     """Stable client-visible error details."""
 
     code: str
-    message: str
     request_id: str
     details: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -33,13 +32,11 @@ class ApplicationError(Exception):
         self,
         *,
         code: str,
-        message: str,
         status_code: int,
         details: list[dict[str, Any]] | None = None,
     ) -> None:
-        super().__init__(message)
+        super().__init__(code)
         self.code = code
-        self.message = message
         self.status_code = status_code
         self.details = details or []
 
@@ -53,13 +50,11 @@ def _response(
     *,
     status_code: int,
     code: str,
-    message: str,
     details: list[dict[str, Any]] | None = None,
 ) -> JSONResponse:
     body = ErrorResponse(
         error=ErrorBody(
             code=code,
-            message=message,
             request_id=_request_id(request),
             details=details or [],
         )
@@ -81,7 +76,6 @@ def register_error_handlers(app: FastAPI) -> None:
             request,
             status_code=exc.status_code,
             code=exc.code,
-            message=exc.message,
             details=exc.details,
         )
 
@@ -93,9 +87,14 @@ def register_error_handlers(app: FastAPI) -> None:
         return _response(
             request,
             status_code=422,
-            code="validation_error",
-            message="The request contains invalid data.",
-            details=[dict(error) for error in exc.errors()],
+            code="VALIDATION_ERROR",
+            details=[
+                {
+                    "field": ".".join(str(part) for part in error["loc"]),
+                    "code": str(error["type"]).upper(),
+                }
+                for error in exc.errors()
+            ],
         )
 
     @app.exception_handler(StarletteHTTPException)
@@ -103,16 +102,14 @@ def register_error_handlers(app: FastAPI) -> None:
         request: Request,
         exc: StarletteHTTPException,
     ) -> JSONResponse:
-        message = (
-            exc.detail
-            if isinstance(exc.detail, str)
-            else "The request could not be completed."
-        )
+        code_by_status = {
+            404: "RESOURCE_NOT_FOUND",
+            405: "METHOD_NOT_ALLOWED",
+        }
         return _response(
             request,
             status_code=exc.status_code,
-            code="http_error",
-            message=message,
+            code=code_by_status.get(exc.status_code, "HTTP_ERROR"),
         )
 
     @app.exception_handler(Exception)
@@ -120,6 +117,5 @@ def register_error_handlers(app: FastAPI) -> None:
         return _response(
             request,
             status_code=500,
-            code="internal_error",
-            message="An unexpected error occurred.",
+            code="INTERNAL_ERROR",
         )

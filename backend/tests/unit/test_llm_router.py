@@ -12,6 +12,8 @@ from app.integrations.llm.provider import (
     LLMResult,
     LLMTask,
     LLMTool,
+    MemoryExtraction,
+    MemoryExtractionRequest,
 )
 from app.integrations.llm.router import LLMRouter
 
@@ -26,6 +28,12 @@ class RecordingProvider(LLMProvider):
 
     async def close(self) -> None:
         return None
+
+    async def extract_memories(
+        self, request: MemoryExtractionRequest, *, model: str
+    ) -> MemoryExtraction:
+        del request, model
+        return MemoryExtraction()
 
 
 @pytest.mark.asyncio

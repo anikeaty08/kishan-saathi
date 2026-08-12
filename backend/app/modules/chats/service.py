@@ -12,7 +12,11 @@ from app.integrations.llm.provider import (
     ReminderProposalDraft,
 )
 from app.integrations.llm.router import LLMRouter
-from app.integrations.memory.provider import MemoryProvider
+from app.integrations.memory.provider import (
+    MemoryProvider,
+    MemoryScope,
+    MemoryScopeType,
+)
 from app.modules.chats.models import ChatMessage, ChatSession
 from app.modules.chats.repository import ChatRepository
 from app.modules.chats.schemas import (
@@ -26,6 +30,7 @@ from app.modules.chats.schemas import (
 )
 from app.modules.diagnoses.repository import DiagnosisRepository
 from app.modules.farms.repository import FarmRepository
+from app.modules.memories.repository import MemoryRepository
 from app.modules.reminders.models import ReminderProposal
 from app.modules.reminders.repository import ReminderRepository
 from app.modules.reminders.schemas import ProposalResponse
@@ -46,6 +51,7 @@ class ChatService:
         llm: LLMRouter,
         plot_forecast: PlotForecastTool,
         reminders: ReminderRepository,
+        canonical_memory: MemoryRepository,
     ) -> None:
         self._repository = repository
         self._farms = farms
@@ -54,6 +60,7 @@ class ChatService:
         self._llm = llm
         self._plot_forecast = plot_forecast
         self._reminders = reminders
+        self._canonical_memory = canonical_memory
 
     async def create_chat(self, farmer_id: UUID, data: ChatCreate) -> ChatResponse:
         farm_id, plot_id, case_id = await self._validate_scope(farmer_id, data)
@@ -230,6 +237,10 @@ class ChatService:
             if farm is None:
                 raise ApplicationError(code="FARM_NOT_FOUND", status_code=404)
             context.append(f"Farm: {farm.name}")
+            farm_facts = await self._canonical_memory.list_farm(
+                farmer_id, farm.id, limit=5
+            )
+            context.extend(f"Relevant farm memory: {fact.text}" for fact in farm_facts)
         if chat.plot_id is not None:
             plot = await self._farms.get_plot(farmer_id, chat.plot_id)
             if plot is None:
@@ -255,13 +266,11 @@ class ChatService:
                 f"Pending task: {reminder.title} due {reminder.due_at.isoformat()}"
                 for reminder in reminders
             )
-            memories = await self._memory.search_plot(
-                farmer_id=farmer_id,
-                plot_id=plot.id,
-                query=query,
-                limit=5,
+            canonical = await self._canonical_memory.list_plot(
+                farmer_id, plot.id, limit=5
             )
-            context.extend(f"Relevant plot memory: {fact.text}" for fact in memories)
+            context.extend(f"Relevant plot memory: {fact.text}" for fact in canonical)
+            await self._verified_indexed_context(farmer_id, plot.id, query, context)
         if chat.diagnosis_case_id is not None:
             case = await self._diagnoses.get_case(farmer_id, chat.diagnosis_case_id)
             if case is None:
@@ -284,6 +293,31 @@ class ChatService:
                 f"Diagnosis images: {len(images)}; quality flags: {', '.join(flags) or 'none'}"
             )
         return context
+
+    async def _verified_indexed_context(
+        self, farmer_id: UUID, plot_id: UUID, query: str, context: list[str]
+    ) -> None:
+        """Hydrate semantic hits only from canonical PostgreSQL rows."""
+
+        try:
+            remote = await self._memory.search(
+                scope=MemoryScope(farmer_id, MemoryScopeType.PLOT, plot_id),
+                query=query,
+                limit=10,
+            )
+        except ApplicationError:
+            return
+        canonical = await self._canonical_memory.list_plot(farmer_id, plot_id, limit=100)
+        by_provider_id = {
+            fact.provider_memory_id: fact
+            for fact in canonical
+            if fact.provider_memory_id and fact.index_status == "indexed"
+        }
+        context.extend(
+            f"Relevant plot memory: {by_provider_id[item.id].text}"
+            for item in remote
+            if item.id in by_provider_id
+        )
 
     async def _validate_scope(
         self, farmer_id: UUID, data: ChatCreate

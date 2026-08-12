@@ -5,7 +5,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.reminders.models import Reminder, ReminderProposal
+from app.modules.reminders.models import Reminder, ReminderEvent, ReminderProposal
 
 
 class ReminderRepository:
@@ -59,13 +59,26 @@ class ReminderRepository:
         )
         return list(result)
 
-    def add(self, value: Reminder | ReminderProposal) -> None:
+    async def list_events(
+        self, farmer_id: UUID, reminder_id: UUID
+    ) -> list[ReminderEvent]:
+        result = await self.session.scalars(
+            select(ReminderEvent)
+            .where(
+                ReminderEvent.farmer_id == farmer_id,
+                ReminderEvent.reminder_id == reminder_id,
+            )
+            .order_by(ReminderEvent.occurred_at, ReminderEvent.id)
+        )
+        return list(result)
+
+    def add(self, value: Reminder | ReminderEvent | ReminderProposal) -> None:
         self.session.add(value)
 
     async def commit(self) -> None:
         await self.session.commit()
 
-    async def refresh(self, value: Reminder | ReminderProposal) -> None:
+    async def refresh(self, value: Reminder | ReminderEvent | ReminderProposal) -> None:
         await self.session.refresh(value)
 
     async def flush(self) -> None:

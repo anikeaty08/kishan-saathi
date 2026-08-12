@@ -15,6 +15,7 @@ from app.modules.farms.schemas import (
     CropCreate,
     CropResponse,
     CropStageUpdate,
+    DeletionImpactResponse,
     FarmCreate,
     FarmResponse,
     FarmUpdate,
@@ -52,8 +53,9 @@ class FarmService:
 
     async def delete_farm(self, farmer_id: UUID, farm_id: UUID) -> None:
         farm = await self._farm(farmer_id, farm_id)
-        if await self.repository.farm_plot_count(farmer_id, farm_id):
-            raise ApplicationError(code="FARM_HAS_PLOTS", status_code=409)
+        impact = await self.farm_deletion_impact(farmer_id, farm_id)
+        if not impact.can_delete:
+            raise ApplicationError(code="FARM_HAS_LINKED_DATA", status_code=409)
         await self.repository.delete(farm)
         await self.repository.commit()
 
@@ -134,19 +136,51 @@ class FarmService:
 
     async def delete_plot(self, farmer_id: UUID, plot_id: UUID) -> None:
         plot = await self._plot(farmer_id, plot_id)
-        if await self.repository.list_crops(
-            farmer_id, plot_id
-        ) or await self.repository.plot_activity_count(farmer_id, plot_id):
+        impact = await self.plot_deletion_impact(farmer_id, plot_id)
+        if not impact.can_delete:
             raise ApplicationError(code="PLOT_HAS_LINKED_DATA", status_code=409)
         await self.repository.delete(plot)
         await self.repository.commit()
 
     async def delete_crop(self, farmer_id: UUID, crop_id: UUID) -> None:
         crop = await self._crop(farmer_id, crop_id)
-        if await self.repository.crop_activity_count(farmer_id, crop_id):
+        impact = await self.crop_deletion_impact(farmer_id, crop_id)
+        if not impact.can_delete:
             raise ApplicationError(code="CROP_HAS_LINKED_DATA", status_code=409)
         await self.repository.delete(crop)
         await self.repository.commit()
+
+    async def farm_deletion_impact(
+        self, farmer_id: UUID, farm_id: UUID
+    ) -> DeletionImpactResponse:
+        await self._farm(farmer_id, farm_id)
+        return self._impact(
+            farm_id, await self.repository.farm_linked_record_counts(farmer_id, farm_id)
+        )
+
+    async def plot_deletion_impact(
+        self, farmer_id: UUID, plot_id: UUID
+    ) -> DeletionImpactResponse:
+        await self._plot(farmer_id, plot_id)
+        return self._impact(
+            plot_id, await self.repository.plot_linked_record_counts(farmer_id, plot_id)
+        )
+
+    async def crop_deletion_impact(
+        self, farmer_id: UUID, crop_id: UUID
+    ) -> DeletionImpactResponse:
+        await self._crop(farmer_id, crop_id)
+        return self._impact(
+            crop_id, await self.repository.crop_linked_record_counts(farmer_id, crop_id)
+        )
+
+    @staticmethod
+    def _impact(entity_id: UUID, counts: dict[str, int]) -> DeletionImpactResponse:
+        return DeletionImpactResponse(
+            entity_id=entity_id,
+            can_delete=not any(counts.values()),
+            linked_records=counts,
+        )
 
     async def create_activity(
         self, farmer_id: UUID, plot_id: UUID, data: ActivityCreate

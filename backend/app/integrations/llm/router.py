@@ -3,7 +3,14 @@
 from dataclasses import dataclass
 
 from app.core.config import Settings
-from app.integrations.llm.provider import LLMProvider, LLMRequest, LLMResult, LLMTask
+from app.integrations.llm.provider import (
+    LLMProvider,
+    LLMRequest,
+    LLMResult,
+    LLMTask,
+    MemoryExtraction,
+    MemoryExtractionRequest,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,3 +35,10 @@ class LLMRouter:
 
     async def respond(self, request: LLMRequest) -> LLMResult:
         return await self._provider.respond(request, model=self._policies[request.task].model)
+
+    async def extract_memories(
+        self, request: MemoryExtractionRequest
+    ) -> MemoryExtraction:
+        return await self._provider.extract_memories(
+            request, model=self._policies[LLMTask.EXTRACTION].model
+        )

@@ -96,7 +96,7 @@ async def test_farm_plot_crop_and_activity_lifecycle_is_owner_scoped() -> None:
 
     assert updated_crop.stage == "flowering"
     assert hidden.value.code == "PLOT_NOT_FOUND"
-    assert blocked.value.code == "FARM_HAS_PLOTS"
+    assert blocked.value.code == "FARM_HAS_LINKED_DATA"
     assert crop_blocked.value.code == "CROP_HAS_LINKED_DATA"
 
 

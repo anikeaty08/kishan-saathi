@@ -24,6 +24,7 @@ from app.modules.chats.repository import ChatRepository
 from app.modules.chats.service import ChatService
 from app.modules.diagnoses.repository import DiagnosisRepository
 from app.modules.farms.repository import FarmRepository
+from app.modules.memories.repository import MemoryRepository
 from app.modules.reminders.repository import ReminderRepository
 from app.modules.weather.tool import DatabasePlotForecastTool
 
@@ -54,4 +55,5 @@ def get_chat_service(
             forecast_provider=forecast_weather_provider,
         ),
         reminders=ReminderRepository(session),
+        canonical_memory=MemoryRepository(session),
     )

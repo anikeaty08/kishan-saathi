@@ -12,12 +12,15 @@ class ChatRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def get_chat(self, farmer_id: UUID, chat_id: UUID) -> ChatSession | None:
-        result = await self.session.execute(
-            select(ChatSession).where(
-                ChatSession.id == chat_id, ChatSession.farmer_id == farmer_id
-            )
+    async def get_chat(
+        self, farmer_id: UUID, chat_id: UUID, *, for_update: bool = False
+    ) -> ChatSession | None:
+        statement = select(ChatSession).where(
+            ChatSession.id == chat_id, ChatSession.farmer_id == farmer_id
         )
+        if for_update:
+            statement = statement.with_for_update()
+        result = await self.session.execute(statement)
         return result.scalar_one_or_none()
 
     async def list_chats(
@@ -42,6 +45,19 @@ class ChatRepository:
             .limit(limit)
         )
         return list(reversed(list(result)))
+
+    async def all_messages(
+        self, farmer_id: UUID, chat_id: UUID
+    ) -> list[ChatMessage]:
+        result = await self.session.scalars(
+            select(ChatMessage)
+            .where(
+                ChatMessage.farmer_id == farmer_id,
+                ChatMessage.chat_id == chat_id,
+            )
+            .order_by(ChatMessage.sequence)
+        )
+        return list(result)
 
     async def next_sequence(self, farmer_id: UUID, chat_id: UUID) -> int:
         value = await self.session.scalar(

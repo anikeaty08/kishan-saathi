@@ -11,6 +11,7 @@ from app.modules.reminders.schemas import (
     ProposalDecisionResponse,
     ReminderActionRequest,
     ReminderCreate,
+    ReminderEventResponse,
     ReminderResponse,
 )
 from app.modules.reminders.service import ReminderService
@@ -67,3 +68,12 @@ async def apply_reminder_action(
     service: Service,
 ) -> ReminderResponse:
     return await service.apply_action(farmer_id, reminder_id, data)
+
+
+@router.get(
+    "/reminders/{reminder_id}/events", response_model=list[ReminderEventResponse]
+)
+async def list_reminder_events(
+    reminder_id: UUID, farmer_id: FarmerId, service: Service
+) -> list[ReminderEventResponse]:
+    return await service.list_events(farmer_id, reminder_id)

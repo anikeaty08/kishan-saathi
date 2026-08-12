@@ -108,6 +108,8 @@ class ProposalResponse(BaseModel):
 class ReminderResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
+    series_id: UUID
+    parent_reminder_id: UUID | None
     proposal_id: UUID | None
     chat_id: UUID | None
     diagnosis_case_id: UUID | None
@@ -126,3 +128,18 @@ class ReminderResponse(BaseModel):
 class ProposalDecisionResponse(BaseModel):
     proposal: ProposalResponse
     reminder: ReminderResponse | None
+
+
+class ReminderEventResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    reminder_id: UUID
+    series_id: UUID
+    chat_id: UUID | None
+    diagnosis_case_id: UUID | None
+    plot_id: UUID | None
+    crop_id: UUID | None
+    event_type: str
+    previous_due_at: datetime | None
+    due_at: datetime
+    occurred_at: datetime

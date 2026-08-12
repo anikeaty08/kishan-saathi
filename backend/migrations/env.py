@@ -13,6 +13,7 @@ from app.database.base import Base
 from app.modules.chats import models as chat_models  # noqa: F401
 from app.modules.diagnoses import models as diagnosis_models  # noqa: F401
 from app.modules.farms import models as farm_models  # noqa: F401
+from app.modules.memories import models as memory_models  # noqa: F401
 from app.modules.reminders import models as reminder_models  # noqa: F401
 from app.modules.users import models as user_models  # noqa: F401
 from app.modules.weather import models as weather_models  # noqa: F401

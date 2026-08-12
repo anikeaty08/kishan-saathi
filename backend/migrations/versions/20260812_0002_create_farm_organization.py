@@ -6,6 +6,7 @@ Create Date: 2026-08-12
 """
 
 from collections.abc import Sequence
+from typing import Any
 
 import sqlalchemy as sa
 from alembic import op
@@ -16,7 +17,7 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
-def _timestamps() -> list[sa.Column[object]]:
+def _timestamps() -> list[Any]:
     return [
         sa.Column(
             "created_at",

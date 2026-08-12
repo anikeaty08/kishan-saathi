@@ -70,6 +70,18 @@ class AssistantReply(BaseModel):
     reminder_proposal: ReminderProposalDraft | None = None
 
 
+class MemoryCandidate(BaseModel):
+    """One confirmed, scope-relevant fact safe to place in long-term memory."""
+
+    text: str = Field(min_length=1, max_length=500)
+    source_message_id: UUID
+    evidence_quote: str = Field(min_length=1, max_length=500)
+
+
+class MemoryExtraction(BaseModel):
+    facts: list[MemoryCandidate] = Field(default_factory=list, max_length=20)
+
+
 @dataclass(frozen=True, slots=True)
 class LLMTool:
     """A narrowly scoped backend function the provider may let the model request."""
@@ -95,14 +107,32 @@ class LLMResult:
     model: str
 
 
+@dataclass(frozen=True, slots=True)
+class MemoryExtractionRequest:
+    transcript: str
+    target_scope: str
+    target_name: str
+    farmer_id: UUID
+
+
 class LLMProvider(Protocol):
     async def respond(self, request: LLMRequest, *, model: str) -> LLMResult: ...
+
+    async def extract_memories(
+        self, request: MemoryExtractionRequest, *, model: str
+    ) -> MemoryExtraction: ...
 
     async def close(self) -> None: ...
 
 
 class UnavailableLLMProvider:
     async def respond(self, request: LLMRequest, *, model: str) -> LLMResult:
+        del request, model
+        raise ApplicationError(code="LLM_NOT_CONFIGURED", status_code=503)
+
+    async def extract_memories(
+        self, request: MemoryExtractionRequest, *, model: str
+    ) -> MemoryExtraction:
         del request, model
         raise ApplicationError(code="LLM_NOT_CONFIGURED", status_code=503)
 

@@ -13,6 +13,7 @@ from app.modules.farms.schemas import (
     CropCreate,
     CropResponse,
     CropStageUpdate,
+    DeletionImpactResponse,
     FarmCreate,
     FarmResponse,
     FarmUpdate,
@@ -54,6 +55,13 @@ async def delete_farm(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.get("/farms/{farm_id}/deletion-impact", response_model=DeletionImpactResponse)
+async def farm_deletion_impact(
+    farm_id: UUID, farmer_id: FarmerId, service: Service
+) -> DeletionImpactResponse:
+    return await service.farm_deletion_impact(farmer_id, farm_id)
+
+
 @router.post("/plots", response_model=PlotResponse, status_code=status.HTTP_201_CREATED)
 async def create_plot(data: PlotCreate, farmer_id: FarmerId, service: Service) -> PlotResponse:
     return await service.create_plot(farmer_id, data)
@@ -88,6 +96,13 @@ async def delete_plot(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.get("/plots/{plot_id}/deletion-impact", response_model=DeletionImpactResponse)
+async def plot_deletion_impact(
+    plot_id: UUID, farmer_id: FarmerId, service: Service
+) -> DeletionImpactResponse:
+    return await service.plot_deletion_impact(farmer_id, plot_id)
+
+
 @router.post(
     "/plots/{plot_id}/crops",
     response_model=CropResponse,
@@ -112,6 +127,13 @@ async def delete_crop(
 ) -> Response:
     await service.delete_crop(farmer_id, crop_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/crops/{crop_id}/deletion-impact", response_model=DeletionImpactResponse)
+async def crop_deletion_impact(
+    crop_id: UUID, farmer_id: FarmerId, service: Service
+) -> DeletionImpactResponse:
+    return await service.crop_deletion_impact(farmer_id, crop_id)
 
 
 @router.post(

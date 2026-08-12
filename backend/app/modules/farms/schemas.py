@@ -167,3 +167,9 @@ class ActivityResponse(BaseModel):
     occurred_at: datetime
     created_at: datetime
     updated_at: datetime
+
+
+class DeletionImpactResponse(BaseModel):
+    entity_id: UUID
+    can_delete: bool
+    linked_records: dict[str, int]

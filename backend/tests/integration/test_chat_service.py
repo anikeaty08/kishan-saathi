@@ -14,10 +14,12 @@ from app.integrations.llm.provider import (
     LLMProvider,
     LLMRequest,
     LLMResult,
+    MemoryExtraction,
+    MemoryExtractionRequest,
     ReminderProposalDraft,
 )
 from app.integrations.llm.router import LLMRouter
-from app.integrations.memory.provider import MemoryFact, MemoryProvider
+from app.integrations.memory.provider import MemoryFact, MemoryProvider, MemoryScope
 from app.integrations.weather.provider import (
     CurrentWeather,
     ForecastDay,
@@ -29,6 +31,7 @@ from app.modules.chats.service import ChatService
 from app.modules.diagnoses.repository import DiagnosisRepository
 from app.modules.farms.models import Crop, Farm, Plot
 from app.modules.farms.repository import FarmRepository
+from app.modules.memories.repository import MemoryRepository
 from app.modules.reminders.repository import ReminderRepository
 from app.modules.users.models import FarmerProfile
 from app.modules.weather.schemas import PlotForecastResponse
@@ -53,32 +56,32 @@ class CapturingLLM(LLMProvider):
     async def close(self) -> None:
         return None
 
+    async def extract_memories(
+        self, request: MemoryExtractionRequest, *, model: str
+    ) -> MemoryExtraction:
+        del request, model
+        return MemoryExtraction()
+
 
 class ScopedMemory(MemoryProvider):
     def __init__(self) -> None:
         self.searches: list[tuple[UUID, UUID, str]] = []
 
-    async def search_plot(
-        self,
-        *,
-        farmer_id: UUID,
-        plot_id: UUID,
-        query: str,
-        limit: int,
+    async def search(
+        self, *, scope: MemoryScope, query: str, limit: int
     ) -> tuple[MemoryFact, ...]:
-        assert limit == 5
-        self.searches.append((farmer_id, plot_id, query))
+        assert limit == 10
+        self.searches.append((scope.farmer_id, scope.scope_id, query))
         return (MemoryFact(id="1", text="Irrigation was completed yesterday"),)
 
-    async def add_plot_facts(
-        self, *, farmer_id: UUID, plot_id: UUID, facts: tuple[str, ...]
-    ) -> None:
-        del farmer_id, plot_id, facts
+    async def index_fact(
+        self, *, scope: MemoryScope, canonical_fact_id: UUID, text: str
+    ) -> MemoryFact:
+        del scope, canonical_fact_id
+        return MemoryFact("1", text)
 
-    async def delete_plot_fact(
-        self, *, farmer_id: UUID, plot_id: UUID, memory_id: str
-    ) -> None:
-        del farmer_id, plot_id, memory_id
+    async def delete_fact(self, *, memory_id: str) -> None:
+        del memory_id
 
     async def close(self) -> None:
         return None
@@ -174,6 +177,7 @@ async def test_general_and_plot_chats_use_distinct_context_and_models() -> None:
                 llm=LLMRouter(llm, Settings(_env_file=None)),
                 plot_forecast=StubPlotForecastTool(),
                 reminders=ReminderRepository(session),
+                canonical_memory=MemoryRepository(session),
             )
             general = await service.create_chat(FARMER, ChatCreate())
             plot_chat = await service.create_chat(
@@ -214,7 +218,7 @@ async def test_general_and_plot_chats_use_distinct_context_and_models() -> None:
     assert "No farm, plot, scan" in general_request.input_text
     assert "Tomato Plot" not in general_request.input_text
     assert "Tomato Plot" in plot_request.input_text
-    assert "Irrigation was completed yesterday" in plot_request.input_text
+    assert "Irrigation was completed yesterday" not in plot_request.input_text
     assert memory.searches == [(FARMER, plot.id, "What should I do next?")]
     assert general_request.tools == ()
     assert [tool.name for tool in plot_request.tools] == ["get_plot_forecast"]
@@ -252,6 +256,7 @@ async def test_typed_agent_reminder_is_persisted_with_chat_scope() -> None:
                 llm=LLMRouter(llm, Settings(_env_file=None)),
                 plot_forecast=StubPlotForecastTool(),
                 reminders=reminders,
+                canonical_memory=MemoryRepository(session),
             )
             chat = await service.create_chat(FARMER, ChatCreate())
             reply = await service.send_message(

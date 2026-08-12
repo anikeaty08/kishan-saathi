@@ -1,0 +1,84 @@
+"""Authenticated reminder proposal and in-app task endpoints."""
+
+from typing import Annotated
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Query, status
+
+from app.modules.reminders.dependencies import get_reminder_service
+from app.modules.reminders.schemas import (
+    ProposalCreate,
+    ProposalDecision,
+    ProposalDecisionResponse,
+    ProposalResponse,
+    ReminderActionRequest,
+    ReminderCreate,
+    ReminderResponse,
+)
+from app.modules.reminders.service import ReminderService
+from app.modules.users.dependencies import get_current_farmer_id
+
+router = APIRouter(tags=["reminders"])
+
+FarmerId = Annotated[UUID, Depends(get_current_farmer_id)]
+Service = Annotated[ReminderService, Depends(get_reminder_service)]
+
+
+@router.post(
+    "/reminder-proposals",
+    response_model=ProposalResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_reminder_proposal(
+    data: ProposalCreate, farmer_id: FarmerId, service: Service
+) -> ProposalResponse:
+    """Store a suggestion without scheduling a task."""
+
+    return await service.create_proposal(farmer_id, data)
+
+
+@router.post(
+    "/reminder-proposals/{proposal_id}/decision",
+    response_model=ProposalDecisionResponse,
+)
+async def decide_reminder_proposal(
+    proposal_id: UUID,
+    data: ProposalDecision,
+    farmer_id: FarmerId,
+    service: Service,
+) -> ProposalDecisionResponse:
+    """Create a task only when the farmer explicitly accepts the proposal."""
+
+    return await service.decide_proposal(
+        farmer_id, proposal_id, accepted=data.accepted
+    )
+
+
+@router.post(
+    "/reminders", response_model=ReminderResponse, status_code=status.HTTP_201_CREATED
+)
+async def create_manual_reminder(
+    data: ReminderCreate, farmer_id: FarmerId, service: Service
+) -> ReminderResponse:
+    return await service.create_manual(farmer_id, data)
+
+
+@router.get("/reminders", response_model=list[ReminderResponse])
+async def list_reminders(
+    farmer_id: FarmerId,
+    service: Service,
+    include_finished: Annotated[bool, Query()] = False,
+) -> list[ReminderResponse]:
+    return await service.list_reminders(
+        farmer_id, include_finished=include_finished
+    )
+
+
+@router.post("/reminders/{reminder_id}/actions", response_model=ReminderResponse)
+async def apply_reminder_action(
+    reminder_id: UUID,
+    data: ReminderActionRequest,
+    farmer_id: FarmerId,
+    service: Service,
+) -> ReminderResponse:
+    return await service.apply_action(farmer_id, reminder_id, data)

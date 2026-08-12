@@ -15,7 +15,7 @@ from app.core.config import Settings
 from app.core.security import AuthContext, AuthenticatedPrincipal, ExternalIdentity
 from app.integrations.auth.provider import AuthProvider
 from app.main import create_app
-from app.modules.users.router import get_user_service
+from app.modules.users.dependencies import get_user_service
 from app.modules.users.schemas import (
     AreaUnit,
     FarmerProfileResponse,

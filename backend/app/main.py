@@ -26,6 +26,7 @@ from app.integrations.llm.provider import LLMProvider
 from app.integrations.memory.provider import MemoryProvider
 from app.integrations.storage.provider import ObjectStorageProvider
 from app.integrations.weather.provider import CurrentWeatherProvider, ForecastWeatherProvider
+from app.modules.storage_cleanup.worker import ObjectCleanupWorker
 
 
 def create_app(
@@ -57,14 +58,21 @@ def create_app(
     resolved_forecast_weather = forecast_weather_provider or build_forecast_weather_provider(
         resolved_settings
     )
+    cleanup_worker = ObjectCleanupWorker(
+        settings=resolved_settings,
+        database=resolved_database,
+        storage=resolved_object_storage,
+    )
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         logger = structlog.get_logger("lifecycle")
         logger.info("application.started", environment=resolved_settings.app_env)
+        await cleanup_worker.start()
         try:
             yield
         finally:
+            await cleanup_worker.stop()
             await application.state.forecast_weather_provider.close()
             await application.state.current_weather_provider.close()
             await application.state.memory_provider.close()

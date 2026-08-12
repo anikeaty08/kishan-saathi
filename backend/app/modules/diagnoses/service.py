@@ -4,8 +4,6 @@ import math
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-import structlog
-
 from app.core.config import Settings
 from app.core.errors import ApplicationError
 from app.integrations.inference.provider import CaseInference, LeafInferenceProvider, Prediction
@@ -31,6 +29,8 @@ from app.modules.diagnoses.schemas import (
     PredictionResponse,
 )
 from app.modules.farms.repository import FarmRepository
+from app.modules.reports.repository import ReportRepository
+from app.modules.storage_cleanup.service import ObjectCleanupService
 
 
 class DiagnosisService:
@@ -42,16 +42,19 @@ class DiagnosisService:
         settings: Settings,
         repository: DiagnosisRepository,
         farm_repository: FarmRepository,
+        report_repository: ReportRepository,
+        cleanup: ObjectCleanupService,
         storage: ObjectStorageProvider,
         inference: LeafInferenceProvider,
     ) -> None:
         self._settings = settings
         self._repository = repository
         self._farms = farm_repository
+        self._reports = report_repository
+        self._cleanup = cleanup
         self._storage = storage
         self._inference = inference
         self._preprocessor = ImagePreprocessor(settings)
-        self._logger = structlog.get_logger(__name__)
 
     async def create_case(
         self,
@@ -161,17 +164,17 @@ class DiagnosisService:
     async def delete_case(self, farmer_id: UUID, case_id: UUID) -> None:
         case = await self._case(farmer_id, case_id)
         images = await self._repository.list_images(farmer_id, case_id)
+        report_images = await self._reports.list_images_for_case(farmer_id, case_id)
+        jobs = [
+            self._cleanup.enqueue(farmer_id, object_key, "diagnosis_case_deleted")
+            for object_key in [
+                *(image.object_key for image in images),
+                *(image.object_key for image in report_images),
+            ]
+        ]
         await self._repository.delete_case(case)
         await self._repository.commit()
-        for image in images:
-            try:
-                await self._storage.delete_private(owner_id=farmer_id, key=image.object_key)
-            except OSError as exc:
-                self._logger.warning(
-                    "diagnosis.orphaned_object",
-                    object_key=image.object_key,
-                    error_type=type(exc).__name__,
-                )
+        await self._cleanup.process([job.id for job in jobs])
 
     async def _process(
         self,
@@ -223,8 +226,14 @@ class DiagnosisService:
             )
         except Exception:
             await self._repository.rollback()
-            for item in stored:
-                await self._storage.delete_private(owner_id=farmer_id, key=item.key)
+            jobs = [
+                self._cleanup.enqueue(
+                    farmer_id, item.key, "diagnosis_create_rollback"
+                )
+                for item in stored
+            ]
+            await self._repository.commit()
+            await self._cleanup.process([job.id for job in jobs])
             raise
 
         await self._repository.refresh(case)

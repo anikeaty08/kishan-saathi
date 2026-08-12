@@ -17,6 +17,8 @@ from app.integrations.storage.provider import ObjectStorageProvider
 from app.modules.diagnoses.repository import DiagnosisRepository
 from app.modules.diagnoses.service import DiagnosisService
 from app.modules.farms.repository import FarmRepository
+from app.modules.reports.repository import ReportRepository
+from app.modules.storage_cleanup.service import ObjectCleanupService
 
 
 def get_diagnosis_service(
@@ -29,6 +31,13 @@ def get_diagnosis_service(
         settings=settings,
         repository=DiagnosisRepository(session),
         farm_repository=FarmRepository(session),
+        report_repository=ReportRepository(session),
+        cleanup=ObjectCleanupService(
+            session,
+            storage,
+            backoff_base_seconds=settings.object_cleanup_backoff_base_seconds,
+            backoff_max_seconds=settings.object_cleanup_backoff_max_seconds,
+        ),
         storage=storage,
         inference=inference,
     )

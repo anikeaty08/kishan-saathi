@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import structlog
 from fastapi import Request, Response
+from starlette.routing import Match
 
 REQUEST_ID_HEADER = "X-Request-ID"
 MAX_REQUEST_ID_LENGTH = 128
@@ -50,21 +51,32 @@ async def request_context_middleware(
     structlog.contextvars.clear_contextvars()
     structlog.contextvars.bind_contextvars(request_id=request_id)
     logger = structlog.get_logger("http")
-    logger.info("request.started", method=request.method, path=request.url.path)
+    path = _route_template(request)
+    logger.info("request.started", method=request.method, path=path)
 
     try:
         response = await call_next(request)
     except Exception:
-        logger.exception("request.failed", method=request.method, path=request.url.path)
+        logger.exception("request.failed", method=request.method, path=path)
         raise
     else:
         response.headers[REQUEST_ID_HEADER] = request_id
         logger.info(
             "request.completed",
             method=request.method,
-            path=request.url.path,
+            path=path,
             status_code=response.status_code,
         )
         return response
     finally:
         structlog.contextvars.clear_contextvars()
+
+
+def _route_template(request: Request) -> str:
+    """Log route templates so path secrets such as report tokens never enter logs."""
+
+    for route in request.app.router.routes:
+        match, _ = route.matches(request.scope)
+        if match is Match.FULL:
+            return str(getattr(route, "path", "unmatched"))
+    return "unmatched"

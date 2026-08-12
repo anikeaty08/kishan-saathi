@@ -3,11 +3,16 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile, status
 
-from app.modules.farms.dependencies import get_farm_service
+from app.core.config import Settings
+from app.core.dependencies import get_app_settings
+from app.core.errors import ApplicationError
+from app.modules.farms.dependencies import get_activity_photo_service, get_farm_service
+from app.modules.farms.photos import ActivityPhotoService
 from app.modules.farms.schemas import (
     ActivityCreate,
+    ActivityPhotoResponse,
     ActivityResponse,
     ActivityUpdate,
     CropCreate,
@@ -28,6 +33,8 @@ router = APIRouter(tags=["farm-organization"])
 
 FarmerId = Annotated[UUID, Depends(get_current_farmer_id)]
 Service = Annotated[FarmService, Depends(get_farm_service)]
+PhotoService = Annotated[ActivityPhotoService, Depends(get_activity_photo_service)]
+AppSettings = Annotated[Settings, Depends(get_app_settings)]
 
 
 @router.post("/farms", response_model=FarmResponse, status_code=status.HTTP_201_CREATED)
@@ -159,7 +166,65 @@ async def update_activity(
 
 @router.delete("/activities/{activity_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_activity(
-    activity_id: UUID, farmer_id: FarmerId, service: Service
+    activity_id: UUID, farmer_id: FarmerId, service: PhotoService
 ) -> Response:
     await service.delete_activity(farmer_id, activity_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/activities/{activity_id}/photos",
+    response_model=ActivityPhotoResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_activity_photo(
+    activity_id: UUID,
+    photo: Annotated[UploadFile, File()],
+    farmer_id: FarmerId,
+    service: PhotoService,
+    settings: AppSettings,
+) -> ActivityPhotoResponse:
+    try:
+        content = await photo.read(settings.max_image_bytes + 1)
+    finally:
+        await photo.close()
+    if len(content) > settings.max_image_bytes:
+        raise ApplicationError(code="ACTIVITY_PHOTO_TOO_LARGE", status_code=413)
+    return await service.add(farmer_id, activity_id, content)
+
+
+@router.get(
+    "/activities/{activity_id}/photos", response_model=list[ActivityPhotoResponse]
+)
+async def list_activity_photos(
+    activity_id: UUID, farmer_id: FarmerId, service: PhotoService
+) -> list[ActivityPhotoResponse]:
+    return await service.list(farmer_id, activity_id)
+
+
+@router.get("/activities/{activity_id}/photos/{photo_id}")
+async def get_activity_photo(
+    activity_id: UUID,
+    photo_id: UUID,
+    farmer_id: FarmerId,
+    service: PhotoService,
+) -> Response:
+    return Response(
+        content=await service.read(farmer_id, activity_id, photo_id),
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, no-store"},
+    )
+
+
+@router.delete(
+    "/activities/{activity_id}/photos/{photo_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_activity_photo(
+    activity_id: UUID,
+    photo_id: UUID,
+    farmer_id: FarmerId,
+    service: PhotoService,
+) -> Response:
+    await service.delete(farmer_id, activity_id, photo_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

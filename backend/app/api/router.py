@@ -9,6 +9,8 @@ from app.modules.health.router import router as health_router
 from app.modules.history.router import router as history_router
 from app.modules.memories.router import router as memories_router
 from app.modules.reminders.router import router as reminders_router
+from app.modules.reports.router import router as reports_router
+from app.modules.storage_cleanup.router import router as storage_cleanup_router
 from app.modules.users.router import router as users_router
 from app.modules.weather.router import router as weather_router
 
@@ -23,4 +25,6 @@ versioned_api_router.include_router(history_router)
 versioned_api_router.include_router(chats_router)
 versioned_api_router.include_router(memories_router)
 versioned_api_router.include_router(reminders_router)
+versioned_api_router.include_router(reports_router)
+versioned_api_router.include_router(storage_cleanup_router)
 versioned_api_router.include_router(weather_router)

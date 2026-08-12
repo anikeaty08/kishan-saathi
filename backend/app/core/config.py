@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     )
     stored_image_max_dimension: int = Field(default=2048, ge=512, le=4096)
     stored_image_jpeg_quality: int = Field(default=90, ge=70, le=95)
+    object_cleanup_interval_seconds: float = Field(default=30.0, ge=1, le=3600)
+    object_cleanup_batch_size: int = Field(default=50, ge=1, le=500)
+    object_cleanup_backoff_base_seconds: int = Field(default=60, ge=1, le=3600)
+    object_cleanup_backoff_max_seconds: int = Field(default=21600, ge=60, le=86400)
     diagnosis_low_confidence_threshold: float = Field(default=0.50, gt=0, lt=1)
     diagnosis_high_confidence_threshold: float = Field(default=0.75, gt=0, lt=1)
 

@@ -9,6 +9,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     Text,
@@ -136,3 +137,28 @@ class Activity(TimestampMixin, Base):
     title: Mapped[str] = mapped_column(String(150))
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ActivityPhoto(Base):
+    """Sanitized private image attached to one manual activity."""
+
+    __tablename__ = "activity_photos"
+    __table_args__ = (
+        UniqueConstraint("object_key", name="uq_activity_photos_object_key"),
+        CheckConstraint("width >= 32 AND height >= 32", name="ck_activity_photos_dimensions"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    farmer_id: Mapped[UUID] = mapped_column(
+        ForeignKey("farmer_profiles.id", ondelete="RESTRICT"), index=True
+    )
+    activity_id: Mapped[UUID] = mapped_column(
+        ForeignKey("activities.id", ondelete="CASCADE"), index=True
+    )
+    object_key: Mapped[str] = mapped_column(String(512))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    width: Mapped[int] = mapped_column(Integer)
+    height: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

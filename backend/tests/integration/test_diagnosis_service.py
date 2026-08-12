@@ -29,6 +29,8 @@ from app.modules.diagnoses.schemas import (
 )
 from app.modules.diagnoses.service import DiagnosisService
 from app.modules.farms.repository import FarmRepository
+from app.modules.reports.repository import ReportRepository
+from app.modules.storage_cleanup.service import ObjectCleanupService
 from app.modules.users.models import FarmerProfile
 
 FARMER = UUID("00000000-0000-0000-0000-000000000001")
@@ -97,6 +99,8 @@ async def test_case_retakes_feedback_owner_isolation_and_deletion(tmp_path: Path
                 settings=settings,
                 repository=DiagnosisRepository(session),
                 farm_repository=FarmRepository(session),
+                report_repository=ReportRepository(session),
+                cleanup=ObjectCleanupService(session, storage),
                 storage=storage,
                 inference=inference,
             )
@@ -167,6 +171,8 @@ async def test_failed_inference_removes_stored_objects_and_database_rows(tmp_pat
                 settings=Settings(_env_file=None),
                 repository=DiagnosisRepository(session),
                 farm_repository=FarmRepository(session),
+                report_repository=ReportRepository(session),
+                cleanup=ObjectCleanupService(session, LocalObjectStorage(tmp_path)),
                 storage=LocalObjectStorage(tmp_path),
                 inference=FailingInference(),
             )

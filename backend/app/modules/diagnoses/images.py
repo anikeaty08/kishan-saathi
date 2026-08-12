@@ -22,16 +22,17 @@ class PreparedImage:
 class ImagePreprocessor:
     """Validate images, remove EXIF, and constrain storage size."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, *, error_prefix: str = "SCAN_IMAGE") -> None:
         self._max_bytes = settings.max_image_bytes
         self._max_dimension = settings.stored_image_max_dimension
         self._jpeg_quality = settings.stored_image_jpeg_quality
+        self._error_prefix = error_prefix
 
     async def prepare(self, content: bytes) -> PreparedImage:
         if not content:
-            raise ApplicationError(code="SCAN_IMAGE_EMPTY", status_code=422)
+            raise ApplicationError(code=f"{self._error_prefix}_EMPTY", status_code=422)
         if len(content) > self._max_bytes:
-            raise ApplicationError(code="SCAN_IMAGE_TOO_LARGE", status_code=413)
+            raise ApplicationError(code=f"{self._error_prefix}_TOO_LARGE", status_code=413)
         return await asyncio.to_thread(self._prepare_sync, content)
 
     def _prepare_sync(self, content: bytes) -> PreparedImage:
@@ -51,7 +52,9 @@ class ImagePreprocessor:
                     optimize=True,
                 )
         except (UnidentifiedImageError, OSError, ValueError) as exc:
-            raise ApplicationError(code="SCAN_IMAGE_INVALID", status_code=422) from exc
+            raise ApplicationError(
+                code=f"{self._error_prefix}_INVALID", status_code=422
+            ) from exc
         if width < 32 or height < 32:
-            raise ApplicationError(code="SCAN_IMAGE_TOO_SMALL", status_code=422)
+            raise ApplicationError(code=f"{self._error_prefix}_TOO_SMALL", status_code=422)
         return PreparedImage(content=output.getvalue(), width=width, height=height)

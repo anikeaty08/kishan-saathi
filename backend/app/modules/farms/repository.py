@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.chats.models import ChatSession
 from app.modules.diagnoses.models import DiagnosisCase
-from app.modules.farms.models import Activity, Crop, CropStageEvent, Farm, Plot
+from app.modules.farms.models import Activity, ActivityPhoto, Crop, CropStageEvent, Farm, Plot
 from app.modules.memories.models import ChatMemoryConnection, ScopedMemoryFact
 from app.modules.reminders.models import Reminder, ReminderProposal
 
@@ -111,6 +111,31 @@ class FarmRepository:
         )
         return result.scalar_one_or_none()
 
+    async def list_activity_photos(
+        self, farmer_id: UUID, activity_id: UUID
+    ) -> list[ActivityPhoto]:
+        result = await self.session.scalars(
+            select(ActivityPhoto)
+            .where(
+                ActivityPhoto.farmer_id == farmer_id,
+                ActivityPhoto.activity_id == activity_id,
+            )
+            .order_by(ActivityPhoto.created_at)
+        )
+        return list(result)
+
+    async def get_activity_photo(
+        self, farmer_id: UUID, activity_id: UUID, photo_id: UUID
+    ) -> ActivityPhoto | None:
+        result = await self.session.execute(
+            select(ActivityPhoto).where(
+                ActivityPhoto.id == photo_id,
+                ActivityPhoto.activity_id == activity_id,
+                ActivityPhoto.farmer_id == farmer_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def plot_activity_count(self, farmer_id: UUID, plot_id: UUID) -> int:
         value = await self.session.scalar(
             select(func.count()).select_from(Activity).where(
@@ -187,14 +212,18 @@ class FarmRepository:
             for name, statement in queries.items()
         }
 
-    def add(self, value: Farm | Plot | Crop | CropStageEvent | Activity) -> None:
+    def add(
+        self, value: Farm | Plot | Crop | CropStageEvent | Activity | ActivityPhoto
+    ) -> None:
         self.session.add(value)
 
     async def commit(self) -> None:
         await self.session.commit()
 
-    async def refresh(self, value: Farm | Plot | Crop | CropStageEvent | Activity) -> None:
+    async def refresh(
+        self, value: Farm | Plot | Crop | CropStageEvent | Activity | ActivityPhoto
+    ) -> None:
         await self.session.refresh(value)
 
-    async def delete(self, value: Farm | Plot | Crop | Activity) -> None:
+    async def delete(self, value: Farm | Plot | Crop | Activity | ActivityPhoto) -> None:
         await self.session.delete(value)

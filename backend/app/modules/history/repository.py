@@ -5,14 +5,14 @@ from datetime import datetime
 from typing import TypeVar
 from uuid import UUID
 
-from sqlalchemy import Select, or_, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.modules.chats.models import ChatSession
 from app.modules.diagnoses.models import DiagnosisAssessment, DiagnosisCase
-from app.modules.farms.models import Activity, Crop, CropStageEvent
+from app.modules.farms.models import Activity, ActivityPhoto, Crop, CropStageEvent
 from app.modules.history.schemas import TimelineCategory, TimelineItem
 from app.modules.memories.models import ChatMemoryConnection
 from app.modules.reminders.models import ReminderEvent
@@ -261,6 +261,18 @@ class HistoryRepository:
         values = await self._session.scalars(
             statement.order_by(Activity.occurred_at.desc()).limit(limit)
         )
+        activities = list(values)
+        photo_counts: dict[UUID, int] = {}
+        if activities:
+            counts = await self._session.execute(
+                select(ActivityPhoto.activity_id, func.count())
+                .where(
+                    ActivityPhoto.farmer_id == farmer_id,
+                    ActivityPhoto.activity_id.in_([value.id for value in activities]),
+                )
+                .group_by(ActivityPhoto.activity_id)
+            )
+            photo_counts = {activity_id: int(count) for activity_id, count in counts}
         return [
             TimelineItem(
                 id=value.id,
@@ -270,9 +282,13 @@ class HistoryRepository:
                 plot_id=plot_id,
                 crop_id=value.crop_id,
                 reference_id=value.id,
-                data={"title": value.title, "notes": value.notes},
+                data={
+                    "title": value.title,
+                    "notes": value.notes,
+                    "photo_count": photo_counts.get(value.id, 0),
+                },
             )
-            for value in values
+            for value in activities
         ]
 
     async def _crop_events(

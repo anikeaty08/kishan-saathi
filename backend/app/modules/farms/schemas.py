@@ -169,6 +169,16 @@ class ActivityResponse(BaseModel):
     updated_at: datetime
 
 
+class ActivityPhotoResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    activity_id: UUID
+    size_bytes: int
+    width: int
+    height: int
+    created_at: datetime
+
+
 class DeletionImpactResponse(BaseModel):
     entity_id: UUID
     can_delete: bool

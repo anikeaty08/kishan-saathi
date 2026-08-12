@@ -7,10 +7,8 @@ from fastapi import APIRouter, Depends, Query, status
 
 from app.modules.reminders.dependencies import get_reminder_service
 from app.modules.reminders.schemas import (
-    ProposalCreate,
     ProposalDecision,
     ProposalDecisionResponse,
-    ProposalResponse,
     ReminderActionRequest,
     ReminderCreate,
     ReminderResponse,
@@ -22,19 +20,6 @@ router = APIRouter(tags=["reminders"])
 
 FarmerId = Annotated[UUID, Depends(get_current_farmer_id)]
 Service = Annotated[ReminderService, Depends(get_reminder_service)]
-
-
-@router.post(
-    "/reminder-proposals",
-    response_model=ProposalResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_reminder_proposal(
-    data: ProposalCreate, farmer_id: FarmerId, service: Service
-) -> ProposalResponse:
-    """Store a suggestion without scheduling a task."""
-
-    return await service.create_proposal(farmer_id, data)
 
 
 @router.post(

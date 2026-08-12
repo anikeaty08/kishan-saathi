@@ -55,6 +55,17 @@ class FarmRepository:
         )
         return list(result)
 
+    async def list_activities(
+        self, farmer_id: UUID, plot_id: UUID, *, limit: int = 10
+    ) -> list[Activity]:
+        result = await self.session.scalars(
+            select(Activity)
+            .where(Activity.farmer_id == farmer_id, Activity.plot_id == plot_id)
+            .order_by(Activity.occurred_at.desc())
+            .limit(limit)
+        )
+        return list(result)
+
     async def get_crop(self, farmer_id: UUID, crop_id: UUID) -> Crop | None:
         result = await self.session.execute(
             select(Crop).where(Crop.id == crop_id, Crop.farmer_id == farmer_id)

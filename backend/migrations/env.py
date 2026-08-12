@@ -15,6 +15,7 @@ from app.modules.diagnoses import models as diagnosis_models  # noqa: F401
 from app.modules.farms import models as farm_models  # noqa: F401
 from app.modules.reminders import models as reminder_models  # noqa: F401
 from app.modules.users import models as user_models  # noqa: F401
+from app.modules.weather import models as weather_models  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:

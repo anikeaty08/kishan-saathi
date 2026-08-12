@@ -26,6 +26,10 @@ class ReminderProposal(Base):
             "status IN ('pending', 'accepted', 'declined', 'expired')",
             name="ck_reminder_proposals_status",
         ),
+        CheckConstraint(
+            "recurrence_days IS NULL OR recurrence_days >= 1",
+            name="ck_reminder_proposals_recurrence",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -74,7 +78,10 @@ class Reminder(Base):
         ForeignKey("farmer_profiles.id", ondelete="RESTRICT"), index=True
     )
     proposal_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("reminder_proposals.id", ondelete="SET NULL"), nullable=True, index=True
+        ForeignKey("reminder_proposals.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        unique=True,
     )
     chat_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("chat_sessions.id", ondelete="SET NULL"), nullable=True, index=True

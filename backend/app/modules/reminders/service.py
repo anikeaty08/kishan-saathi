@@ -58,7 +58,9 @@ class ReminderService:
     async def decide_proposal(
         self, farmer_id: UUID, proposal_id: UUID, *, accepted: bool
     ) -> ProposalDecisionResponse:
-        proposal = await self._repository.get_proposal(farmer_id, proposal_id)
+        proposal = await self._repository.get_proposal(
+            farmer_id, proposal_id, for_update=True
+        )
         if proposal is None:
             raise ApplicationError(code="REMINDER_PROPOSAL_NOT_FOUND", status_code=404)
         if proposal.status != "pending":
@@ -119,7 +121,9 @@ class ReminderService:
         reminder_id: UUID,
         data: ReminderActionRequest,
     ) -> ReminderResponse:
-        reminder = await self._repository.get_reminder(farmer_id, reminder_id)
+        reminder = await self._repository.get_reminder(
+            farmer_id, reminder_id, for_update=True
+        )
         if reminder is None:
             raise ApplicationError(code="REMINDER_NOT_FOUND", status_code=404)
         if reminder.status != "pending":
@@ -136,12 +140,16 @@ class ReminderService:
         else:
             reminder.status = "cancelled"
             reminder.completed_at = now
-        await self._repository.commit()
-        await self._repository.refresh(reminder)
         if (
             data.action in {ReminderAction.DONE, ReminderAction.SKIP}
             and reminder.recurrence_days
         ):
+            reminder_due_at = reminder.due_at
+            if reminder_due_at.tzinfo is None:
+                reminder_due_at = reminder_due_at.replace(tzinfo=UTC)
+            next_due_at = reminder_due_at + timedelta(days=reminder.recurrence_days)
+            while next_due_at <= now:
+                next_due_at += timedelta(days=reminder.recurrence_days)
             next_reminder = Reminder(
                 farmer_id=farmer_id,
                 chat_id=reminder.chat_id,
@@ -150,12 +158,13 @@ class ReminderService:
                 crop_id=reminder.crop_id,
                 title=reminder.title,
                 notes=reminder.notes,
-                due_at=reminder.due_at + timedelta(days=reminder.recurrence_days),
+                due_at=next_due_at,
                 recurrence_days=reminder.recurrence_days,
                 status="pending",
             )
             self._repository.add(next_reminder)
-            await self._repository.commit()
+        await self._repository.commit()
+        await self._repository.refresh(reminder)
         return ReminderResponse.model_validate(reminder)
 
     async def _validate_links(

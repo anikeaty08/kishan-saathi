@@ -7,6 +7,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
+from app.modules.reminders.schemas import ProposalResponse
+
 
 class ChatScope(StrEnum):
     GENERAL = "general"
@@ -91,4 +93,5 @@ class ChatDetailResponse(ChatResponse):
 class SendMessageResponse(BaseModel):
     user_message: ChatMessageResponse
     assistant_message: ChatMessageResponse
-    reminder_proposal: str | None
+    follow_up_questions: list[str]
+    reminder_proposal: ProposalResponse | None

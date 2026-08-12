@@ -16,6 +16,7 @@ from app.integrations.inference.provider import LeafInferenceProvider
 from app.integrations.llm.provider import LLMProvider
 from app.integrations.memory.provider import MemoryProvider
 from app.integrations.storage.provider import ObjectStorageProvider
+from app.integrations.weather.provider import CurrentWeatherProvider, ForecastWeatherProvider
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -56,6 +57,14 @@ def get_llm_provider(request: Request) -> LLMProvider:
 
 def get_memory_provider(request: Request) -> MemoryProvider:
     return cast(MemoryProvider, request.app.state.memory_provider)
+
+
+def get_current_weather_provider(request: Request) -> CurrentWeatherProvider:
+    return cast(CurrentWeatherProvider, request.app.state.current_weather_provider)
+
+
+def get_forecast_weather_provider(request: Request) -> ForecastWeatherProvider:
+    return cast(ForecastWeatherProvider, request.app.state.forecast_weather_provider)
 
 
 async def get_auth_context(

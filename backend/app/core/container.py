@@ -13,6 +13,12 @@ from app.integrations.memory.mem0 import Mem0MemoryProvider
 from app.integrations.memory.provider import MemoryProvider, UnavailableMemoryProvider
 from app.integrations.storage.local import LocalObjectStorage
 from app.integrations.storage.provider import ObjectStorageProvider
+from app.integrations.weather.open_meteo import OpenMeteoForecastProvider
+from app.integrations.weather.openweather import (
+    OpenWeatherCurrentProvider,
+    UnavailableCurrentWeatherProvider,
+)
+from app.integrations.weather.provider import CurrentWeatherProvider, ForecastWeatherProvider
 
 
 def build_auth_provider(settings: Settings) -> AuthProvider:
@@ -45,3 +51,13 @@ def build_memory_provider(settings: Settings) -> MemoryProvider:
     if not settings.mem0_api_key:
         return UnavailableMemoryProvider()
     return Mem0MemoryProvider(settings.mem0_api_key)
+
+
+def build_current_weather_provider(settings: Settings) -> CurrentWeatherProvider:
+    if not settings.openweather_api_key:
+        return UnavailableCurrentWeatherProvider()
+    return OpenWeatherCurrentProvider(settings)
+
+
+def build_forecast_weather_provider(settings: Settings) -> ForecastWeatherProvider:
+    return OpenMeteoForecastProvider(settings)

@@ -11,6 +11,7 @@ from app.integrations.llm.provider import (
     LLMRequest,
     LLMResult,
     LLMTask,
+    LLMTool,
 )
 from app.integrations.llm.router import LLMRouter
 
@@ -39,3 +40,31 @@ async def test_router_uses_mini_for_titles_and_primary_for_guidance() -> None:
     )
 
     assert provider.models == ["gpt-5-mini", "gpt-5"]
+
+
+@pytest.mark.asyncio
+async def test_router_preserves_backend_controlled_tools() -> None:
+    provider = RecordingProvider()
+    captured: list[str] = []
+
+    async def execute() -> str:
+        captured.append("called")
+        return "forecast"
+
+    tool = LLMTool(
+        name="get_plot_forecast",
+        description="Owned plot only",
+        execute=execute,
+    )
+    request = LLMRequest(
+        LLMTask.AGRICULTURAL_GUIDANCE,
+        "test",
+        "test",
+        UUID("00000000-0000-0000-0000-000000000001"),
+        tools=(tool,),
+    )
+
+    await LLMRouter(provider, Settings(_env_file=None)).respond(request)
+
+    assert request.tools == (tool,)
+    assert captured == []

@@ -32,11 +32,18 @@ class Settings(BaseSettings):
     cognito_app_client_id: str = ""
     cognito_jwks_cache_seconds: int = Field(default=3600, ge=60, le=86400)
     external_request_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+    openai_request_timeout_seconds: float = Field(default=45.0, gt=5, le=120)
 
     openai_api_key: str = ""
     openai_primary_model: str = "gpt-5"
     openai_light_model: str = "gpt-5-mini"
     mem0_api_key: str = ""
+
+    openweather_api_key: str = ""
+    openweather_base_url: str = "https://api.openweathermap.org/data/2.5"
+    open_meteo_base_url: str = "https://api.open-meteo.com/v1"
+    weather_cache_seconds: int = Field(default=3600, ge=300, le=21600)
+    weather_max_stale_seconds: int = Field(default=21600, ge=3600, le=86400)
 
     local_storage_path: str = "./storage"
     max_image_bytes: int = Field(default=10 * 1024 * 1024, ge=1024, le=50 * 1024 * 1024)
@@ -53,6 +60,10 @@ class Settings(BaseSettings):
     @property
     def cognito_configured(self) -> bool:
         return bool(self.cognito_user_pool_id and self.cognito_app_client_id)
+
+    @property
+    def openweather_configured(self) -> bool:
+        return bool(self.openweather_api_key)
 
 
 @lru_cache

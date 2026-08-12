@@ -1,5 +1,6 @@
 """Integration tests for chat isolation and backend-owned context assembly."""
 
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -13,16 +14,24 @@ from app.integrations.llm.provider import (
     LLMProvider,
     LLMRequest,
     LLMResult,
+    ReminderProposalDraft,
 )
 from app.integrations.llm.router import LLMRouter
 from app.integrations.memory.provider import MemoryFact, MemoryProvider
+from app.integrations.weather.provider import (
+    CurrentWeather,
+    ForecastDay,
+    PlotForecast,
+)
 from app.modules.chats.repository import ChatRepository
 from app.modules.chats.schemas import ChatCreate, ChatMessageCreate, ChatScope, ChatUpdate
 from app.modules.chats.service import ChatService
 from app.modules.diagnoses.repository import DiagnosisRepository
 from app.modules.farms.models import Crop, Farm, Plot
 from app.modules.farms.repository import FarmRepository
+from app.modules.reminders.repository import ReminderRepository
 from app.modules.users.models import FarmerProfile
+from app.modules.weather.schemas import PlotForecastResponse
 
 FARMER = UUID("00000000-0000-0000-0000-000000000001")
 OTHER = UUID("00000000-0000-0000-0000-000000000002")
@@ -31,14 +40,12 @@ OTHER = UUID("00000000-0000-0000-0000-000000000002")
 class CapturingLLM(LLMProvider):
     def __init__(self) -> None:
         self.requests: list[tuple[LLMRequest, str]] = []
+        self.reply = AssistantReply(short_answer="Check the affected leaves carefully.")
 
     async def respond(self, request: LLMRequest, *, model: str) -> LLMResult:
         self.requests.append((request, model))
         return LLMResult(
-            reply=AssistantReply(
-                short_answer="Check the affected leaves carefully.",
-                reminder_proposal="Inspect again in two days",
-            ),
+            reply=self.reply,
             provider_response_id="response-1",
             model=model,
         )
@@ -77,6 +84,61 @@ class ScopedMemory(MemoryProvider):
         return None
 
 
+class StubCurrentWeather:
+    name = "stub-current"
+
+    async def current(self, *, latitude: float, longitude: float) -> CurrentWeather:
+        del latitude, longitude
+        return CurrentWeather(
+            observed_at=datetime.now(tz=UTC),
+            condition_code=800,
+            condition="clear",
+            temperature_c=30,
+            feels_like_c=31,
+            humidity_percent=50,
+            wind_speed_mps=2,
+        )
+
+    async def close(self) -> None:
+        return None
+
+
+class StubForecastWeather:
+    name = "open-meteo"
+
+    async def forecast(self, *, latitude: float, longitude: float) -> PlotForecast:
+        del latitude, longitude
+        return PlotForecast(
+            timezone="Asia/Kolkata",
+            generated_at=datetime.now(tz=UTC),
+            days=[
+                ForecastDay(
+                    date=date.today(),
+                    condition_code=61,
+                    temperature_min_c=22,
+                    temperature_max_c=31,
+                    precipitation_sum_mm=5,
+                    precipitation_probability_max_percent=70,
+                    wind_speed_max_kmh=15,
+                )
+            ],
+        )
+
+    async def close(self) -> None:
+        return None
+
+
+class StubPlotForecastTool:
+    async def get(self, farmer_id: UUID, plot_id: UUID) -> PlotForecastResponse:
+        del farmer_id, plot_id
+        return PlotForecastResponse(
+            forecast=await StubForecastWeather().forecast(latitude=0, longitude=0),
+            provider="open-meteo",
+            fetched_at=datetime.now(tz=UTC),
+            is_stale=False,
+        )
+
+
 @pytest.mark.asyncio
 async def test_general_and_plot_chats_use_distinct_context_and_models() -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -110,6 +172,8 @@ async def test_general_and_plot_chats_use_distinct_context_and_models() -> None:
                 diagnoses=DiagnosisRepository(session),
                 memory=memory,
                 llm=LLMRouter(llm, Settings(_env_file=None)),
+                plot_forecast=StubPlotForecastTool(),
+                reminders=ReminderRepository(session),
             )
             general = await service.create_chat(FARMER, ChatCreate())
             plot_chat = await service.create_chat(
@@ -145,16 +209,68 @@ async def test_general_and_plot_chats_use_distinct_context_and_models() -> None:
 
     general_request, general_model = llm.requests[0]
     plot_request, plot_model = llm.requests[1]
-    assert general_model == "gpt-5-mini"
+    assert general_model == "gpt-5"
     assert plot_model == "gpt-5"
     assert "No farm, plot, scan" in general_request.input_text
     assert "Tomato Plot" not in general_request.input_text
     assert "Tomato Plot" in plot_request.input_text
     assert "Irrigation was completed yesterday" in plot_request.input_text
     assert memory.searches == [(FARMER, plot.id, "What should I do next?")]
-    assert plot_reply.reminder_proposal == "Inspect again in two days"
+    assert general_request.tools == ()
+    assert [tool.name for tool in plot_request.tools] == ["get_plot_forecast"]
+    assert plot_reply.reminder_proposal is None
     assert hidden.value.code == "CHAT_NOT_FOUND"
     assert archived.value.code == "CHAT_ARCHIVED"
+
+
+@pytest.mark.asyncio
+async def test_typed_agent_reminder_is_persisted_with_chat_scope() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    llm = CapturingLLM()
+    due_at = datetime.now(tz=UTC) + timedelta(days=2)
+
+    llm.reply = AssistantReply(
+        short_answer="Inspect again after two days.",
+        follow_up_questions=["Did the spots spread?"],
+        reminder_proposal=ReminderProposalDraft(
+            title="Inspect leaf spots", due_at=due_at
+        ),
+    )
+    try:
+        async with sessions() as session:
+            session.add(_farmer(FARMER, "a"))
+            await session.commit()
+            reminders = ReminderRepository(session)
+            service = ChatService(
+                repository=ChatRepository(session),
+                farms=FarmRepository(session),
+                diagnoses=DiagnosisRepository(session),
+                memory=ScopedMemory(),
+                llm=LLMRouter(llm, Settings(_env_file=None)),
+                plot_forecast=StubPlotForecastTool(),
+                reminders=reminders,
+            )
+            chat = await service.create_chat(FARMER, ChatCreate())
+            reply = await service.send_message(
+                FARMER,
+                chat.id,
+                ChatMessageCreate(content="Remind me to inspect these spots"),
+                preferred_language=None,
+            )
+            assert reply.reminder_proposal is not None
+            stored = await reminders.get_proposal(
+                FARMER, reply.reminder_proposal.id
+            )
+    finally:
+        await engine.dispose()
+
+    assert stored is not None
+    assert stored.chat_id == chat.id
+    assert stored.status == "pending"
+    assert reply.follow_up_questions == ["Did the spots spread?"]
 
 
 def _farmer(farmer_id: UUID, suffix: str) -> FarmerProfile:

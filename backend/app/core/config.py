@@ -39,6 +39,14 @@ class Settings(BaseSettings):
     mem0_api_key: str = ""
 
     local_storage_path: str = "./storage"
+    max_image_bytes: int = Field(default=10 * 1024 * 1024, ge=1024, le=50 * 1024 * 1024)
+    max_diagnosis_upload_bytes: int = Field(
+        default=50 * 1024 * 1024,
+        ge=1024,
+        le=250 * 1024 * 1024,
+    )
+    stored_image_max_dimension: int = Field(default=2048, ge=512, le=4096)
+    stored_image_jpeg_quality: int = Field(default=90, ge=70, le=95)
 
 
 @lru_cache

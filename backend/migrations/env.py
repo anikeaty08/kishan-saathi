@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.core.config import get_settings
 from app.database.base import Base
+from app.modules.diagnoses import models as diagnosis_models  # noqa: F401
 from app.modules.farms import models as farm_models  # noqa: F401
 from app.modules.users import models as user_models  # noqa: F401
 

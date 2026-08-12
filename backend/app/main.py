@@ -8,17 +8,25 @@ from fastapi import FastAPI
 
 from app.api.router import api_router, versioned_api_router
 from app.core.config import Settings, get_settings
-from app.core.container import build_auth_provider
+from app.core.container import (
+    build_auth_provider,
+    build_leaf_inference_provider,
+    build_object_storage,
+)
 from app.core.errors import register_error_handlers
 from app.core.logging import configure_logging, request_context_middleware
 from app.database.session import Database, DatabasePort
 from app.integrations.auth.provider import AuthProvider
+from app.integrations.inference.provider import LeafInferenceProvider
+from app.integrations.storage.provider import ObjectStorageProvider
 
 
 def create_app(
     settings: Settings | None = None,
     database: DatabasePort | None = None,
     auth_provider: AuthProvider | None = None,
+    object_storage: ObjectStorageProvider | None = None,
+    leaf_inference_provider: LeafInferenceProvider | None = None,
 ) -> FastAPI:
     """Build an application with explicit, replaceable process dependencies."""
 
@@ -26,6 +34,10 @@ def create_app(
     configure_logging(resolved_settings.log_level)
     resolved_database = database or Database(resolved_settings)
     resolved_auth_provider = auth_provider or build_auth_provider(resolved_settings)
+    resolved_object_storage = object_storage or build_object_storage(resolved_settings)
+    resolved_leaf_inference = leaf_inference_provider or build_leaf_inference_provider(
+        resolved_settings
+    )
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -34,6 +46,8 @@ def create_app(
         try:
             yield
         finally:
+            await application.state.leaf_inference_provider.close()
+            await application.state.object_storage.close()
             await application.state.auth_provider.close()
             await application.state.database.dispose()
             logger.info("application.stopped")
@@ -47,6 +61,8 @@ def create_app(
     application.state.settings = resolved_settings
     application.state.database = resolved_database
     application.state.auth_provider = resolved_auth_provider
+    application.state.object_storage = resolved_object_storage
+    application.state.leaf_inference_provider = resolved_leaf_inference
     application.middleware("http")(request_context_middleware)
     register_error_handlers(application)
     application.include_router(api_router)

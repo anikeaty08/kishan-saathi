@@ -12,6 +12,8 @@ from app.core.errors import ApplicationError
 from app.core.security import AuthContext
 from app.database.session import DatabasePort
 from app.integrations.auth.provider import AuthProvider
+from app.integrations.inference.provider import LeafInferenceProvider
+from app.integrations.storage.provider import ObjectStorageProvider
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -32,6 +34,18 @@ def get_auth_provider(request: Request) -> AuthProvider:
     """Resolve the authentication adapter selected during startup."""
 
     return cast(AuthProvider, request.app.state.auth_provider)
+
+
+def get_object_storage(request: Request) -> ObjectStorageProvider:
+    """Resolve private object storage selected during startup."""
+
+    return cast(ObjectStorageProvider, request.app.state.object_storage)
+
+
+def get_leaf_inference_provider(request: Request) -> LeafInferenceProvider:
+    """Resolve the leaf model provider selected during startup."""
+
+    return cast(LeafInferenceProvider, request.app.state.leaf_inference_provider)
 
 
 async def get_auth_context(

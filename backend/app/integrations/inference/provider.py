@@ -30,6 +30,8 @@ class CaseInference:
 
     combined_predictions: tuple[Prediction, ...]
     images: tuple[ImageInference, ...]
+    model_name: str
+    model_version: str
 
 
 class LeafInferenceProvider(Protocol):

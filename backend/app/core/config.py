@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     )
     stored_image_max_dimension: int = Field(default=2048, ge=512, le=4096)
     stored_image_jpeg_quality: int = Field(default=90, ge=70, le=95)
+    diagnosis_low_confidence_threshold: float = Field(default=0.50, gt=0, lt=1)
+    diagnosis_high_confidence_threshold: float = Field(default=0.75, gt=0, lt=1)
+
+    @property
+    def cognito_configured(self) -> bool:
+        return bool(self.cognito_user_pool_id and self.cognito_app_client_id)
 
 
 @lru_cache

@@ -7,6 +7,10 @@ from app.integrations.inference.provider import (
     LeafInferenceProvider,
     UnavailableLeafInferenceProvider,
 )
+from app.integrations.llm.openai_responses import OpenAIResponsesProvider
+from app.integrations.llm.provider import LLMProvider, UnavailableLLMProvider
+from app.integrations.memory.mem0 import Mem0MemoryProvider
+from app.integrations.memory.provider import MemoryProvider, UnavailableMemoryProvider
 from app.integrations.storage.local import LocalObjectStorage
 from app.integrations.storage.provider import ObjectStorageProvider
 
@@ -29,3 +33,15 @@ def build_leaf_inference_provider(_settings: Settings) -> LeafInferenceProvider:
     """Fail honestly until the evaluated checkpoint or service is supplied."""
 
     return UnavailableLeafInferenceProvider()
+
+
+def build_llm_provider(settings: Settings) -> LLMProvider:
+    if not settings.openai_api_key:
+        return UnavailableLLMProvider()
+    return OpenAIResponsesProvider(settings)
+
+
+def build_memory_provider(settings: Settings) -> MemoryProvider:
+    if not settings.mem0_api_key:
+        return UnavailableMemoryProvider()
+    return Mem0MemoryProvider(settings.mem0_api_key)

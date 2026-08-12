@@ -1,0 +1,30 @@
+"""Task-policy based model routing without feature-specific condition chains."""
+
+from dataclasses import dataclass
+
+from app.core.config import Settings
+from app.integrations.llm.provider import LLMProvider, LLMRequest, LLMResult, LLMTask
+
+
+@dataclass(frozen=True, slots=True)
+class ModelPolicy:
+    model: str
+
+
+class LLMRouter:
+    """Map typed tasks to configuration-owned model policies."""
+
+    def __init__(self, provider: LLMProvider, settings: Settings) -> None:
+        light = ModelPolicy(settings.openai_light_model)
+        primary = ModelPolicy(settings.openai_primary_model)
+        self._provider = provider
+        self._policies = {
+            LLMTask.TITLE: light,
+            LLMTask.ROUTING: light,
+            LLMTask.EXTRACTION: light,
+            LLMTask.ROUTINE_CHAT: light,
+            LLMTask.AGRICULTURAL_GUIDANCE: primary,
+        }
+
+    async def respond(self, request: LLMRequest) -> LLMResult:
+        return await self._provider.respond(request, model=self._policies[request.task].model)

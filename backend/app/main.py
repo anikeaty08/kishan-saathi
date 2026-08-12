@@ -11,6 +11,8 @@ from app.core.config import Settings, get_settings
 from app.core.container import (
     build_auth_provider,
     build_leaf_inference_provider,
+    build_llm_provider,
+    build_memory_provider,
     build_object_storage,
 )
 from app.core.errors import register_error_handlers
@@ -18,6 +20,8 @@ from app.core.logging import configure_logging, request_context_middleware
 from app.database.session import Database, DatabasePort
 from app.integrations.auth.provider import AuthProvider
 from app.integrations.inference.provider import LeafInferenceProvider
+from app.integrations.llm.provider import LLMProvider
+from app.integrations.memory.provider import MemoryProvider
 from app.integrations.storage.provider import ObjectStorageProvider
 
 
@@ -27,6 +31,8 @@ def create_app(
     auth_provider: AuthProvider | None = None,
     object_storage: ObjectStorageProvider | None = None,
     leaf_inference_provider: LeafInferenceProvider | None = None,
+    llm_provider: LLMProvider | None = None,
+    memory_provider: MemoryProvider | None = None,
 ) -> FastAPI:
     """Build an application with explicit, replaceable process dependencies."""
 
@@ -38,6 +44,8 @@ def create_app(
     resolved_leaf_inference = leaf_inference_provider or build_leaf_inference_provider(
         resolved_settings
     )
+    resolved_llm_provider = llm_provider or build_llm_provider(resolved_settings)
+    resolved_memory_provider = memory_provider or build_memory_provider(resolved_settings)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -46,6 +54,8 @@ def create_app(
         try:
             yield
         finally:
+            await application.state.memory_provider.close()
+            await application.state.llm_provider.close()
             await application.state.leaf_inference_provider.close()
             await application.state.object_storage.close()
             await application.state.auth_provider.close()
@@ -63,6 +73,8 @@ def create_app(
     application.state.auth_provider = resolved_auth_provider
     application.state.object_storage = resolved_object_storage
     application.state.leaf_inference_provider = resolved_leaf_inference
+    application.state.llm_provider = resolved_llm_provider
+    application.state.memory_provider = resolved_memory_provider
     application.middleware("http")(request_context_middleware)
     register_error_handlers(application)
     application.include_router(api_router)

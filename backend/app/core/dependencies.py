@@ -13,6 +13,8 @@ from app.core.security import AuthContext
 from app.database.session import DatabasePort
 from app.integrations.auth.provider import AuthProvider
 from app.integrations.inference.provider import LeafInferenceProvider
+from app.integrations.llm.provider import LLMProvider
+from app.integrations.memory.provider import MemoryProvider
 from app.integrations.storage.provider import ObjectStorageProvider
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -46,6 +48,14 @@ def get_leaf_inference_provider(request: Request) -> LeafInferenceProvider:
     """Resolve the leaf model provider selected during startup."""
 
     return cast(LeafInferenceProvider, request.app.state.leaf_inference_provider)
+
+
+def get_llm_provider(request: Request) -> LLMProvider:
+    return cast(LLMProvider, request.app.state.llm_provider)
+
+
+def get_memory_provider(request: Request) -> MemoryProvider:
+    return cast(MemoryProvider, request.app.state.memory_provider)
 
 
 async def get_auth_context(

@@ -1,0 +1,1 @@
+"""Scoped farmer AI conversations."""

@@ -6,7 +6,14 @@ from uuid import UUID, uuid4
 from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import ApplicationError
-from app.modules.farms.models import Activity, Crop, CropStageEvent, Farm, Plot
+from app.modules.farms.models import (
+    Activity,
+    Crop,
+    CropCycleEvent,
+    CropStageEvent,
+    Farm,
+    Plot,
+)
 from app.modules.farms.repository import FarmRepository
 from app.modules.farms.schemas import (
     ActivityCreate,
@@ -44,9 +51,7 @@ class FarmService:
         farms = await self.repository.list_farms(farmer_id)
         return [FarmResponse.model_validate(item) for item in farms]
 
-    async def update_farm(
-        self, farmer_id: UUID, farm_id: UUID, data: FarmUpdate
-    ) -> FarmResponse:
+    async def update_farm(self, farmer_id: UUID, farm_id: UUID, data: FarmUpdate) -> FarmResponse:
         farm = await self._farm(farmer_id, farm_id)
         farm.name = data.name
         await self._commit_unique("FARM_NAME_ALREADY_EXISTS")
@@ -84,9 +89,7 @@ class FarmService:
         await self.repository.refresh(plot)
         return await self._plot_response(farmer_id, plot)
 
-    async def list_plots(
-        self, farmer_id: UUID, farm_id: UUID | None
-    ) -> list[PlotResponse]:
+    async def list_plots(self, farmer_id: UUID, farm_id: UUID | None) -> list[PlotResponse]:
         if farm_id is not None:
             await self._farm(farmer_id, farm_id)
         plots = await self.repository.list_plots(farmer_id, farm_id)
@@ -95,9 +98,7 @@ class FarmService:
     async def get_plot(self, farmer_id: UUID, plot_id: UUID) -> PlotResponse:
         return await self._plot_response(farmer_id, await self._plot(farmer_id, plot_id))
 
-    async def update_plot(
-        self, farmer_id: UUID, plot_id: UUID, data: PlotUpdate
-    ) -> PlotResponse:
+    async def update_plot(self, farmer_id: UUID, plot_id: UUID, data: PlotUpdate) -> PlotResponse:
         plot = await self._plot(farmer_id, plot_id)
         if "farm_id" in data.model_fields_set and data.farm_id is not None:
             await self._farm(farmer_id, data.farm_id)
@@ -110,9 +111,7 @@ class FarmService:
         await self.repository.refresh(plot)
         return await self._plot_response(farmer_id, plot)
 
-    async def add_crop(
-        self, farmer_id: UUID, plot_id: UUID, data: CropCreate
-    ) -> CropResponse:
+    async def add_crop(self, farmer_id: UUID, plot_id: UUID, data: CropCreate) -> CropResponse:
         await self._plot(farmer_id, plot_id)
         crop = self._add_crop(farmer_id, plot_id, data)
         await self.repository.commit()
@@ -138,9 +137,7 @@ class FarmService:
         await self.repository.refresh(crop)
         return CropResponse.model_validate(crop)
 
-    async def update_crop(
-        self, farmer_id: UUID, crop_id: UUID, data: CropUpdate
-    ) -> CropResponse:
+    async def update_crop(self, farmer_id: UUID, crop_id: UUID, data: CropUpdate) -> CropResponse:
         crop = await self._crop(farmer_id, crop_id, for_update=True)
         if crop.cycle_ended_on is not None and "stage" in data.model_fields_set:
             raise ApplicationError(code="CROP_CYCLE_CLOSED", status_code=409)
@@ -170,6 +167,14 @@ class FarmService:
         if data.ended_on < crop.cycle_started_on or data.ended_on > datetime.now(tz=UTC).date():
             raise ApplicationError(code="CROP_CYCLE_END_DATE_INVALID", status_code=422)
         crop.cycle_ended_on = data.ended_on
+        self.repository.add(
+            CropCycleEvent(
+                farmer_id=farmer_id,
+                crop_id=crop.id,
+                event_type="closed",
+                event_date=data.ended_on,
+            )
+        )
         await self.repository.commit()
         await self.repository.refresh(crop)
         return CropResponse.model_validate(crop)
@@ -182,33 +187,40 @@ class FarmService:
         await self.repository.delete(plot)
         await self.repository.commit()
 
-    async def delete_crop(self, farmer_id: UUID, crop_id: UUID) -> None:
+    async def delete_crop(
+        self, farmer_id: UUID, crop_id: UUID, *, confirm_history_loss: bool
+    ) -> None:
         crop = await self._crop(farmer_id, crop_id)
         impact = await self.crop_deletion_impact(farmer_id, crop_id)
-        if not impact.can_delete:
+        blocking = {
+            key: count
+            for key, count in impact.linked_records.items()
+            if key not in {"stage_history", "cycle_history"} and count
+        }
+        if blocking or (
+            (
+                impact.linked_records.get("stage_history", 0) > 0
+                or impact.linked_records.get("cycle_history", 0) > 0
+            )
+            and not confirm_history_loss
+        ):
             raise ApplicationError(code="CROP_HAS_LINKED_DATA", status_code=409)
         await self.repository.delete(crop)
         await self.repository.commit()
 
-    async def farm_deletion_impact(
-        self, farmer_id: UUID, farm_id: UUID
-    ) -> DeletionImpactResponse:
+    async def farm_deletion_impact(self, farmer_id: UUID, farm_id: UUID) -> DeletionImpactResponse:
         await self._farm(farmer_id, farm_id)
         return self._impact(
             farm_id, await self.repository.farm_linked_record_counts(farmer_id, farm_id)
         )
 
-    async def plot_deletion_impact(
-        self, farmer_id: UUID, plot_id: UUID
-    ) -> DeletionImpactResponse:
+    async def plot_deletion_impact(self, farmer_id: UUID, plot_id: UUID) -> DeletionImpactResponse:
         await self._plot(farmer_id, plot_id)
         return self._impact(
             plot_id, await self.repository.plot_linked_record_counts(farmer_id, plot_id)
         )
 
-    async def crop_deletion_impact(
-        self, farmer_id: UUID, crop_id: UUID
-    ) -> DeletionImpactResponse:
+    async def crop_deletion_impact(self, farmer_id: UUID, crop_id: UUID) -> DeletionImpactResponse:
         await self._crop(farmer_id, crop_id)
         return self._impact(
             crop_id, await self.repository.crop_linked_record_counts(farmer_id, crop_id)
@@ -259,6 +271,7 @@ class FarmService:
 
     def _add_crop(self, farmer_id: UUID, plot_id: UUID, data: CropCreate) -> Crop:
         crop_id = uuid4()
+        cycle_started_on = datetime.now(tz=UTC).date()
         crop = Crop(
             id=crop_id,
             farmer_id=farmer_id,
@@ -267,10 +280,17 @@ class FarmService:
             stage=data.stage,
             variety=data.variety,
             sowing_or_transplant_date=data.sowing_or_transplant_date,
+            cycle_started_on=cycle_started_on,
         )
         self.repository.add(crop)
+        self.repository.add(CropStageEvent(farmer_id=farmer_id, crop_id=crop_id, stage=crop.stage))
         self.repository.add(
-            CropStageEvent(farmer_id=farmer_id, crop_id=crop_id, stage=crop.stage)
+            CropCycleEvent(
+                farmer_id=farmer_id,
+                crop_id=crop_id,
+                event_type="started",
+                event_date=cycle_started_on,
+            )
         )
         return crop
 
@@ -293,12 +313,8 @@ class FarmService:
             raise ApplicationError(code="PLOT_NOT_FOUND", status_code=404)
         return plot
 
-    async def _crop(
-        self, farmer_id: UUID, crop_id: UUID, *, for_update: bool = False
-    ) -> Crop:
-        crop = await self.repository.get_crop(
-            farmer_id, crop_id, for_update=for_update
-        )
+    async def _crop(self, farmer_id: UUID, crop_id: UUID, *, for_update: bool = False) -> Crop:
+        crop = await self.repository.get_crop(farmer_id, crop_id, for_update=for_update)
         if crop is None:
             raise ApplicationError(code="CROP_NOT_FOUND", status_code=404)
         return crop

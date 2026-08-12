@@ -1,5 +1,6 @@
 """Typed language-model provider contracts."""
 
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -39,7 +40,7 @@ class ReminderProposalDraft(BaseModel):
 
 
 class TreatmentGuidance(BaseModel):
-    """Safety-verifiable treatment detail; brands remain outside initial scope."""
+    """General safety guidance until an authoritative local treatment source exists."""
 
     active_ingredient: str | None = Field(default=None, max_length=200)
     dosage: str | None = Field(default=None, max_length=300)
@@ -48,15 +49,29 @@ class TreatmentGuidance(BaseModel):
     safety_precautions: list[str] = Field(default_factory=list, max_length=8)
     consult_local_approved_guidance: bool = True
 
+    @field_validator("safety_precautions")
+    @classmethod
+    def reject_prescriptive_precautions(cls, values: list[str]) -> list[str]:
+        """Keep the safety-only field from becoming a treatment-detail escape hatch."""
+
+        prescriptive_pattern = re.compile(
+            r"(?:\b\d+(?:\.\d+)?\s*(?:mg|g|kg|ml|l)\s*(?:/|per)\s*"
+            r"(?:l|lit(?:re|er)s?|kg|acre|hectare)\b|"
+            r"\bevery\s+\d+\s*(?:hour|day|week)s?\b|"
+            r"\b(?:spray|apply|drench|inject|mix)\b)",
+            flags=re.IGNORECASE,
+        )
+        if any(prescriptive_pattern.search(value) for value in values):
+            raise ValueError("SPECIFIC_TREATMENT_SOURCE_NOT_CONFIGURED")
+        return values
+
     @model_validator(mode="after")
     def require_safety_for_specific_treatment(self) -> "TreatmentGuidance":
         has_specifics = any(
             (self.active_ingredient, self.dosage, self.application_method, self.frequency)
         )
-        if has_specifics and not self.safety_precautions:
-            raise ValueError("TREATMENT_SAFETY_PRECAUTIONS_REQUIRED")
-        if has_specifics and not self.consult_local_approved_guidance:
-            raise ValueError("LOCAL_APPROVAL_CAVEAT_REQUIRED")
+        if has_specifics:
+            raise ValueError("SPECIFIC_TREATMENT_SOURCE_NOT_CONFIGURED")
         return self
 
 

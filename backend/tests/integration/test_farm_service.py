@@ -90,10 +90,10 @@ async def test_farm_plot_crop_and_activity_lifecycle_is_owner_scoped() -> None:
             with pytest.raises(ApplicationError) as blocked:
                 await service.delete_farm(FARMER_A, farm.id)
             with pytest.raises(ApplicationError) as crop_blocked:
-                await service.delete_crop(FARMER_A, crop.id)
+                await service.delete_crop(FARMER_A, crop.id, confirm_history_loss=False)
 
             await service.delete_activity(FARMER_A, activity.id)
-            await service.delete_crop(FARMER_A, crop.id)
+            await service.delete_crop(FARMER_A, crop.id, confirm_history_loss=True)
             await service.delete_plot(FARMER_A, plot.id)
             await service.delete_farm(FARMER_A, farm.id)
 
@@ -144,9 +144,7 @@ async def test_crop_cycle_can_close_but_not_move_or_reopen() -> None:
                 FARMER_A, closed.id, CropUpdate(name="Archived Rice")
             )
             with pytest.raises(ApplicationError) as immutable:
-                await service.update_crop(
-                    FARMER_A, closed.id, CropUpdate(stage="post-harvest")
-                )
+                await service.update_crop(FARMER_A, closed.id, CropUpdate(stage="post-harvest"))
             with pytest.raises(ApplicationError) as stage_immutable:
                 await service.update_crop_stage(
                     FARMER_A, closed.id, CropStageUpdate(stage="post-harvest")

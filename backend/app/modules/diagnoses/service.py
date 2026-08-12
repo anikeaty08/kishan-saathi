@@ -18,6 +18,7 @@ from app.modules.diagnoses.models import (
 )
 from app.modules.diagnoses.repository import DiagnosisRepository
 from app.modules.diagnoses.schemas import (
+    AssessmentHistoryResponse,
     AssessmentResponse,
     ConfidenceLabel,
     DiagnosisCaseResponse,
@@ -66,6 +67,8 @@ class DiagnosisService:
     ) -> DiagnosisCaseResponse:
         if not images:
             raise ApplicationError(code="SCAN_IMAGES_REQUIRED", status_code=422)
+        if len(images) > self._settings.max_diagnosis_images:
+            raise ApplicationError(code="SCAN_TOO_MANY_IMAGES", status_code=413)
         farm_id, plot_id, crop_id = await self._validated_link(farmer_id, link)
         case = DiagnosisCase(
             id=uuid4(),
@@ -94,8 +97,10 @@ class DiagnosisService:
     ) -> DiagnosisCaseResponse:
         if not images:
             raise ApplicationError(code="SCAN_IMAGES_REQUIRED", status_code=422)
-        case = await self._case(farmer_id, case_id)
+        case = await self._case(farmer_id, case_id, for_update=True)
         existing_images = await self._repository.list_images(farmer_id, case_id)
+        if len(existing_images) + len(images) > self._settings.max_diagnosis_images:
+            raise ApplicationError(code="SCAN_TOO_MANY_IMAGES", status_code=413)
         existing_assessment = await self._repository.get_active_assessment(farmer_id, case_id)
         return await self._process(
             farmer_id,
@@ -115,9 +120,36 @@ class DiagnosisService:
     async def get_case(self, farmer_id: UUID, case_id: UUID) -> DiagnosisCaseResponse:
         return await self._response(farmer_id, await self._case(farmer_id, case_id))
 
-    async def read_image(
-        self, farmer_id: UUID, case_id: UUID, image_id: UUID
-    ) -> bytes:
+    async def assessment_history(
+        self, farmer_id: UUID, case_id: UUID
+    ) -> list[AssessmentHistoryResponse]:
+        await self._case(farmer_id, case_id)
+        assessments = await self._repository.list_assessments(farmer_id, case_id, limit=100)
+        responses: list[AssessmentHistoryResponse] = []
+        for assessment in reversed(assessments):
+            predictions = await self._repository.assessment_predictions(assessment.id)
+            combined = [item for item in predictions if item.scope == "combined"]
+            per_image: dict[UUID, list[PredictionResponse]] = {}
+            for item in predictions:
+                if item.scope == "image" and item.image_id is not None:
+                    per_image.setdefault(item.image_id, []).append(self._prediction_response(item))
+            responses.append(
+                AssessmentHistoryResponse(
+                    id=assessment.id,
+                    predicted_crop=assessment.predicted_crop,
+                    primary_disease=assessment.primary_disease,
+                    confidence_label=ConfidenceLabel(assessment.confidence_label),
+                    alternatives=[self._prediction_response(item) for item in combined[1:]],
+                    image_predictions=per_image,
+                    is_active=assessment.is_active,
+                    model_name=assessment.model_name,
+                    model_version=assessment.model_version,
+                    created_at=assessment.created_at,
+                )
+            )
+        return responses
+
+    async def read_image(self, farmer_id: UUID, case_id: UUID, image_id: UUID) -> bytes:
         await self._case(farmer_id, case_id)
         image = await self._repository.get_image(farmer_id, case_id, image_id)
         if image is None:
@@ -160,6 +192,13 @@ class DiagnosisService:
         await self._repository.commit()
         await self._repository.refresh(feedback)
         return DiagnosisFeedbackResponse.model_validate(feedback)
+
+    async def get_feedback(
+        self, farmer_id: UUID, case_id: UUID
+    ) -> DiagnosisFeedbackResponse | None:
+        await self._case(farmer_id, case_id)
+        feedback = await self._repository.get_feedback(farmer_id, case_id)
+        return DiagnosisFeedbackResponse.model_validate(feedback) if feedback is not None else None
 
     async def delete_case(self, farmer_id: UUID, case_id: UUID) -> None:
         case = await self._case(farmer_id, case_id)
@@ -227,9 +266,7 @@ class DiagnosisService:
         except Exception:
             await self._repository.rollback()
             jobs = [
-                self._cleanup.enqueue(
-                    farmer_id, item.key, "diagnosis_create_rollback"
-                )
+                self._cleanup.enqueue(farmer_id, item.key, "diagnosis_create_rollback")
                 for item in stored
             ]
             await self._repository.commit()
@@ -253,6 +290,12 @@ class DiagnosisService:
         existing_assessment: DiagnosisAssessment | None,
         is_new_case: bool,
     ) -> DiagnosisAssessment:
+        if not is_new_case:
+            locked_case = await self._repository.get_case(farmer_id, case.id, for_update=True)
+            if locked_case is None:
+                raise ApplicationError(code="DIAGNOSIS_CASE_NOT_FOUND", status_code=404)
+            case = locked_case
+            existing_assessment = await self._repository.get_active_assessment(farmer_id, case.id)
         primary = inference.combined_predictions[0]
         should_activate = (
             existing_assessment is None or primary.confidence > existing_assessment.confidence
@@ -344,9 +387,15 @@ class DiagnosisService:
             confidence=prediction.confidence,
         )
 
-    async def _response(
-        self, farmer_id: UUID, case: DiagnosisCase
-    ) -> DiagnosisCaseResponse:
+    @staticmethod
+    def _prediction_response(value: DiagnosisPrediction) -> PredictionResponse:
+        return PredictionResponse(
+            crop_name=value.crop_name,
+            disease_name=value.disease_name,
+            rank=value.rank,
+        )
+
+    async def _response(self, farmer_id: UUID, case: DiagnosisCase) -> DiagnosisCaseResponse:
         images = await self._repository.list_images(farmer_id, case.id)
         assessment = await self._repository.get_active_assessment(farmer_id, case.id)
         assessment_response: AssessmentResponse | None = None
@@ -415,8 +464,10 @@ class DiagnosisService:
                 raise ApplicationError(code="CROP_NOT_IN_PLOT", status_code=409)
         return farm_id, plot_id, crop_id
 
-    async def _case(self, farmer_id: UUID, case_id: UUID) -> DiagnosisCase:
-        case = await self._repository.get_case(farmer_id, case_id)
+    async def _case(
+        self, farmer_id: UUID, case_id: UUID, *, for_update: bool = False
+    ) -> DiagnosisCase:
+        case = await self._repository.get_case(farmer_id, case_id, for_update=for_update)
         if case is None:
             raise ApplicationError(code="DIAGNOSIS_CASE_NOT_FOUND", status_code=404)
         return case

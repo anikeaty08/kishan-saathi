@@ -3,7 +3,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, Header, Query, Response, status
 
 from app.core.dependencies import get_auth_context
 from app.core.security import AuthContext
@@ -27,9 +27,7 @@ Service = Annotated[ChatService, Depends(get_chat_service)]
 
 
 @router.post("", response_model=ChatResponse, status_code=status.HTTP_201_CREATED)
-async def create_chat(
-    data: ChatCreate, farmer_id: FarmerId, service: Service
-) -> ChatResponse:
+async def create_chat(data: ChatCreate, farmer_id: FarmerId, service: Service) -> ChatResponse:
     return await service.create_chat(farmer_id, data)
 
 
@@ -43,9 +41,7 @@ async def list_chats(
 
 
 @router.get("/{chat_id}", response_model=ChatDetailResponse)
-async def get_chat(
-    chat_id: UUID, farmer_id: FarmerId, service: Service
-) -> ChatDetailResponse:
+async def get_chat(chat_id: UUID, farmer_id: FarmerId, service: Service) -> ChatDetailResponse:
     return await service.get_chat(farmer_id, chat_id)
 
 
@@ -70,6 +66,7 @@ async def send_message(
     service: Service,
     context: Annotated[AuthContext, Depends(get_auth_context)],
     user_service: Annotated[UserServicePort, Depends(get_user_service)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=128)],
 ) -> SendMessageResponse:
     profile = await user_service.get_profile(context)
     return await service.send_message(
@@ -77,4 +74,5 @@ async def send_message(
         chat_id,
         data,
         preferred_language=profile.preferred_language,
+        idempotency_key=idempotency_key,
     )

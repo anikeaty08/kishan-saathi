@@ -41,3 +41,15 @@ async def test_preprocessor_rejects_non_image_and_tiny_image() -> None:
 
     assert invalid.value.code == "SCAN_IMAGE_INVALID"
     assert too_small.value.code == "SCAN_IMAGE_TOO_SMALL"
+
+
+@pytest.mark.asyncio
+async def test_preprocessor_rejects_excessive_source_pixels_before_decode() -> None:
+    raw = BytesIO()
+    Image.new("RGB", (1001, 1000)).save(raw, format="PNG")
+    preprocessor = ImagePreprocessor(Settings(_env_file=None, source_image_max_pixels=1_000_000))
+
+    with pytest.raises(ApplicationError) as raised:
+        await preprocessor.prepare(raw.getvalue())
+
+    assert raised.value.code == "SCAN_IMAGE_PIXELS_EXCEEDED"

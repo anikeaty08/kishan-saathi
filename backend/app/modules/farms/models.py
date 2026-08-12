@@ -24,9 +24,7 @@ from app.database.base import Base
 class TimestampMixin:
     """Server-managed creation and update timestamps."""
 
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -89,9 +87,7 @@ class Crop(TimestampMixin, Base):
     farmer_id: Mapped[UUID] = mapped_column(
         ForeignKey("farmer_profiles.id", ondelete="RESTRICT"), index=True
     )
-    plot_id: Mapped[UUID] = mapped_column(
-        ForeignKey("plots.id", ondelete="RESTRICT"), index=True
-    )
+    plot_id: Mapped[UUID] = mapped_column(ForeignKey("plots.id", ondelete="RESTRICT"), index=True)
     name: Mapped[str] = mapped_column(String(100))
     stage: Mapped[str] = mapped_column(String(100))
     variety: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -109,11 +105,29 @@ class CropStageEvent(TimestampMixin, Base):
     farmer_id: Mapped[UUID] = mapped_column(
         ForeignKey("farmer_profiles.id", ondelete="RESTRICT"), index=True
     )
-    crop_id: Mapped[UUID] = mapped_column(
-        ForeignKey("crops.id", ondelete="CASCADE"), index=True
-    )
+    crop_id: Mapped[UUID] = mapped_column(ForeignKey("crops.id", ondelete="CASCADE"), index=True)
     stage: Mapped[str] = mapped_column(String(100))
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
+
+
+class CropCycleEvent(Base):
+    """Immutable crop-cycle start/close history."""
+
+    __tablename__ = "crop_cycle_events"
+    __table_args__ = (
+        CheckConstraint("event_type IN ('started', 'closed')", name="ck_crop_cycle_events_type"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    farmer_id: Mapped[UUID] = mapped_column(
+        ForeignKey("farmer_profiles.id", ondelete="RESTRICT"), index=True
+    )
+    crop_id: Mapped[UUID] = mapped_column(ForeignKey("crops.id", ondelete="CASCADE"), index=True)
+    event_type: Mapped[str] = mapped_column(String(16), index=True)
+    event_date: Mapped[date] = mapped_column(Date)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
 
 
 class Activity(TimestampMixin, Base):
@@ -128,9 +142,7 @@ class Activity(TimestampMixin, Base):
     farmer_id: Mapped[UUID] = mapped_column(
         ForeignKey("farmer_profiles.id", ondelete="RESTRICT"), index=True
     )
-    plot_id: Mapped[UUID] = mapped_column(
-        ForeignKey("plots.id", ondelete="RESTRICT"), index=True
-    )
+    plot_id: Mapped[UUID] = mapped_column(ForeignKey("plots.id", ondelete="RESTRICT"), index=True)
     crop_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("crops.id", ondelete="RESTRICT"), nullable=True, index=True
     )
@@ -159,6 +171,4 @@ class ActivityPhoto(Base):
     size_bytes: Mapped[int] = mapped_column(Integer)
     width: Mapped[int] = mapped_column(Integer)
     height: Mapped[int] = mapped_column(Integer)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

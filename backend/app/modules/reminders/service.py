@@ -36,9 +36,7 @@ class ReminderService:
         self._diagnoses = diagnoses
         self._chats = chats
 
-    async def create_proposal(
-        self, farmer_id: UUID, data: ProposalCreate
-    ) -> ProposalResponse:
+    async def create_proposal(self, farmer_id: UUID, data: ProposalCreate) -> ProposalResponse:
         plot_id, crop_id = await self._validate_links(
             farmer_id,
             plot_id=data.plot_id,
@@ -61,13 +59,20 @@ class ReminderService:
     async def decide_proposal(
         self, farmer_id: UUID, proposal_id: UUID, *, accepted: bool
     ) -> ProposalDecisionResponse:
-        proposal = await self._repository.get_proposal(
-            farmer_id, proposal_id, for_update=True
-        )
+        proposal = await self._repository.get_proposal(farmer_id, proposal_id, for_update=True)
         if proposal is None:
             raise ApplicationError(code="REMINDER_PROPOSAL_NOT_FOUND", status_code=404)
         if proposal.status != "pending":
             raise ApplicationError(code="REMINDER_PROPOSAL_ALREADY_DECIDED", status_code=409)
+        now = datetime.now(tz=UTC)
+        proposal_due_at = proposal.due_at
+        if proposal_due_at.tzinfo is None:
+            proposal_due_at = proposal_due_at.replace(tzinfo=UTC)
+        if proposal_due_at <= now:
+            proposal.status = "expired"
+            proposal.decided_at = now
+            await self._repository.commit()
+            raise ApplicationError(code="REMINDER_PROPOSAL_EXPIRED", status_code=409)
         canonical_plot_id, canonical_crop_id = await self._validate_links(
             farmer_id,
             plot_id=proposal.plot_id,
@@ -76,7 +81,7 @@ class ReminderService:
             chat_id=proposal.chat_id,
         )
         proposal.status = "accepted" if accepted else "declined"
-        proposal.decided_at = datetime.now(tz=UTC)
+        proposal.decided_at = now
         reminder: Reminder | None = None
         if accepted:
             reminder = Reminder(
@@ -104,9 +109,17 @@ class ReminderService:
             reminder=ReminderResponse.model_validate(reminder) if reminder else None,
         )
 
-    async def create_manual(
-        self, farmer_id: UUID, data: ReminderCreate
-    ) -> ReminderResponse:
+    async def list_proposals(
+        self, farmer_id: UUID, *, pending_only: bool
+    ) -> list[ProposalResponse]:
+        await self._repository.expire_pending_proposals(farmer_id, datetime.now(tz=UTC))
+        await self._repository.commit()
+        return [
+            ProposalResponse.model_validate(value)
+            for value in await self._repository.list_proposals(farmer_id, pending_only=pending_only)
+        ]
+
+    async def create_manual(self, farmer_id: UUID, data: ReminderCreate) -> ReminderResponse:
         plot_id, crop_id = await self._validate_links(
             farmer_id,
             plot_id=data.plot_id,
@@ -132,9 +145,7 @@ class ReminderService:
     async def list_reminders(
         self, farmer_id: UUID, *, include_finished: bool
     ) -> list[ReminderResponse]:
-        values = await self._repository.list_reminders(
-            farmer_id, include_finished=include_finished
-        )
+        values = await self._repository.list_reminders(farmer_id, include_finished=include_finished)
         return [ReminderResponse.model_validate(value) for value in values]
 
     async def apply_action(
@@ -143,9 +154,7 @@ class ReminderService:
         reminder_id: UUID,
         data: ReminderActionRequest,
     ) -> ReminderResponse:
-        reminder = await self._repository.get_reminder(
-            farmer_id, reminder_id, for_update=True
-        )
+        reminder = await self._repository.get_reminder(farmer_id, reminder_id, for_update=True)
         if reminder is None:
             raise ApplicationError(code="REMINDER_NOT_FOUND", status_code=404)
         if reminder.status != "pending":
@@ -174,16 +183,11 @@ class ReminderService:
                 }[data.action],
                 now,
                 previous_due_at=(
-                    previous_due_at
-                    if data.action is ReminderAction.RESCHEDULE
-                    else None
+                    previous_due_at if data.action is ReminderAction.RESCHEDULE else None
                 ),
             )
         )
-        if (
-            data.action in {ReminderAction.DONE, ReminderAction.SKIP}
-            and reminder.recurrence_days
-        ):
+        if data.action in {ReminderAction.DONE, ReminderAction.SKIP} and reminder.recurrence_days:
             reminder_due_at = reminder.due_at
             if reminder_due_at.tzinfo is None:
                 reminder_due_at = reminder_due_at.replace(tzinfo=UTC)
@@ -211,9 +215,7 @@ class ReminderService:
         await self._repository.refresh(reminder)
         return ReminderResponse.model_validate(reminder)
 
-    async def list_events(
-        self, farmer_id: UUID, reminder_id: UUID
-    ) -> list[ReminderEventResponse]:
+    async def list_events(self, farmer_id: UUID, reminder_id: UUID) -> list[ReminderEventResponse]:
         if await self._repository.get_reminder(farmer_id, reminder_id) is None:
             raise ApplicationError(code="REMINDER_NOT_FOUND", status_code=404)
         return [

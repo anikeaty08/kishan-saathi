@@ -57,13 +57,13 @@ class OpenMeteoForecastProvider:
                 generated_at=datetime.now(tz=UTC),
                 days=days,
             )
-        except (httpx.TimeoutException, httpx.NetworkError) as exc:
-            raise ApplicationError(code="FORECAST_WEATHER_UNAVAILABLE", status_code=503) from exc
         except httpx.HTTPStatusError as exc:
             status = 503 if exc.response.status_code >= 500 else 502
             raise ApplicationError(
                 code="FORECAST_WEATHER_PROVIDER_ERROR", status_code=status
             ) from exc
+        except httpx.RequestError as exc:
+            raise ApplicationError(code="FORECAST_WEATHER_UNAVAILABLE", status_code=503) from exc
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise ApplicationError(
                 code="FORECAST_WEATHER_INVALID_RESPONSE", status_code=502

@@ -44,9 +44,7 @@ class SequencedInference(LeafInferenceProvider):
         self.confidences = iter(confidences)
         self.plant_names: list[str | None] = []
 
-    async def diagnose(
-        self, *, images: tuple[bytes, ...], plant_name: str | None
-    ) -> CaseInference:
+    async def diagnose(self, *, images: tuple[bytes, ...], plant_name: str | None) -> CaseInference:
         confidence = next(self.confidences)
         self.plant_names.append(plant_name)
         per_image = tuple(
@@ -71,9 +69,7 @@ class SequencedInference(LeafInferenceProvider):
 
 
 class FailingInference(LeafInferenceProvider):
-    async def diagnose(
-        self, *, images: tuple[bytes, ...], plant_name: str | None
-    ) -> CaseInference:
+    async def diagnose(self, *, images: tuple[bytes, ...], plant_name: str | None) -> CaseInference:
         del images, plant_name
         raise ApplicationError(code="LEAF_MODEL_UNAVAILABLE", status_code=503)
 
@@ -131,9 +127,7 @@ async def test_case_retakes_feedback_owner_isolation_and_deletion(tmp_path: Path
             assessment_rows = list(assessments)
             image_paths = list(tmp_path.rglob("*.jpg"))
             await service.delete_case(FARMER, initial.id)
-            remaining = await session.scalar(
-                select(func.count()).select_from(DiagnosisCase)
-            )
+            remaining = await session.scalar(select(func.count()).select_from(DiagnosisCase))
     finally:
         await engine.dispose()
 
@@ -183,15 +177,49 @@ async def test_failed_inference_removes_stored_objects_and_database_rows(tmp_pat
                     plant_name=None,
                     link=DiagnosisLink(),
                 )
-            remaining = await session.scalar(
-                select(func.count()).select_from(DiagnosisCase)
-            )
+            remaining = await session.scalar(select(func.count()).select_from(DiagnosisCase))
     finally:
         await engine.dispose()
 
     assert raised.value.code == "LEAF_MODEL_UNAVAILABLE"
     assert not list(tmp_path.rglob("*.jpg"))
     assert remaining == 0
+
+
+@pytest.mark.asyncio
+async def test_retake_count_is_bounded_across_the_whole_case(tmp_path: Path) -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+    try:
+        async with sessions() as session:
+            session.add(_farmer(FARMER, "bounded"))
+            await session.commit()
+            storage = LocalObjectStorage(tmp_path)
+            service = DiagnosisService(
+                settings=Settings(_env_file=None, max_diagnosis_images=2),
+                repository=DiagnosisRepository(session),
+                farm_repository=FarmRepository(session),
+                report_repository=ReportRepository(session),
+                cleanup=ObjectCleanupService(session, storage),
+                storage=storage,
+                inference=SequencedInference([0.8]),
+            )
+            case = await service.create_case(
+                FARMER,
+                images=[_incoming(0), _incoming(1)],
+                plant_name=None,
+                link=DiagnosisLink(),
+            )
+
+            with pytest.raises(ApplicationError) as raised:
+                await service.add_retakes(FARMER, case.id, [_incoming(2)])
+    finally:
+        await engine.dispose()
+
+    assert raised.value.code == "SCAN_TOO_MANY_IMAGES"
 
 
 def _farmer(farmer_id: UUID, suffix: str) -> FarmerProfile:
@@ -205,9 +233,7 @@ def _farmer(farmer_id: UUID, suffix: str) -> FarmerProfile:
 
 def _incoming(day_offset: int) -> IncomingImage:
     buffer = BytesIO()
-    Image.new("RGB", (256, 256), color=(40 + day_offset, 120, 30)).save(
-        buffer, format="PNG"
-    )
+    Image.new("RGB", (256, 256), color=(40 + day_offset, 120, 30)).save(buffer, format="PNG")
     return IncomingImage(
         content=buffer.getvalue(),
         captured_or_uploaded_at=datetime.now(tz=UTC) + timedelta(days=day_offset),

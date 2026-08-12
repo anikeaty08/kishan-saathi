@@ -57,9 +57,7 @@ async def update_farm(
 
 
 @router.delete("/farms/{farm_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_farm(
-    farm_id: UUID, farmer_id: FarmerId, service: Service
-) -> Response:
+async def delete_farm(farm_id: UUID, farmer_id: FarmerId, service: Service) -> Response:
     await service.delete_farm(farmer_id, farm_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -98,9 +96,7 @@ async def update_plot(
 
 
 @router.delete("/plots/{plot_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_plot(
-    plot_id: UUID, farmer_id: FarmerId, service: Service
-) -> Response:
+async def delete_plot(plot_id: UUID, farmer_id: FarmerId, service: Service) -> Response:
     await service.delete_plot(farmer_id, plot_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -146,9 +142,12 @@ async def close_crop_cycle(
 
 @router.delete("/crops/{crop_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_crop(
-    crop_id: UUID, farmer_id: FarmerId, service: Service
+    crop_id: UUID,
+    farmer_id: FarmerId,
+    service: Service,
+    confirm_history_loss: Annotated[bool, Query()] = False,
 ) -> Response:
-    await service.delete_crop(farmer_id, crop_id)
+    await service.delete_crop(farmer_id, crop_id, confirm_history_loss=confirm_history_loss)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -209,9 +208,7 @@ async def add_activity_photo(
     return await service.add(farmer_id, activity_id, content)
 
 
-@router.get(
-    "/activities/{activity_id}/photos", response_model=list[ActivityPhotoResponse]
-)
+@router.get("/activities/{activity_id}/photos", response_model=list[ActivityPhotoResponse])
 async def list_activity_photos(
     activity_id: UUID, farmer_id: FarmerId, service: PhotoService
 ) -> list[ActivityPhotoResponse]:

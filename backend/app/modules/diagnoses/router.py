@@ -11,6 +11,7 @@ from app.core.dependencies import get_app_settings
 from app.core.errors import ApplicationError
 from app.modules.diagnoses.dependencies import get_diagnosis_service
 from app.modules.diagnoses.schemas import (
+    AssessmentHistoryResponse,
     DiagnosisCaseResponse,
     DiagnosisFeedbackResponse,
     DiagnosisFeedbackUpsert,
@@ -80,6 +81,15 @@ async def get_diagnosis(
     return await service.get_case(farmer_id, case_id)
 
 
+@router.get("/{case_id}/assessments", response_model=list[AssessmentHistoryResponse])
+async def diagnosis_assessment_history(
+    case_id: UUID,
+    farmer_id: FarmerId,
+    service: Service,
+) -> list[AssessmentHistoryResponse]:
+    return await service.assessment_history(farmer_id, case_id)
+
+
 @router.get("/{case_id}/images/{image_id}")
 async def get_diagnosis_image(
     case_id: UUID,
@@ -115,6 +125,15 @@ async def save_feedback(
     return await service.upsert_feedback(farmer_id, case_id, data)
 
 
+@router.get("/{case_id}/feedback", response_model=DiagnosisFeedbackResponse | None)
+async def get_feedback(
+    case_id: UUID,
+    farmer_id: FarmerId,
+    service: Service,
+) -> DiagnosisFeedbackResponse | None:
+    return await service.get_feedback(farmer_id, case_id)
+
+
 @router.delete("/{case_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_diagnosis(
     case_id: UUID,
@@ -132,6 +151,8 @@ async def _read_images(
 ) -> list[IncomingImage]:
     if not uploads:
         raise ApplicationError(code="SCAN_IMAGES_REQUIRED", status_code=422)
+    if len(uploads) > settings.max_diagnosis_images:
+        raise ApplicationError(code="SCAN_TOO_MANY_IMAGES", status_code=413)
     if captured_at is not None and len(captured_at) != len(uploads):
         raise ApplicationError(code="SCAN_IMAGE_TIMESTAMPS_MISMATCH", status_code=422)
 
@@ -148,9 +169,7 @@ async def _read_images(
             timestamp = captured_at[index] if captured_at else datetime.now(tz=UTC)
             if timestamp.tzinfo is None:
                 timestamp = timestamp.replace(tzinfo=UTC)
-            incoming.append(
-                IncomingImage(content=content, captured_or_uploaded_at=timestamp)
-            )
+            incoming.append(IncomingImage(content=content, captured_or_uploaded_at=timestamp))
     finally:
         for upload in uploads:
             await upload.close()

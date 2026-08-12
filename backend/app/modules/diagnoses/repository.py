@@ -20,18 +20,19 @@ class DiagnosisRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def get_case(self, farmer_id: UUID, case_id: UUID) -> DiagnosisCase | None:
-        result = await self.session.execute(
-            select(DiagnosisCase).where(
-                DiagnosisCase.id == case_id,
-                DiagnosisCase.farmer_id == farmer_id,
-            )
+    async def get_case(
+        self, farmer_id: UUID, case_id: UUID, *, for_update: bool = False
+    ) -> DiagnosisCase | None:
+        statement = select(DiagnosisCase).where(
+            DiagnosisCase.id == case_id,
+            DiagnosisCase.farmer_id == farmer_id,
         )
+        if for_update:
+            statement = statement.with_for_update()
+        result = await self.session.execute(statement)
         return result.scalar_one_or_none()
 
-    async def list_cases(
-        self, farmer_id: UUID, *, limit: int, offset: int
-    ) -> list[DiagnosisCase]:
+    async def list_cases(self, farmer_id: UUID, *, limit: int, offset: int) -> list[DiagnosisCase]:
         result = await self.session.scalars(
             select(DiagnosisCase)
             .where(DiagnosisCase.farmer_id == farmer_id)
@@ -90,9 +91,7 @@ class DiagnosisRepository:
         )
         return list(result)
 
-    async def combined_predictions(
-        self, assessment_id: UUID
-    ) -> list[DiagnosisPrediction]:
+    async def combined_predictions(self, assessment_id: UUID) -> list[DiagnosisPrediction]:
         result = await self.session.scalars(
             select(DiagnosisPrediction)
             .where(
@@ -100,6 +99,18 @@ class DiagnosisRepository:
                 DiagnosisPrediction.scope == "combined",
             )
             .order_by(DiagnosisPrediction.rank)
+        )
+        return list(result)
+
+    async def assessment_predictions(self, assessment_id: UUID) -> list[DiagnosisPrediction]:
+        result = await self.session.scalars(
+            select(DiagnosisPrediction)
+            .where(DiagnosisPrediction.assessment_id == assessment_id)
+            .order_by(
+                DiagnosisPrediction.scope,
+                DiagnosisPrediction.image_id,
+                DiagnosisPrediction.rank,
+            )
         )
         return list(result)
 
@@ -114,9 +125,7 @@ class DiagnosisRepository:
             .values(is_active=False)
         )
 
-    async def get_feedback(
-        self, farmer_id: UUID, case_id: UUID
-    ) -> DiagnosisFeedback | None:
+    async def get_feedback(self, farmer_id: UUID, case_id: UUID) -> DiagnosisFeedback | None:
         result = await self.session.execute(
             select(DiagnosisFeedback).where(
                 DiagnosisFeedback.farmer_id == farmer_id,

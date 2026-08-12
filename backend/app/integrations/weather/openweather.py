@@ -48,14 +48,14 @@ class OpenWeatherCurrentProvider:
                 wind_speed_mps=payload.get("wind", {}).get("speed", 0),
                 rain_last_hour_mm=payload.get("rain", {}).get("1h", 0),
             )
-        except (httpx.TimeoutException, httpx.NetworkError) as exc:
-            raise ApplicationError(code="CURRENT_WEATHER_UNAVAILABLE", status_code=503) from exc
         except httpx.HTTPStatusError as exc:
             status = 503 if exc.response.status_code >= 500 else 502
             raise ApplicationError(
                 code="CURRENT_WEATHER_PROVIDER_ERROR", status_code=status
             ) from exc
-        except (IndexError, KeyError, TypeError, ValueError) as exc:
+        except httpx.RequestError as exc:
+            raise ApplicationError(code="CURRENT_WEATHER_UNAVAILABLE", status_code=503) from exc
+        except (AttributeError, IndexError, KeyError, TypeError, ValueError) as exc:
             raise ApplicationError(
                 code="CURRENT_WEATHER_INVALID_RESPONSE", status_code=502
             ) from exc

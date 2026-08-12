@@ -56,9 +56,7 @@ async def test_proposal_requires_acceptance_and_recurring_task_rolls_forward() -
             with pytest.raises(ApplicationError) as hidden:
                 await service.decide_proposal(OTHER, proposal.id, accepted=True)
 
-            decision = await service.decide_proposal(
-                FARMER, proposal.id, accepted=True
-            )
+            decision = await service.decide_proposal(FARMER, proposal.id, accepted=True)
             assert decision.proposal.status == "accepted"
             assert decision.reminder is not None
             reminder_id = decision.reminder.id
@@ -109,17 +107,55 @@ async def test_declined_proposal_never_creates_task() -> None:
                     due_at=datetime.now(tz=UTC) + timedelta(hours=4),
                 ),
             )
-            decision = await service.decide_proposal(
-                FARMER, proposal.id, accepted=False
-            )
-            reminders = await service.list_reminders(
-                FARMER, include_finished=True
-            )
+            decision = await service.decide_proposal(FARMER, proposal.id, accepted=False)
+            reminders = await service.list_reminders(FARMER, include_finished=True)
     finally:
         await engine.dispose()
 
     assert decision.proposal.status == "declined"
     assert decision.reminder is None
+    assert reminders == []
+
+
+@pytest.mark.asyncio
+async def test_expired_proposal_cannot_create_an_overdue_task() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+    try:
+        async with sessions() as session:
+            session.add(_farmer(FARMER, "expired"))
+            await session.commit()
+            repository = ReminderRepository(session)
+            service = ReminderService(
+                repository=repository,
+                farms=FarmRepository(session),
+                diagnoses=DiagnosisRepository(session),
+                chats=ChatRepository(session),
+            )
+            proposal = await service.create_proposal(
+                FARMER,
+                ProposalCreate(
+                    title="Inspect soon",
+                    due_at=datetime.now(tz=UTC) + timedelta(hours=1),
+                ),
+            )
+            stored = await repository.get_proposal(FARMER, proposal.id)
+            assert stored is not None
+            stored.due_at = datetime.now(tz=UTC) - timedelta(minutes=1)
+            await repository.commit()
+
+            with pytest.raises(ApplicationError) as raised:
+                await service.decide_proposal(FARMER, proposal.id, accepted=True)
+            pending = await service.list_proposals(FARMER, pending_only=True)
+            reminders = await service.list_reminders(FARMER, include_finished=True)
+    finally:
+        await engine.dispose()
+
+    assert raised.value.code == "REMINDER_PROPOSAL_EXPIRED"
+    assert pending == []
     assert reminders == []
 
 

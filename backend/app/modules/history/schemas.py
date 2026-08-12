@@ -14,6 +14,7 @@ class TimelineCategory(StrEnum):
     REMINDER = "reminder"
     ACTIVITY = "activity"
     CROP_STAGE = "crop_stage"
+    CROP_CYCLE = "crop_cycle"
 
 
 class TimelineItem(BaseModel):

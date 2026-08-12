@@ -21,11 +21,14 @@ docker compose up -d postgres
 uv run uvicorn app.main:app --reload
 ```
 
-The API currently exposes:
+The API exposes:
 
 - `GET /health/live` for process liveness without dependency calls.
 - `GET /health/ready` for PostgreSQL readiness using a bounded `SELECT 1`.
 - `GET /docs` for the generated OpenAPI interface.
+- Authenticated farm, plot, crop-cycle, diagnosis, chat, memory, reminder,
+  weather, location-search, history, activity-photo, and report APIs under
+  `/api/v1`.
 
 Run checks with:
 
@@ -35,5 +38,7 @@ uv run mypy app
 uv run pytest
 ```
 
-Authentication and farmer-profile behavior are intentionally the next vertical
-slice; this foundation does not pretend those features already exist.
+Important current limitation: the leaf inference plugin fails with the explicit
+`LEAF_MODEL_NOT_CONFIGURED` code until the evaluated model artifact or service
+is supplied. Specific chemical treatment instructions are intentionally blocked
+without an approved authoritative source.

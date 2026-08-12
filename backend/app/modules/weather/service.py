@@ -60,9 +60,7 @@ class WeatherService:
         )
         return self._current_response(snapshot, stale=False)
 
-    async def current_for_plot(
-        self, farmer_id: UUID, plot_id: UUID
-    ) -> CurrentWeatherResponse:
+    async def current_for_plot(self, farmer_id: UUID, plot_id: UUID) -> CurrentWeatherResponse:
         """Use the farmer-confirmed plot pointer, never client-supplied coordinates."""
 
         plot = await self._farms.get_plot(farmer_id, plot_id)
@@ -82,11 +80,7 @@ class WeatherService:
                 latitude=float(plot.latitude), longitude=float(plot.longitude)
             )
         except ApplicationError:
-            if (
-                cache_matches_plot
-                and cached is not None
-                and self._stale_allowed(cached)
-            ):
+            if cache_matches_plot and cached is not None and self._stale_allowed(cached):
                 return self._current_response(cached, stale=True)
             raise
         snapshot = await self._save(
@@ -102,9 +96,7 @@ class WeatherService:
         )
         return self._current_response(snapshot, stale=False)
 
-    async def forecast_for_plot(
-        self, farmer_id: UUID, plot_id: UUID
-    ) -> PlotForecastResponse:
+    async def forecast_for_plot(self, farmer_id: UUID, plot_id: UUID) -> PlotForecastResponse:
         """Backend-controlled Open-Meteo tool target using an owned plot's coordinates."""
 
         plot = await self._farms.get_plot(farmer_id, plot_id)
@@ -124,11 +116,7 @@ class WeatherService:
                 latitude=float(plot.latitude), longitude=float(plot.longitude)
             )
         except ApplicationError:
-            if (
-                cache_matches_plot
-                and cached is not None
-                and self._stale_allowed(cached)
-            ):
+            if cache_matches_plot and cached is not None and self._stale_allowed(cached):
                 return self._forecast_response(cached, stale=True)
             raise
         snapshot = await self._save(
@@ -157,9 +145,7 @@ class WeatherService:
         return datetime.now(tz=UTC) - fetched_at <= self._max_stale_age
 
     @staticmethod
-    def _same_location(
-        snapshot: WeatherSnapshot, latitude: Decimal, longitude: Decimal
-    ) -> bool:
+    def _same_location(snapshot: WeatherSnapshot, latitude: Decimal, longitude: Decimal) -> bool:
         return snapshot.latitude == latitude and snapshot.longitude == longitude
 
     async def _save(
@@ -176,38 +162,27 @@ class WeatherService:
         payload: dict[str, object],
     ) -> WeatherSnapshot:
         now = datetime.now(tz=UTC)
-        if snapshot is None:
-            snapshot = WeatherSnapshot(
-                farmer_id=farmer_id,
-                plot_id=plot_id,
-                weather_type=weather_type,
-                location_key=location_key,
-                latitude=latitude,
-                longitude=longitude,
-                provider=provider,
-                payload=payload,
-                fetched_at=now,
-            )
-            self._repository.add(snapshot)
-        else:
-            snapshot.plot_id = plot_id
-            snapshot.latitude = latitude
-            snapshot.longitude = longitude
-            snapshot.provider = provider
-            snapshot.payload = payload
-            snapshot.fetched_at = now
-        await self._repository.commit()
-        await self._repository.refresh(snapshot)
-        return snapshot
+        del snapshot
+        return await self._repository.upsert(
+            {
+                "farmer_id": farmer_id,
+                "plot_id": plot_id,
+                "weather_type": weather_type,
+                "location_key": location_key,
+                "latitude": latitude,
+                "longitude": longitude,
+                "provider": provider,
+                "payload": payload,
+                "fetched_at": now,
+            }
+        )
 
     @staticmethod
     def _location_key(latitude: Decimal, longitude: Decimal) -> str:
         return f"{latitude.quantize(Decimal('0.0001'))}:{longitude.quantize(Decimal('0.0001'))}"
 
     @staticmethod
-    def _current_response(
-        snapshot: WeatherSnapshot, *, stale: bool
-    ) -> CurrentWeatherResponse:
+    def _current_response(snapshot: WeatherSnapshot, *, stale: bool) -> CurrentWeatherResponse:
         return CurrentWeatherResponse(
             weather=snapshot.payload,
             provider=snapshot.provider,
@@ -216,9 +191,7 @@ class WeatherService:
         )
 
     @staticmethod
-    def _forecast_response(
-        snapshot: WeatherSnapshot, *, stale: bool
-    ) -> PlotForecastResponse:
+    def _forecast_response(snapshot: WeatherSnapshot, *, stale: bool) -> PlotForecastResponse:
         return PlotForecastResponse(
             forecast=snapshot.payload,
             provider=snapshot.provider,

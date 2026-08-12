@@ -10,11 +10,13 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -48,9 +50,7 @@ class DiagnosisCase(Base):
     plant_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     title: Mapped[str] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(20), default="processing")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -79,9 +79,7 @@ class DiagnosisImage(Base):
     captured_or_uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     quality_flags: Mapped[list[str]] = mapped_column(JSON, default=list)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class DiagnosisAssessment(Base):
@@ -93,6 +91,13 @@ class DiagnosisAssessment(Base):
         CheckConstraint(
             "confidence_label IN ('low', 'medium', 'high')",
             name="ck_assessments_confidence_label",
+        ),
+        Index(
+            "uq_diagnosis_assessments_active_case",
+            "case_id",
+            unique=True,
+            postgresql_where=text("is_active"),
+            sqlite_where=text("is_active = 1"),
         ),
     )
 
@@ -110,9 +115,7 @@ class DiagnosisAssessment(Base):
     model_name: Mapped[str] = mapped_column(String(100))
     model_version: Mapped[str] = mapped_column(String(100))
     is_active: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class DiagnosisPrediction(Base):
@@ -143,9 +146,7 @@ class DiagnosisFeedback(Base):
     """Farmer correction retained separately from immutable model output."""
 
     __tablename__ = "diagnosis_feedback"
-    __table_args__ = (
-        UniqueConstraint("case_id", name="uq_diagnosis_feedback_case"),
-    )
+    __table_args__ = (UniqueConstraint("case_id", name="uq_diagnosis_feedback_case"),)
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     farmer_id: Mapped[UUID] = mapped_column(
@@ -158,9 +159,7 @@ class DiagnosisFeedback(Base):
     corrected_crop: Mapped[str | None] = mapped_column(String(100), nullable=True)
     corrected_disease: Mapped[str | None] = mapped_column(String(200), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

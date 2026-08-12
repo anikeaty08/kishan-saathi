@@ -5,14 +5,20 @@ from datetime import datetime
 from typing import TypeVar
 from uuid import UUID
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.modules.chats.models import ChatSession
 from app.modules.diagnoses.models import DiagnosisAssessment, DiagnosisCase
-from app.modules.farms.models import Activity, ActivityPhoto, Crop, CropStageEvent
+from app.modules.farms.models import (
+    Activity,
+    ActivityPhoto,
+    Crop,
+    CropCycleEvent,
+    CropStageEvent,
+)
 from app.modules.history.schemas import TimelineCategory, TimelineItem
 from app.modules.memories.models import ChatMemoryConnection
 from app.modules.reminders.models import ReminderEvent
@@ -71,6 +77,12 @@ class HistoryRepository:
                     farmer_id, plot_id, crop_id, date_from, date_to, per_category_limit
                 )
             )
+        if TimelineCategory.CROP_CYCLE in categories:
+            items.extend(
+                await self._crop_cycle_events(
+                    farmer_id, plot_id, crop_id, date_from, date_to, per_category_limit
+                )
+            )
         return items
 
     async def _diagnoses(
@@ -118,28 +130,43 @@ class HistoryRepository:
         date_to: datetime | None,
         limit: int,
     ) -> list[TimelineItem]:
-        cases = select(DiagnosisCase.id).where(
+        scan_scope: ColumnElement[bool] = and_(
+            ChatSession.scope_type == "scan",
             DiagnosisCase.farmer_id == farmer_id,
             DiagnosisCase.plot_id == plot_id,
         )
         if crop_id is not None:
-            cases = cases.where(DiagnosisCase.crop_id == crop_id)
-            scope: ColumnElement[bool] = ChatSession.diagnosis_case_id.in_(cases)
+            scan_scope = and_(scan_scope, DiagnosisCase.crop_id == crop_id)
+            scope: ColumnElement[bool] = scan_scope
         else:
             connected = select(ChatMemoryConnection.chat_id).where(
                 ChatMemoryConnection.farmer_id == farmer_id,
                 ChatMemoryConnection.plot_id == plot_id,
             )
             scope = or_(
-                ChatSession.plot_id == plot_id,
-                ChatSession.diagnosis_case_id.in_(cases),
+                and_(
+                    ChatSession.scope_type == "plot",
+                    ChatSession.plot_id == plot_id,
+                ),
+                scan_scope,
                 ChatSession.id.in_(connected),
             )
-        statement = select(ChatSession).where(
-            ChatSession.farmer_id == farmer_id, scope
+        statement = (
+            select(ChatSession, DiagnosisCase.crop_id)
+            .outerjoin(
+                DiagnosisCase,
+                and_(
+                    DiagnosisCase.id == ChatSession.diagnosis_case_id,
+                    DiagnosisCase.farmer_id == farmer_id,
+                ),
+            )
+            .where(ChatSession.farmer_id == farmer_id, scope)
         )
-        statement = self._dates(statement, ChatSession.created_at, date_from, date_to)
-        values = await self._session.scalars(
+        if date_from is not None:
+            statement = statement.where(ChatSession.created_at >= date_from)
+        if date_to is not None:
+            statement = statement.where(ChatSession.created_at <= date_to)
+        rows = await self._session.execute(
             statement.order_by(ChatSession.created_at.desc()).limit(limit)
         )
         return [
@@ -149,11 +176,11 @@ class HistoryRepository:
                 event_code="chat.session_created",
                 occurred_at=value.created_at,
                 plot_id=plot_id,
-                crop_id=crop_id,
+                crop_id=case_crop_id,
                 reference_id=value.id,
                 data={"scope_type": value.scope_type, "title": value.title},
             )
-            for value in values
+            for value, case_crop_id in rows
         ]
 
     async def _assessments(
@@ -175,32 +202,32 @@ class HistoryRepository:
         )
         if crop_id is not None:
             statement = statement.where(DiagnosisCase.crop_id == crop_id)
-        statement = self._dates(
-            statement, DiagnosisAssessment.created_at, date_from, date_to
-        )
-        values = await self._session.scalars(
-            statement.order_by(DiagnosisAssessment.created_at.desc()).limit(limit)
+        statement = self._dates(statement, DiagnosisAssessment.created_at, date_from, date_to)
+        rows = await self._session.execute(
+            statement.add_columns(DiagnosisCase.crop_id)
+            .order_by(DiagnosisAssessment.created_at.desc())
+            .limit(limit)
         )
         return [
             TimelineItem(
-                id=value.id,
+                id=assessment.id,
                 category=TimelineCategory.DIAGNOSIS,
                 event_code="diagnosis.assessment_created",
-                occurred_at=value.created_at,
+                occurred_at=assessment.created_at,
                 plot_id=plot_id,
-                crop_id=crop_id,
-                reference_id=value.case_id,
+                crop_id=case_crop_id,
+                reference_id=assessment.case_id,
                 data={
-                    "predicted_crop": value.predicted_crop,
-                    "primary_disease": value.primary_disease,
-                    "confidence": value.confidence,
-                    "confidence_label": value.confidence_label,
-                    "is_active": value.is_active,
-                    "model_name": value.model_name,
-                    "model_version": value.model_version,
+                    "predicted_crop": assessment.predicted_crop,
+                    "primary_disease": assessment.primary_disease,
+                    "confidence": assessment.confidence,
+                    "confidence_label": assessment.confidence_label,
+                    "is_active": assessment.is_active,
+                    "model_name": assessment.model_name,
+                    "model_version": assessment.model_version,
                 },
             )
-            for value in values
+            for assessment, case_crop_id in rows
         ]
 
     async def _reminders(
@@ -324,6 +351,43 @@ class HistoryRepository:
                 crop_id=value.crop_id,
                 reference_id=value.crop_id,
                 data={"stage": value.stage},
+            )
+            for value in values
+        ]
+
+    async def _crop_cycle_events(
+        self,
+        farmer_id: UUID,
+        plot_id: UUID,
+        crop_id: UUID | None,
+        date_from: datetime | None,
+        date_to: datetime | None,
+        limit: int,
+    ) -> list[TimelineItem]:
+        statement = (
+            select(CropCycleEvent)
+            .join(Crop, Crop.id == CropCycleEvent.crop_id)
+            .where(
+                CropCycleEvent.farmer_id == farmer_id,
+                Crop.plot_id == plot_id,
+            )
+        )
+        if crop_id is not None:
+            statement = statement.where(CropCycleEvent.crop_id == crop_id)
+        statement = self._dates(statement, CropCycleEvent.occurred_at, date_from, date_to)
+        values = await self._session.scalars(
+            statement.order_by(CropCycleEvent.occurred_at.desc()).limit(limit)
+        )
+        return [
+            TimelineItem(
+                id=value.id,
+                category=TimelineCategory.CROP_CYCLE,
+                event_code=f"crop.cycle_{value.event_type}",
+                occurred_at=value.occurred_at,
+                plot_id=plot_id,
+                crop_id=value.crop_id,
+                reference_id=value.crop_id,
+                data={"event_date": value.event_date.isoformat()},
             )
             for value in values
         ]

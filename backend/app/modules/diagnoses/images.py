@@ -25,6 +25,7 @@ class ImagePreprocessor:
     def __init__(self, settings: Settings, *, error_prefix: str = "SCAN_IMAGE") -> None:
         self._max_bytes = settings.max_image_bytes
         self._max_dimension = settings.stored_image_max_dimension
+        self._max_pixels = settings.source_image_max_pixels
         self._jpeg_quality = settings.stored_image_jpeg_quality
         self._error_prefix = error_prefix
 
@@ -38,6 +39,12 @@ class ImagePreprocessor:
     def _prepare_sync(self, content: bytes) -> PreparedImage:
         try:
             with Image.open(BytesIO(content)) as source:
+                width, height = source.size
+                if width * height > self._max_pixels:
+                    raise ApplicationError(
+                        code=f"{self._error_prefix}_PIXELS_EXCEEDED",
+                        status_code=413,
+                    )
                 source.verify()
             with Image.open(BytesIO(content)) as source:
                 oriented = ImageOps.exif_transpose(source)
@@ -51,10 +58,10 @@ class ImagePreprocessor:
                     quality=self._jpeg_quality,
                     optimize=True,
                 )
-        except (UnidentifiedImageError, OSError, ValueError) as exc:
-            raise ApplicationError(
-                code=f"{self._error_prefix}_INVALID", status_code=422
-            ) from exc
+        except ApplicationError:
+            raise
+        except (Image.DecompressionBombError, UnidentifiedImageError, OSError, ValueError) as exc:
+            raise ApplicationError(code=f"{self._error_prefix}_INVALID", status_code=422) from exc
         if width < 32 or height < 32:
             raise ApplicationError(code=f"{self._error_prefix}_TOO_SMALL", status_code=422)
         return PreparedImage(content=output.getvalue(), width=width, height=height)

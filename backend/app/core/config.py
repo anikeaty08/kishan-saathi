@@ -53,7 +53,9 @@ class Settings(BaseSettings):
         ge=1024,
         le=250 * 1024 * 1024,
     )
+    max_diagnosis_images: int = Field(default=12, ge=1, le=50)
     stored_image_max_dimension: int = Field(default=2048, ge=512, le=4096)
+    source_image_max_pixels: int = Field(default=25_000_000, ge=1_000_000, le=100_000_000)
     stored_image_jpeg_quality: int = Field(default=90, ge=70, le=95)
     object_cleanup_interval_seconds: float = Field(default=30.0, ge=1, le=3600)
     object_cleanup_batch_size: int = Field(default=50, ge=1, le=500)

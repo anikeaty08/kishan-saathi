@@ -30,13 +30,14 @@ class DiagnosisLink(BaseModel):
     plot_id: UUID | None = None
     crop_id: UUID | None = None
 
+
 class DiagnosisFeedbackUpsert(BaseModel):
     model_config = ConfigDict(extra="forbid")
     is_incorrect: bool
     corrected_crop: PlantName | None = None
-    corrected_disease: Annotated[
-        str, StringConstraints(strip_whitespace=True, max_length=200)
-    ] | None = None
+    corrected_disease: (
+        Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)] | None
+    ) = None
     notes: Annotated[str, StringConstraints(strip_whitespace=True, max_length=2000)] | None = None
 
 
@@ -66,6 +67,10 @@ class AssessmentResponse(BaseModel):
     model_name: str
     model_version: str
     created_at: datetime
+
+
+class AssessmentHistoryResponse(AssessmentResponse):
+    image_predictions: dict[UUID, list[PredictionResponse]] = Field(default_factory=dict)
 
 
 class DiagnosisCaseResponse(BaseModel):

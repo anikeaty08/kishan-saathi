@@ -5,7 +5,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.chats.models import ChatMessage, ChatSession
+from app.modules.chats.models import ChatMessage, ChatSendOperation, ChatSession
 
 
 class ChatRepository:
@@ -23,9 +23,7 @@ class ChatRepository:
         result = await self.session.execute(statement)
         return result.scalar_one_or_none()
 
-    async def list_chats(
-        self, farmer_id: UUID, *, include_archived: bool
-    ) -> list[ChatSession]:
+    async def list_chats(self, farmer_id: UUID, *, include_archived: bool) -> list[ChatSession]:
         statement = select(ChatSession).where(ChatSession.farmer_id == farmer_id)
         if not include_archived:
             statement = statement.where(ChatSession.archived_at.is_(None))
@@ -46,9 +44,7 @@ class ChatRepository:
         )
         return list(reversed(list(result)))
 
-    async def all_messages(
-        self, farmer_id: UUID, chat_id: UUID
-    ) -> list[ChatMessage]:
+    async def all_messages(self, farmer_id: UUID, chat_id: UUID) -> list[ChatMessage]:
         result = await self.session.scalars(
             select(ChatMessage)
             .where(
@@ -68,16 +64,31 @@ class ChatRepository:
         )
         return int(value or 0) + 1
 
-    def add(self, value: ChatSession | ChatMessage) -> None:
+    async def get_send_operation(
+        self, farmer_id: UUID, chat_id: UUID, idempotency_key: str
+    ) -> ChatSendOperation | None:
+        result = await self.session.execute(
+            select(ChatSendOperation).where(
+                ChatSendOperation.farmer_id == farmer_id,
+                ChatSendOperation.chat_id == chat_id,
+                ChatSendOperation.idempotency_key == idempotency_key,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    def add(self, value: ChatSession | ChatMessage | ChatSendOperation) -> None:
         self.session.add(value)
 
     async def commit(self) -> None:
         await self.session.commit()
 
+    async def flush(self) -> None:
+        await self.session.flush()
+
     async def rollback(self) -> None:
         await self.session.rollback()
 
-    async def refresh(self, value: ChatSession | ChatMessage) -> None:
+    async def refresh(self, value: ChatSession | ChatMessage | ChatSendOperation) -> None:
         await self.session.refresh(value)
 
     async def delete(self, value: ChatSession) -> None:

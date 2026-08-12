@@ -1,8 +1,9 @@
 """Owner-scoped reminder persistence."""
 
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.reminders.models import Reminder, ReminderEvent, ReminderProposal
@@ -35,9 +36,27 @@ class ReminderRepository:
         result = await self.session.execute(statement)
         return result.scalar_one_or_none()
 
-    async def list_reminders(
-        self, farmer_id: UUID, *, include_finished: bool
-    ) -> list[Reminder]:
+    async def list_proposals(
+        self, farmer_id: UUID, *, pending_only: bool
+    ) -> list[ReminderProposal]:
+        statement = select(ReminderProposal).where(ReminderProposal.farmer_id == farmer_id)
+        if pending_only:
+            statement = statement.where(ReminderProposal.status == "pending")
+        result = await self.session.scalars(statement.order_by(ReminderProposal.created_at.desc()))
+        return list(result)
+
+    async def expire_pending_proposals(self, farmer_id: UUID, now: datetime) -> None:
+        await self.session.execute(
+            update(ReminderProposal)
+            .where(
+                ReminderProposal.farmer_id == farmer_id,
+                ReminderProposal.status == "pending",
+                ReminderProposal.due_at <= now,
+            )
+            .values(status="expired", decided_at=now)
+        )
+
+    async def list_reminders(self, farmer_id: UUID, *, include_finished: bool) -> list[Reminder]:
         statement = select(Reminder).where(Reminder.farmer_id == farmer_id)
         if not include_finished:
             statement = statement.where(Reminder.status == "pending")
@@ -59,9 +78,7 @@ class ReminderRepository:
         )
         return list(result)
 
-    async def list_events(
-        self, farmer_id: UUID, reminder_id: UUID
-    ) -> list[ReminderEvent]:
+    async def list_events(self, farmer_id: UUID, reminder_id: UUID) -> list[ReminderEvent]:
         result = await self.session.scalars(
             select(ReminderEvent)
             .where(

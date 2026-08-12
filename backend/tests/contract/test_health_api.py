@@ -70,7 +70,14 @@ async def test_readiness_reports_available_database() -> None:
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
-    assert response.json()["checks"] == {"database": {"status": "up"}}
+    assert response.json()["checks"] == {
+        "database": {"status": "up"},
+        "authentication": {"status": "down"},
+        "llm": {"status": "down"},
+        "memory": {"status": "down"},
+        "current_weather": {"status": "down"},
+        "leaf_inference": {"status": "down"},
+    }
     assert database.ping_count == 1
 
 
@@ -84,7 +91,7 @@ async def test_readiness_is_safe_when_database_is_unavailable() -> None:
 
     assert response.status_code == 503
     assert response.json()["status"] == "not_ready"
-    assert response.json()["checks"] == {"database": {"status": "down"}}
+    assert response.json()["checks"]["database"] == {"status": "down"}
     assert "test database unavailable" not in response.text
 
 

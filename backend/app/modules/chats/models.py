@@ -4,6 +4,7 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    JSON,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -55,9 +56,7 @@ class ChatSession(Base):
     )
     title: Mapped[str] = mapped_column(String(150), default="New conversation")
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -85,6 +84,30 @@ class ChatMessage(Base):
     content: Mapped[str] = mapped_column(Text)
     model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     provider_response_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ChatSendOperation(Base):
+    """Completed idempotent message send, scoped to one farmer and chat."""
+
+    __tablename__ = "chat_send_operations"
+    __table_args__ = (
+        UniqueConstraint(
+            "farmer_id",
+            "chat_id",
+            "idempotency_key",
+            name="uq_chat_send_operations_key",
+        ),
     )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    farmer_id: Mapped[UUID] = mapped_column(
+        ForeignKey("farmer_profiles.id", ondelete="RESTRICT"), index=True
+    )
+    chat_id: Mapped[UUID] = mapped_column(
+        ForeignKey("chat_sessions.id", ondelete="CASCADE"), index=True
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    response: Mapped[dict[str, object]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

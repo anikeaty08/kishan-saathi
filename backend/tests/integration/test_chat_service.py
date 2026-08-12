@@ -69,9 +69,7 @@ class CapturingLLM(LLMProvider):
         self, *, content: str, language: str, farmer_id: UUID, model: str
     ) -> GeneratedTitle:
         del content, language, farmer_id
-        self.requests.append(
-            (LLMRequest(LLMTask.TITLE, "title", "title", FARMER), model)
-        )
+        self.requests.append((LLMRequest(LLMTask.TITLE, "title", "title", FARMER), model))
         return GeneratedTitle(title="Leaf inspection guidance")
 
 
@@ -79,9 +77,7 @@ class ScopedMemory(MemoryProvider):
     def __init__(self) -> None:
         self.searches: list[tuple[UUID, UUID, str]] = []
 
-    async def search(
-        self, *, scope: MemoryScope, query: str, limit: int
-    ) -> tuple[MemoryFact, ...]:
+    async def search(self, *, scope: MemoryScope, query: str, limit: int) -> tuple[MemoryFact, ...]:
         assert limit == 10
         self.searches.append((scope.farmer_id, scope.scope_id, query))
         return (MemoryFact(id="1", text="Irrigation was completed yesterday"),)
@@ -209,25 +205,40 @@ async def test_general_and_plot_chats_use_distinct_context_and_models() -> None:
                 general.id,
                 ChatMessageCreate(content="How should I inspect leaves?"),
                 preferred_language=None,
+                idempotency_key="general-message-1",
             )
             plot_reply = await service.send_message(
                 FARMER,
                 plot_chat.id,
                 ChatMessageCreate(content="What should I do next?"),
                 preferred_language=None,
+                idempotency_key="plot-message-1",
+            )
+            repeated_plot_reply = await service.send_message(
+                FARMER,
+                plot_chat.id,
+                ChatMessageCreate(content="What should I do next?"),
+                preferred_language=None,
+                idempotency_key="plot-message-1",
             )
             with pytest.raises(ApplicationError) as hidden:
                 await service.get_chat(OTHER, plot_chat.id)
-            await service.update_chat(
-                FARMER, plot_chat.id, ChatUpdate(archived=True)
-            )
+            await service.update_chat(FARMER, plot_chat.id, ChatUpdate(archived=True))
             with pytest.raises(ApplicationError) as archived:
                 await service.send_message(
                     FARMER,
                     plot_chat.id,
                     ChatMessageCreate(content="Should fail"),
                     preferred_language=None,
+                    idempotency_key="archived-message-1",
                 )
+            replayed_after_archive = await service.send_message(
+                FARMER,
+                plot_chat.id,
+                ChatMessageCreate(content="What should I do next?"),
+                preferred_language=None,
+                idempotency_key="plot-message-1",
+            )
     finally:
         await engine.dispose()
 
@@ -244,6 +255,9 @@ async def test_general_and_plot_chats_use_distinct_context_and_models() -> None:
     assert general_request.tools == ()
     assert [tool.name for tool in plot_request.tools] == ["get_plot_weather"]
     assert plot_reply.reminder_proposal is None
+    assert repeated_plot_reply == plot_reply
+    assert replayed_after_archive == plot_reply
+    assert len(guidance_requests) == 2
     assert hidden.value.code == "CHAT_NOT_FOUND"
     assert archived.value.code == "CHAT_ARCHIVED"
 
@@ -260,9 +274,7 @@ async def test_typed_agent_reminder_is_persisted_with_chat_scope() -> None:
     llm.reply = AssistantReply(
         short_answer="Inspect again after two days.",
         follow_up_questions=["Did the spots spread?"],
-        reminder_proposal=ReminderProposalDraft(
-            title="Inspect leaf spots", due_at=due_at
-        ),
+        reminder_proposal=ReminderProposalDraft(title="Inspect leaf spots", due_at=due_at),
     )
     try:
         async with sessions() as session:
@@ -285,11 +297,10 @@ async def test_typed_agent_reminder_is_persisted_with_chat_scope() -> None:
                 chat.id,
                 ChatMessageCreate(content="Remind me to inspect these spots"),
                 preferred_language=None,
+                idempotency_key="reminder-message-1",
             )
             assert reply.reminder_proposal is not None
-            stored = await reminders.get_proposal(
-                FARMER, reply.reminder_proposal.id
-            )
+            stored = await reminders.get_proposal(FARMER, reply.reminder_proposal.id)
     finally:
         await engine.dispose()
 

@@ -1,5 +1,6 @@
 """Scoped chat lifecycle, context selection, and LLM coordination."""
 
+import hashlib
 import json
 from datetime import UTC, datetime
 from uuid import UUID
@@ -17,7 +18,7 @@ from app.integrations.memory.provider import (
     MemoryScope,
     MemoryScopeType,
 )
-from app.modules.chats.models import ChatMessage, ChatSession
+from app.modules.chats.models import ChatMessage, ChatSendOperation, ChatSession
 from app.modules.chats.repository import ChatRepository
 from app.modules.chats.schemas import (
     ChatCreate,
@@ -77,12 +78,8 @@ class ChatService:
         await self._repository.refresh(chat)
         return ChatResponse.model_validate(chat)
 
-    async def list_chats(
-        self, farmer_id: UUID, *, include_archived: bool
-    ) -> list[ChatResponse]:
-        chats = await self._repository.list_chats(
-            farmer_id, include_archived=include_archived
-        )
+    async def list_chats(self, farmer_id: UUID, *, include_archived: bool) -> list[ChatResponse]:
+        chats = await self._repository.list_chats(farmer_id, include_archived=include_archived)
         return [ChatResponse.model_validate(chat) for chat in chats]
 
     async def get_chat(self, farmer_id: UUID, chat_id: UUID) -> ChatDetailResponse:
@@ -93,10 +90,8 @@ class ChatService:
             messages=[ChatMessageResponse.model_validate(item) for item in messages],
         )
 
-    async def update_chat(
-        self, farmer_id: UUID, chat_id: UUID, data: ChatUpdate
-    ) -> ChatResponse:
-        chat = await self._chat(farmer_id, chat_id)
+    async def update_chat(self, farmer_id: UUID, chat_id: UUID, data: ChatUpdate) -> ChatResponse:
+        chat = await self._chat(farmer_id, chat_id, for_update=True)
         if "title" in data.model_fields_set:
             chat.title = data.title or chat.title
         if "archived" in data.model_fields_set:
@@ -116,13 +111,27 @@ class ChatService:
         data: ChatMessageCreate,
         *,
         preferred_language: SupportedLanguage | None,
+        idempotency_key: str,
     ) -> SendMessageResponse:
-        chat = await self._chat(farmer_id, chat_id)
+        chat = await self._chat(farmer_id, chat_id, for_update=True)
+        request_hash = hashlib.sha256(data.content.encode()).hexdigest()
+        previous = await self._repository.get_send_operation(farmer_id, chat_id, idempotency_key)
+        if previous is not None:
+            if previous.request_hash != request_hash:
+                raise ApplicationError(code="IDEMPOTENCY_KEY_REUSED", status_code=409)
+            return SendMessageResponse.model_validate(previous.response)
         if chat.archived_at is not None:
             raise ApplicationError(code="CHAT_ARCHIVED", status_code=409)
+        farm_id, plot_id = await self._effective_scope(farmer_id, chat)
         recent = await self._repository.recent_messages(farmer_id, chat_id, limit=10)
-        context = await self._context(farmer_id, chat, data.content)
-        tools = self._tools(farmer_id, chat)
+        context = await self._context(
+            farmer_id,
+            chat,
+            data.content,
+            farm_id=farm_id,
+            plot_id=plot_id,
+        )
+        tools = self._tools(farmer_id, plot_id)
         task = LLMTask.AGRICULTURAL_GUIDANCE
         sequence = await self._repository.next_sequence(farmer_id, chat_id)
         user_message = ChatMessage(
@@ -159,7 +168,7 @@ class ChatService:
             )
             self._repository.add(assistant_message)
             reminder_proposal = self._pending_reminder(
-                farmer_id, chat, result.reply.reminder_proposal
+                farmer_id, chat, plot_id, result.reply.reminder_proposal
             )
             if reminder_proposal is not None:
                 self._reminders.add(reminder_proposal)
@@ -173,29 +182,41 @@ class ChatService:
                     chat.title = generated.title.strip()
                 except ApplicationError:
                     chat.title = self._local_title(data.content)
+            await self._repository.flush()
+            await self._repository.refresh(user_message)
+            await self._repository.refresh(assistant_message)
+            if reminder_proposal is not None:
+                await self._reminders.refresh(reminder_proposal)
+            response = SendMessageResponse(
+                user_message=ChatMessageResponse.model_validate(user_message),
+                assistant_message=ChatMessageResponse.model_validate(assistant_message),
+                follow_up_questions=result.reply.follow_up_questions,
+                reminder_proposal=(
+                    ProposalResponse.model_validate(reminder_proposal)
+                    if reminder_proposal is not None
+                    else None
+                ),
+            )
+            self._repository.add(
+                ChatSendOperation(
+                    farmer_id=farmer_id,
+                    chat_id=chat_id,
+                    idempotency_key=idempotency_key,
+                    request_hash=request_hash,
+                    response=response.model_dump(mode="json"),
+                )
+            )
             await self._repository.commit()
         except Exception:
             await self._repository.rollback()
             raise
-        await self._repository.refresh(user_message)
-        await self._repository.refresh(assistant_message)
-        if reminder_proposal is not None:
-            await self._reminders.refresh(reminder_proposal)
-        return SendMessageResponse(
-            user_message=ChatMessageResponse.model_validate(user_message),
-            assistant_message=ChatMessageResponse.model_validate(assistant_message),
-            follow_up_questions=result.reply.follow_up_questions,
-            reminder_proposal=(
-                ProposalResponse.model_validate(reminder_proposal)
-                if reminder_proposal is not None
-                else None
-            ),
-        )
+        return response
 
     @staticmethod
     def _pending_reminder(
         farmer_id: UUID,
         chat: ChatSession,
+        plot_id: UUID | None,
         draft: ReminderProposalDraft | None,
     ) -> ReminderProposal | None:
         if draft is None:
@@ -204,19 +225,18 @@ class ChatService:
             farmer_id=farmer_id,
             chat_id=chat.id,
             diagnosis_case_id=chat.diagnosis_case_id,
-            plot_id=chat.plot_id,
+            plot_id=plot_id,
             title=draft.title,
             due_at=draft.due_at,
             recurrence_days=draft.recurrence_days,
             status="pending",
         )
 
-    def _tools(self, farmer_id: UUID, chat: ChatSession) -> tuple[LLMTool, ...]:
+    def _tools(self, farmer_id: UUID, plot_id: UUID | None) -> tuple[LLMTool, ...]:
         """Expose only a forecast for the already-authorized plot in this chat."""
 
-        if chat.plot_id is None:
+        if plot_id is None:
             return ()
-        plot_id = chat.plot_id
 
         async def get_plot_weather() -> str:
             try:
@@ -238,20 +258,24 @@ class ChatService:
         )
 
     async def _context(
-        self, farmer_id: UUID, chat: ChatSession, query: str
+        self,
+        farmer_id: UUID,
+        chat: ChatSession,
+        query: str,
+        *,
+        farm_id: UUID | None,
+        plot_id: UUID | None,
     ) -> list[str]:
         context: list[str] = []
-        if chat.farm_id is not None:
-            farm = await self._farms.get_farm(farmer_id, chat.farm_id)
+        if farm_id is not None:
+            farm = await self._farms.get_farm(farmer_id, farm_id)
             if farm is None:
                 raise ApplicationError(code="FARM_NOT_FOUND", status_code=404)
             context.append(f"Farm: {farm.name}")
-            farm_facts = await self._canonical_memory.list_farm(
-                farmer_id, farm.id, limit=5
-            )
+            farm_facts = await self._canonical_memory.list_farm(farmer_id, farm.id, limit=5)
             context.extend(f"Relevant farm memory: {fact.text}" for fact in farm_facts)
-        if chat.plot_id is not None:
-            plot = await self._farms.get_plot(farmer_id, chat.plot_id)
+        if plot_id is not None:
+            plot = await self._farms.get_plot(farmer_id, plot_id)
             if plot is None:
                 raise ApplicationError(code="PLOT_NOT_FOUND", status_code=404)
             context.append(f"Plot: {plot.name}")
@@ -261,23 +285,17 @@ class ChatService:
                 for crop in crops
                 if crop.cycle_ended_on is None
             )
-            activities = await self._farms.list_activities(
-                farmer_id, plot.id, limit=5
-            )
+            activities = await self._farms.list_activities(farmer_id, plot.id, limit=5)
             context.extend(
                 f"Recent plot activity: {activity.title} at {activity.occurred_at.isoformat()}"
                 for activity in activities
             )
-            reminders = await self._reminders.list_plot_pending(
-                farmer_id, plot.id, limit=5
-            )
+            reminders = await self._reminders.list_plot_pending(farmer_id, plot.id, limit=5)
             context.extend(
                 f"Pending task: {reminder.title} due {reminder.due_at.isoformat()}"
                 for reminder in reminders
             )
-            canonical = await self._canonical_memory.list_plot(
-                farmer_id, plot.id, limit=5
-            )
+            canonical = await self._canonical_memory.list_plot(farmer_id, plot.id, limit=5)
             context.extend(f"Relevant plot memory: {fact.text}" for fact in canonical)
             await self._verified_indexed_context(farmer_id, plot.id, query, context)
         if chat.diagnosis_case_id is not None:
@@ -289,9 +307,7 @@ class ChatService:
                 if case_crop is None:
                     raise ApplicationError(code="CROP_NOT_FOUND", status_code=404)
                 cycle_end = (
-                    case_crop.cycle_ended_on.isoformat()
-                    if case_crop.cycle_ended_on
-                    else "active"
+                    case_crop.cycle_ended_on.isoformat() if case_crop.cycle_ended_on else "active"
                 )
                 context.append(
                     "Diagnosis-linked crop: "
@@ -315,9 +331,7 @@ class ChatService:
             context.append(
                 f"Diagnosis images: {len(images)}; quality flags: {', '.join(flags) or 'none'}"
             )
-            assessments = await self._diagnoses.list_assessments(
-                farmer_id, case.id, limit=5
-            )
+            assessments = await self._diagnoses.list_assessments(farmer_id, case.id, limit=5)
             context.extend(
                 "Diagnosis history: "
                 f"{item.predicted_crop} / {item.primary_disease}; "
@@ -325,6 +339,21 @@ class ChatService:
                 for item in reversed(assessments)
             )
         return context
+
+    async def _effective_scope(
+        self, farmer_id: UUID, chat: ChatSession
+    ) -> tuple[UUID | None, UUID | None]:
+        """Resolve mutable links at send time rather than trusting copied chat fields."""
+
+        if chat.diagnosis_case_id is not None:
+            case = await self._diagnoses.get_case(farmer_id, chat.diagnosis_case_id)
+            if case is None:
+                raise ApplicationError(code="DIAGNOSIS_CASE_NOT_FOUND", status_code=404)
+            return case.farm_id, case.plot_id
+        connection = await self._canonical_memory.get_connection(farmer_id, chat.id)
+        if connection is not None:
+            return connection.farm_id, connection.plot_id
+        return chat.farm_id, chat.plot_id
 
     async def _verified_indexed_context(
         self, farmer_id: UUID, plot_id: UUID, query: str, context: list[str]
@@ -354,9 +383,7 @@ class ChatService:
     async def _validate_scope(
         self, farmer_id: UUID, data: ChatCreate
     ) -> tuple[UUID | None, UUID | None, UUID | None]:
-        if data.farm_id is not None and await self._farms.get_farm(
-            farmer_id, data.farm_id
-        ) is None:
+        if data.farm_id is not None and await self._farms.get_farm(farmer_id, data.farm_id) is None:
             raise ApplicationError(code="FARM_NOT_FOUND", status_code=404)
         if data.plot_id is not None:
             plot = await self._farms.get_plot(farmer_id, data.plot_id)
@@ -371,8 +398,10 @@ class ChatService:
             return case.farm_id, case.plot_id, case.id
         return data.farm_id, data.plot_id, None
 
-    async def _chat(self, farmer_id: UUID, chat_id: UUID) -> ChatSession:
-        chat = await self._repository.get_chat(farmer_id, chat_id)
+    async def _chat(
+        self, farmer_id: UUID, chat_id: UUID, *, for_update: bool = False
+    ) -> ChatSession:
+        chat = await self._repository.get_chat(farmer_id, chat_id, for_update=for_update)
         if chat is None:
             raise ApplicationError(code="CHAT_NOT_FOUND", status_code=404)
         return chat
@@ -385,15 +414,18 @@ class ChatService:
             f"farmer-friendly language using locale {language_code}. Lead with a short answer. "
             "Ask targeted follow-up questions when context is insufficient. Never invent facts, "
             "diagnoses, weather, product brands, or local approvals. Treatment detail must state "
-            "uncertainty and safety precautions. A reminder may only be proposed, never claimed "
+            "uncertainty and safety precautions. No authoritative local treatment source is "
+            "configured, so never provide a chemical or product name, active ingredient, dose, "
+            "mixing direction, application method, application frequency, or schedule in any "
+            "response field. Give only general safety precautions and recommend locally approved "
+            "expert or label guidance when specifics are requested. A reminder may only be "
+            "proposed, never claimed "
             "as created. When plot weather could affect guidance, call get_plot_weather; "
             "do not invent or request different coordinates."
         )
 
     @staticmethod
-    def _input(
-        recent: list[ChatMessage], context: list[str], current_question: str
-    ) -> str:
+    def _input(recent: list[ChatMessage], context: list[str], current_question: str) -> str:
         recent_text = "\n".join(f"{item.role}: {item.content}" for item in recent)
         context_text = "\n".join(context) or "No farm, plot, scan, or long-term memory context."
         return (
@@ -413,14 +445,4 @@ class ChatService:
         from app.integrations.llm.provider import TreatmentGuidance
 
         value = TreatmentGuidance.model_validate(treatment)
-        lines = ["Treatment guidance:"]
-        fields = (
-            ("Active ingredient", value.active_ingredient),
-            ("Dosage", value.dosage),
-            ("Application", value.application_method),
-            ("Frequency", value.frequency),
-        )
-        lines.extend(f"{label}: {item}" for label, item in fields if item)
-        lines.extend(f"Safety: {item}" for item in value.safety_precautions)
-        lines.append("Verify local approval and label guidance before use.")
-        return "\n".join(lines)
+        return "\n".join(value.safety_precautions)

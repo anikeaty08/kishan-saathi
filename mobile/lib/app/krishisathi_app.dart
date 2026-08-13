@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 
@@ -47,11 +48,29 @@ class _KrishiSathiAppState extends State<KrishiSathiApp> {
             themeMode: controller.themeMode,
             routerConfig: router,
             builder: (context, child) {
-              return Directionality(
-                textDirection: controller.selectedLanguage.rtl
-                    ? TextDirection.rtl
-                    : TextDirection.ltr,
-                child: child ?? const SizedBox.shrink(),
+              final dark = Theme.of(context).brightness == Brightness.dark;
+              return AnnotatedRegion<SystemUiOverlayStyle>(
+                key: const ValueKey('system-ui-overlay'),
+                value: SystemUiOverlayStyle(
+                  statusBarColor: Colors.transparent,
+                  systemNavigationBarColor: Colors.transparent,
+                  systemNavigationBarDividerColor: Colors.transparent,
+                  statusBarIconBrightness: dark
+                      ? Brightness.light
+                      : Brightness.dark,
+                  statusBarBrightness: dark
+                      ? Brightness.dark
+                      : Brightness.light,
+                  systemNavigationBarIconBrightness: dark
+                      ? Brightness.light
+                      : Brightness.dark,
+                ),
+                child: Directionality(
+                  textDirection: controller.selectedLanguage.rtl
+                      ? TextDirection.rtl
+                      : TextDirection.ltr,
+                  child: child ?? const SizedBox.shrink(),
+                ),
               );
             },
           );

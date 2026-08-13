@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:provider/provider.dart';
 
@@ -18,8 +17,7 @@ class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
-    final date = DateFormat.MMMEd(controller.locale.languageCode)
-        .format(DateTime.now());
+    final date = context.strings.formatWeekdayDate(DateTime.now());
     final pendingReminders = controller.reminders
         .where((item) => item.status == ReminderStatus.pending)
         .toList();
@@ -70,7 +68,10 @@ class HomeScreen extends StatelessWidget {
                                         .refreshCurrentWeather();
                                   } on ApiException catch (error) {
                                     if (context.mounted) {
-                                      showAppSnackBar(context, error.message);
+                                      showAppSnackBar(
+                                        context,
+                                        context.localizedError(error),
+                                      );
                                     }
                                   }
                                 },
@@ -237,9 +238,7 @@ class _WeatherPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final time = DateFormat.jm(
-      context.read<AppController>().locale.languageCode,
-    ).format(weather.fetchedAt);
+    final time = context.strings.formatTime(weather.fetchedAt);
     return InkWell(
       onTap: () => context.push('/weather'),
       borderRadius: BorderRadius.circular(AppRadius.medium),
@@ -353,6 +352,7 @@ class _FarmFeature extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final controller = context.watch<AppController>();
     return Semantics(
       button: true,
       label: '${farm.name}, ${farm.displayLocation ?? 'no plot location'}',
@@ -390,7 +390,7 @@ class _FarmFeature extends StatelessWidget {
                   ),
                   _ImageLabel(
                     icon: LucideIcons.ruler,
-                    text: '${farm.totalArea.toStringAsFixed(1)} acres',
+                    text: controller.formatFarmArea(farm),
                   ),
                 ],
               ),
@@ -458,7 +458,7 @@ class _ReminderRow extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '${reminder.plotName} · ${DateFormat.jm().format(reminder.dueAt)}',
+                      '${reminder.plotName} · ${context.strings.formatTime(reminder.dueAt)}',
                       style: Theme.of(context).textTheme.bodySmall
                           ?.copyWith(color: AppColors.mutedInk),
                     ),
@@ -474,7 +474,7 @@ class _ReminderRow extends StatelessWidget {
                     );
                   } on ApiException catch (error) {
                     if (context.mounted) {
-                      showAppSnackBar(context, error.message);
+                      showAppSnackBar(context, context.localizedError(error));
                     }
                   }
                 },

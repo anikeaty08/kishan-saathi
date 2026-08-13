@@ -34,6 +34,11 @@ abstract final class ApiEndpoints {
   static const chats = '/api/v1/chats';
   static String chat(String id) => '$chats/$id';
   static String chatMessages(String id) => '${chat(id)}/messages';
+  static String chatTurns(String id) => '${chat(id)}/turns';
+  static String chatTurn(String chatId, String turnId) =>
+      '${chatTurns(chatId)}/$turnId';
+  static String chatTurnRetry(String chatId, String turnId) =>
+      '${chatTurn(chatId, turnId)}/retry';
   static String farmMemories(String id) => '${farm(id)}/memories';
   static String plotMemories(String id) => '${plot(id)}/memories';
   static String memory(String id) => '/api/v1/memories/$id';

@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../../core/config/app_config.dart';
 import '../../../core/localization/app_language.dart';
+import '../../../core/localization/app_strings.dart';
 import '../../../core/models/app_models.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_endpoints.dart';
@@ -20,6 +21,7 @@ import '../../home/data/weather_repository.dart';
 import '../../profile/data/memory_repository.dart';
 import '../../profile/data/reminder_repository.dart';
 import '../../saathi/data/chat_repository.dart';
+import '../../saathi/data/chat_outbox_store.dart';
 import '../../scan/data/diagnosis_repository.dart';
 import '../../scan/data/scan_queue_repository.dart';
 
@@ -32,6 +34,7 @@ class AppController extends ChangeNotifier {
     required this.farmRepository,
     required this.locationRepository,
     required this.chatRepository,
+    required this.chatOutboxStore,
     required this.diagnosisRepository,
     required this.weatherRepository,
     required this.reminderRepository,
@@ -48,6 +51,7 @@ class AppController extends ChangeNotifier {
   static const _notificationsKey = 'notifications_enabled';
   static const _locationKey = 'location_enabled';
   static const _cameraKey = 'camera_enabled';
+  static const _areaUnitKey = 'preferred_area_unit';
   static const _chatDraftPrefix = 'chat_draft_';
 
   final AppConfig config;
@@ -57,6 +61,7 @@ class AppController extends ChangeNotifier {
   final FarmRepository farmRepository;
   final LocationRepository locationRepository;
   final ChatRepository chatRepository;
+  final ChatOutboxStore chatOutboxStore;
   final DiagnosisRepository diagnosisRepository;
   final WeatherRepository weatherRepository;
   final ReminderRepository reminderRepository;
@@ -77,6 +82,7 @@ class AppController extends ChangeNotifier {
   bool cameraEnabled = true;
   bool busy = false;
   ThemeMode themeMode = ThemeMode.system;
+  String preferredAreaUnit = 'acre';
   Locale locale = const Locale('en');
   String farmerName = 'Anike';
   ApiException? lastError;
@@ -94,6 +100,9 @@ class AppController extends ChangeNotifier {
   List<ReminderProposalModel> reminderProposals = const [];
   List<DiagnosisCaseModel> diagnoses = List.of(DemoData.diagnoses);
   List<ChatThreadModel> chats = List.of(DemoData.chats);
+  final Map<String, Set<String>> _activeChatTurnIds = {};
+  final Map<String, Timer> _chatTurnPollers = {};
+  final Set<String> _refreshingChatTurns = {};
   List<MemoryFactModel> memories = List.of(DemoData.memories);
   List<DiagnosisReportModel> diagnosisReports = const [];
   List<QueuedScanModel> queuedScans = const [];
@@ -128,6 +137,10 @@ class AppController extends ChangeNotifier {
     notificationsEnabled = preferences.getBool(_notificationsKey) ?? true;
     locationEnabled = preferences.getBool(_locationKey) ?? true;
     cameraEnabled = preferences.getBool(_cameraKey) ?? true;
+    preferredAreaUnit = switch (preferences.getString(_areaUnitKey)) {
+      'hectare' => 'hectare',
+      _ => 'acre',
+    };
     queuedScans = await scanQueueRepository.load();
     final tokens = await tokenStore.read();
     isAuthenticated = tokens != null;
@@ -176,7 +189,9 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> setLocale(String code) async {
-    locale = AppLanguage.byCode(code).locale;
+    final nextLocale = AppLanguage.byCode(code).locale;
+    await AppStrings.load(nextLocale);
+    locale = nextLocale;
     await preferences.setString(_localeKey, code);
     notifyListeners();
     if (canUseLiveServices) {
@@ -196,6 +211,41 @@ class AppController extends ChangeNotifier {
     themeMode = value;
     await preferences.setString(_themeKey, value.name);
     notifyListeners();
+  }
+
+  Future<void> setPreferredAreaUnit(String value) async {
+    if (value != 'acre' && value != 'hectare') return;
+    preferredAreaUnit = value;
+    await preferences.setString(_areaUnitKey, value);
+    notifyListeners();
+  }
+
+  String formatArea(double area, String? sourceUnit, {bool compact = false}) {
+    final normalizedSource = sourceUnit == 'hectare' ? 'hectare' : 'acre';
+    final converted = switch ((normalizedSource, preferredAreaUnit)) {
+      ('acre', 'hectare') => area / 2.47105381,
+      ('hectare', 'acre') => area * 2.47105381,
+      _ => area,
+    };
+    final unit = switch ((preferredAreaUnit, compact)) {
+      ('hectare', true) => 'ha',
+      ('hectare', false) => converted == 1 ? 'hectare' : 'hectares',
+      ('acre', true) => 'ac',
+      _ => converted == 1 ? 'acre' : 'acres',
+    };
+    return '${converted.toStringAsFixed(converted < 10 ? 1 : 0)} $unit';
+  }
+
+  String formatFarmArea(FarmModel farm, {bool compact = false}) {
+    final total = farm.plots.fold<double>(0, (sum, plot) {
+      final area = plot.area;
+      if (area == null) return sum;
+      if (preferredAreaUnit == 'hectare') {
+        return sum + (plot.areaUnit == 'hectare' ? area : area / 2.47105381);
+      }
+      return sum + (plot.areaUnit == 'hectare' ? area * 2.47105381 : area);
+    });
+    return formatArea(total, preferredAreaUnit, compact: compact);
   }
 
   Future<void> completeOnboarding({bool preview = false}) async {
@@ -1431,8 +1481,18 @@ class AppController extends ChangeNotifier {
     if (!canUseLiveServices) return;
     final loaded = await _guardValue(() => chatRepository.loadChat(chatId));
     final index = chats.indexWhere((item) => item.id == chatId);
-    chats = index < 0 ? [loaded, ...chats] : ([...chats]..[index] = loaded);
+    final pending = index < 0
+        ? const <ChatMessageModel>[]
+        : chats[index].messages
+              .where((message) => message.delivery != ChatDelivery.sent)
+              .toList(growable: false);
+    final hydrated = loaded.copyWith(
+      messages: [...loaded.messages, ...pending],
+    );
+    chats = index < 0 ? [hydrated, ...chats] : ([...chats]..[index] = hydrated);
     notifyListeners();
+    await _restoreChatOutbox(chatId);
+    await _restoreActiveChatTurns(chatId);
   }
 
   Future<void> sendMessage(String threadId, String text) async {
@@ -1442,21 +1502,344 @@ class AppController extends ChangeNotifier {
       sendPreviewMessage(threadId, normalized);
       return;
     }
-    await _guard(() async {
-      final index = chats.indexWhere((chat) => chat.id == threadId);
-      if (index < 0) {
-        throw const ApiException(
-          code: 'CHAT_NOT_FOUND',
-          message: 'The conversation could not be found',
-          statusCode: 404,
+    final index = chats.indexWhere((chat) => chat.id == threadId);
+    if (index < 0) {
+      throw const ApiException(
+        code: 'CHAT_NOT_FOUND',
+        message: 'The conversation could not be found',
+        statusCode: 404,
+      );
+    }
+    final localMessageId = _uuid.v4();
+    final idempotencyKey = _uuid.v4();
+    final optimistic = ChatMessageModel(
+      id: localMessageId,
+      author: ChatAuthor.farmer,
+      text: normalized,
+      sentAt: DateTime.now(),
+      delivery: ChatDelivery.queued,
+      idempotencyKey: idempotencyKey,
+    );
+    var envelope = PendingChatEnvelope(
+      localId: localMessageId,
+      chatId: threadId,
+      content: normalized,
+      idempotencyKey: idempotencyKey,
+      createdAt: optimistic.sentAt,
+    );
+    await _persistChatEnvelope(envelope);
+    _appendChatMessage(threadId, optimistic);
+    try {
+      final turn = await chatRepository.enqueueMessage(
+        threadId,
+        normalized,
+        idempotencyKey: idempotencyKey,
+      );
+      _updateLocalChatMessage(
+        threadId,
+        localMessageId,
+        (message) => message.copyWith(
+          turnId: turn.id,
+          delivery: _deliveryForTurn(turn.status),
+        ),
+      );
+      envelope = envelope.copyWith(turnId: turn.id);
+      await _persistChatEnvelope(envelope);
+      _activeChatTurnIds.putIfAbsent(threadId, () => <String>{}).add(turn.id);
+      _startChatTurnPolling(threadId);
+      await _applyChatTurn(turn);
+    } on ApiException {
+      _updateLocalChatMessage(
+        threadId,
+        localMessageId,
+        (message) =>
+            message.copyWith(delivery: ChatDelivery.failed, failed: true),
+      );
+      rethrow;
+    }
+  }
+
+  bool isChatResponding(String chatId) =>
+      _activeChatTurnIds[chatId]?.isNotEmpty ?? false;
+
+  int queuedChatTurns(String chatId) {
+    final index = chats.indexWhere((chat) => chat.id == chatId);
+    if (index < 0) return 0;
+    return chats[index].messages
+        .where((message) => message.delivery == ChatDelivery.queued)
+        .length;
+  }
+
+  Future<void> retryChatMessage(String chatId, String messageId) async {
+    final chatIndex = chats.indexWhere((chat) => chat.id == chatId);
+    if (chatIndex < 0) return;
+    final message = chats[chatIndex].messages
+        .cast<ChatMessageModel?>()
+        .firstWhere((item) => item?.id == messageId, orElse: () => null);
+    if (message == null || message.delivery != ChatDelivery.failed) return;
+    final idempotencyKey = message.idempotencyKey ?? _uuid.v4();
+    _updateLocalChatMessage(
+      chatId,
+      messageId,
+      (value) => value.copyWith(
+        delivery: ChatDelivery.queued,
+        failed: false,
+        idempotencyKey: idempotencyKey,
+      ),
+    );
+    try {
+      final turn = message.turnId == null
+          ? await chatRepository.enqueueMessage(
+              chatId,
+              message.text,
+              idempotencyKey: idempotencyKey,
+            )
+          : await chatRepository.retryTurn(chatId, message.turnId!);
+      await _persistChatEnvelope(
+        PendingChatEnvelope(
+          localId: message.id,
+          chatId: chatId,
+          content: message.text,
+          idempotencyKey: idempotencyKey,
+          createdAt: message.sentAt,
+          turnId: turn.id,
+        ),
+      );
+      _updateLocalChatMessage(
+        chatId,
+        messageId,
+        (value) => value.copyWith(
+          turnId: turn.id,
+          delivery: _deliveryForTurn(turn.status),
+        ),
+      );
+      _activeChatTurnIds.putIfAbsent(chatId, () => <String>{}).add(turn.id);
+      _startChatTurnPolling(chatId);
+      await _applyChatTurn(turn);
+    } on ApiException {
+      _updateLocalChatMessage(
+        chatId,
+        messageId,
+        (value) => value.copyWith(delivery: ChatDelivery.failed, failed: true),
+      );
+      rethrow;
+    }
+  }
+
+  Future<void> _restoreActiveChatTurns(String chatId) async {
+    try {
+      final turns = await chatRepository.recentTurns(chatId);
+      for (final turn in turns) {
+        final index = chats.indexWhere((chat) => chat.id == chatId);
+        if (index < 0) break;
+        final persisted = await _outboxEnvelope(
+          chatId,
+          idempotencyKey: turn.idempotencyKey,
+        );
+        final exists = chats[index].messages.any(
+          (message) => message.turnId == turn.id,
+        );
+        if (!exists && turn.status != 'completed') {
+          _appendChatMessage(
+            chatId,
+            ChatMessageModel(
+              id: persisted?.localId ?? 'turn-${turn.id}',
+              author: ChatAuthor.farmer,
+              text: turn.content,
+              sentAt: turn.createdAt,
+              delivery: _deliveryForTurn(turn.status),
+              turnId: turn.id,
+              idempotencyKey: turn.idempotencyKey,
+            ),
+          );
+        }
+        if (persisted != null && persisted.turnId != turn.id) {
+          await _persistChatEnvelope(persisted.copyWith(turnId: turn.id));
+        }
+        if (turn.status == 'queued' || turn.status == 'processing') {
+          _activeChatTurnIds.putIfAbsent(chatId, () => <String>{}).add(turn.id);
+        }
+        await _applyChatTurn(turn);
+      }
+      if (_activeChatTurnIds[chatId]?.isNotEmpty ?? false) {
+        _startChatTurnPolling(chatId);
+      }
+    } on ApiException catch (error) {
+      lastError = error;
+      notifyListeners();
+    }
+  }
+
+  void _startChatTurnPolling(String chatId) {
+    if (_chatTurnPollers.containsKey(chatId)) return;
+    _chatTurnPollers[chatId] = Timer.periodic(
+      const Duration(milliseconds: 900),
+      (_) => unawaited(_refreshChatTurns(chatId)),
+    );
+    unawaited(_refreshChatTurns(chatId));
+  }
+
+  Future<void> _refreshChatTurns(String chatId) async {
+    if (!_refreshingChatTurns.add(chatId)) return;
+    try {
+      final turnIds = List<String>.of(
+        _activeChatTurnIds[chatId] ?? const <String>{},
+      );
+      for (final turnId in turnIds) {
+        final turn = await chatRepository.getTurn(chatId, turnId);
+        await _applyChatTurn(turn);
+      }
+    } on ApiException catch (error) {
+      lastError = error;
+      notifyListeners();
+    } finally {
+      _refreshingChatTurns.remove(chatId);
+      if (_activeChatTurnIds[chatId]?.isEmpty ?? true) {
+        _chatTurnPollers.remove(chatId)?.cancel();
+      }
+    }
+  }
+
+  Future<void> _applyChatTurn(ChatTurnModel turn) async {
+    final chatIndex = chats.indexWhere((chat) => chat.id == turn.chatId);
+    if (chatIndex < 0) return;
+    final messageIndex = chats[chatIndex].messages.indexWhere(
+      (message) => message.turnId == turn.id,
+    );
+    if (turn.status == 'completed' && turn.messages.isNotEmpty) {
+      final messages = List<ChatMessageModel>.of(chats[chatIndex].messages);
+      String? completedLocalId;
+      if (messageIndex >= 0) {
+        completedLocalId = messages[messageIndex].id;
+        messages.replaceRange(messageIndex, messageIndex + 1, turn.messages);
+      } else {
+        final knownIds = messages.map((message) => message.id).toSet();
+        messages.addAll(
+          turn.messages.where((message) => !knownIds.contains(message.id)),
         );
       }
-      final sent = await chatRepository.sendMessage(threadId, normalized);
-      final current = chats[index];
       chats = [...chats]
-        ..[index] = current.copyWith(messages: [...current.messages, ...sent]);
-      notifyListeners();
-    });
+        ..[chatIndex] = chats[chatIndex].copyWith(messages: messages);
+      final persisted = await _outboxEnvelope(
+        turn.chatId,
+        idempotencyKey: turn.idempotencyKey,
+      );
+      await _removeChatEnvelope(persisted?.localId ?? completedLocalId ?? '');
+      _activeChatTurnIds[turn.chatId]?.remove(turn.id);
+    } else if (turn.status == 'failed') {
+      if (messageIndex >= 0) {
+        _updateLocalChatMessage(
+          turn.chatId,
+          chats[chatIndex].messages[messageIndex].id,
+          (message) =>
+              message.copyWith(delivery: ChatDelivery.failed, failed: true),
+        );
+      }
+      _activeChatTurnIds[turn.chatId]?.remove(turn.id);
+    } else if (messageIndex >= 0) {
+      _updateLocalChatMessage(
+        turn.chatId,
+        chats[chatIndex].messages[messageIndex].id,
+        (message) => message.copyWith(delivery: _deliveryForTurn(turn.status)),
+      );
+    }
+    notifyListeners();
+  }
+
+  Future<void> _restoreChatOutbox(String chatId) async {
+    final values = await chatOutboxStore.readAll();
+    final chatIndex = chats.indexWhere((chat) => chat.id == chatId);
+    if (chatIndex < 0) return;
+    for (final value in values.where((item) => item.chatId == chatId)) {
+      final exists = chats[chatIndex].messages.any(
+        (message) =>
+            message.id == value.localId ||
+            message.idempotencyKey == value.idempotencyKey,
+      );
+      if (!exists) {
+        _appendChatMessage(
+          chatId,
+          ChatMessageModel(
+            id: value.localId,
+            author: ChatAuthor.farmer,
+            text: value.content,
+            sentAt: value.createdAt,
+            delivery: ChatDelivery.queued,
+            turnId: value.turnId,
+            idempotencyKey: value.idempotencyKey,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<PendingChatEnvelope?> _outboxEnvelope(
+    String chatId, {
+    required String idempotencyKey,
+  }) async {
+    final values = await chatOutboxStore.readAll();
+    return values.cast<PendingChatEnvelope?>().firstWhere(
+      (item) =>
+          item?.chatId == chatId && item?.idempotencyKey == idempotencyKey,
+      orElse: () => null,
+    );
+  }
+
+  Future<void> _persistChatEnvelope(PendingChatEnvelope value) async {
+    try {
+      await chatOutboxStore.upsert(value);
+    } catch (_) {
+      throw const ApiException(
+        code: 'CHAT_OUTBOX_UNAVAILABLE',
+        message: 'The pending message could not be stored securely',
+      );
+    }
+  }
+
+  Future<void> _removeChatEnvelope(String localId) async {
+    try {
+      await chatOutboxStore.remove(localId);
+    } catch (_) {
+      throw const ApiException(
+        code: 'CHAT_OUTBOX_UNAVAILABLE',
+        message: 'The pending message state could not be updated securely',
+      );
+    }
+  }
+
+  ChatDelivery _deliveryForTurn(String status) => switch (status) {
+    'processing' => ChatDelivery.sending,
+    'failed' => ChatDelivery.failed,
+    'completed' => ChatDelivery.sent,
+    _ => ChatDelivery.queued,
+  };
+
+  void _appendChatMessage(String chatId, ChatMessageModel message) {
+    final index = chats.indexWhere((chat) => chat.id == chatId);
+    if (index < 0) return;
+    chats = [...chats]
+      ..[index] = chats[index].copyWith(
+        messages: [...chats[index].messages, message],
+      );
+    notifyListeners();
+  }
+
+  void _updateLocalChatMessage(
+    String chatId,
+    String messageId,
+    ChatMessageModel Function(ChatMessageModel) update,
+  ) {
+    final chatIndex = chats.indexWhere((chat) => chat.id == chatId);
+    if (chatIndex < 0) return;
+    final messages = List<ChatMessageModel>.of(chats[chatIndex].messages);
+    final messageIndex = messages.indexWhere(
+      (message) => message.id == messageId,
+    );
+    if (messageIndex < 0) return;
+    messages[messageIndex] = update(messages[messageIndex]);
+    chats = [...chats]
+      ..[chatIndex] = chats[chatIndex].copyWith(messages: messages);
+    notifyListeners();
   }
 
   Future<void> renameChat(String chatId, String title) async {
@@ -1663,6 +2046,10 @@ class AppController extends ChangeNotifier {
 
   @override
   void dispose() {
+    for (final timer in _chatTurnPollers.values) {
+      timer.cancel();
+    }
+    _chatTurnPollers.clear();
     unawaited(_connectivitySubscription?.cancel());
     apiClient.dispose();
     super.dispose();

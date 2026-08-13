@@ -12,6 +12,7 @@ from app.database.base import Base
 from app.integrations.llm.provider import (
     AssistantReply,
     ChatRiskClassification,
+    ChatRiskReason,
     GeneratedTitle,
     LLMProvider,
     LLMRequest,
@@ -47,7 +48,7 @@ class ExtractingLLM(LLMProvider):
 
     async def respond(self, request: LLMRequest, *, model: str) -> LLMResult:
         del request
-        return LLMResult(AssistantReply(short_answer="ok"), "id", model)
+        return LLMResult(AssistantReply(short_answer="ok"), "id", model, True)
 
     async def extract_memories(
         self, request: MemoryExtractionRequest, *, model: str
@@ -83,7 +84,10 @@ class ExtractingLLM(LLMProvider):
         self, *, content: str, farmer_id: UUID, model: str
     ) -> ChatRiskClassification:
         del content, farmer_id, model
-        return ChatRiskClassification(requires_primary_model=True, reason_code="test")
+        return ChatRiskClassification(
+            requires_primary_model=True,
+            reason_code=ChatRiskReason.UNCERTAIN,
+        )
 
 
 class RecordingMemory(MemoryProvider):

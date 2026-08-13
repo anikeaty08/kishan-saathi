@@ -43,6 +43,29 @@ def get_chat_service(
         ForecastWeatherProvider, Depends(get_forecast_weather_provider)
     ],
 ) -> ChatService:
+    return build_chat_service(
+        settings=settings,
+        session=session,
+        database=database,
+        llm_provider=llm_provider,
+        memory_provider=memory_provider,
+        current_weather_provider=current_weather_provider,
+        forecast_weather_provider=forecast_weather_provider,
+    )
+
+
+def build_chat_service(
+    *,
+    settings: Settings,
+    session: AsyncSession,
+    database: DatabasePort,
+    llm_provider: LLMProvider,
+    memory_provider: MemoryProvider,
+    current_weather_provider: CurrentWeatherProvider,
+    forecast_weather_provider: ForecastWeatherProvider,
+) -> ChatService:
+    """Build the same chat use case for requests and background turn workers."""
+
     return ChatService(
         repository=ChatRepository(session),
         farms=FarmRepository(session),

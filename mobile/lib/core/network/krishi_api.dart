@@ -141,6 +141,12 @@ class KrishiApi {
     body: body,
     headers: {'Idempotency-Key': idempotencyKey},
   );
+  Future<Object?> listChatTurns(String id, {bool activeOnly = true}) => client
+      .get(ApiEndpoints.chatTurns(id), query: {'active_only': '$activeOnly'});
+  Future<Object?> getChatTurn(String chatId, String turnId) =>
+      client.get(ApiEndpoints.chatTurn(chatId, turnId));
+  Future<Object?> retryChatTurn(String chatId, String turnId) =>
+      client.post(ApiEndpoints.chatTurnRetry(chatId, turnId));
 
   Future<Object?> connectChatMemory(String id, Map<String, Object?> body) =>
       client.post(ApiEndpoints.chatMemoryConnection(id), body: body);

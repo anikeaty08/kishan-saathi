@@ -8,6 +8,7 @@ from app.core.config import Settings
 from app.integrations.llm.provider import (
     AssistantReply,
     ChatRiskClassification,
+    ChatRiskReason,
     GeneratedTitle,
     LLMProvider,
     LLMRequest,
@@ -26,7 +27,7 @@ class RecordingProvider(LLMProvider):
 
     async def respond(self, request: LLMRequest, *, model: str) -> LLMResult:
         self.models.append(model)
-        return LLMResult(AssistantReply(short_answer="ok"), "id", model)
+        return LLMResult(AssistantReply(short_answer="ok"), "id", model, True)
 
     async def close(self) -> None:
         return None
@@ -49,7 +50,10 @@ class RecordingProvider(LLMProvider):
     ) -> ChatRiskClassification:
         del content, farmer_id
         self.models.append(model)
-        return ChatRiskClassification(requires_primary_model=False, reason_code="routine")
+        return ChatRiskClassification(
+            requires_primary_model=False,
+            reason_code=ChatRiskReason.ROUTINE,
+        )
 
 
 @pytest.mark.asyncio

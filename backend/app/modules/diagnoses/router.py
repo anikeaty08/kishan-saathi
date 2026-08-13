@@ -9,7 +9,11 @@ from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile,
 from app.core.config import Settings
 from app.core.dependencies import get_app_settings
 from app.core.errors import ApplicationError
-from app.modules.diagnoses.dependencies import get_diagnosis_service
+from app.modules.diagnoses.dependencies import (
+    get_diagnosis_progression_service,
+    get_diagnosis_service,
+)
+from app.modules.diagnoses.progression import DiagnosisProgressionService
 from app.modules.diagnoses.schemas import (
     AssessmentHistoryResponse,
     DiagnosisCaseResponse,
@@ -19,6 +23,8 @@ from app.modules.diagnoses.schemas import (
     DiagnosisImageResponse,
     DiagnosisLink,
     IncomingImage,
+    ProgressionComparisonRequest,
+    ProgressionComparisonResponse,
 )
 from app.modules.diagnoses.service import DiagnosisService
 from app.modules.users.dependencies import get_current_farmer_id
@@ -27,6 +33,10 @@ router = APIRouter(prefix="/diagnoses", tags=["leaf-diagnosis"])
 
 FarmerId = Annotated[UUID, Depends(get_current_farmer_id)]
 Service = Annotated[DiagnosisService, Depends(get_diagnosis_service)]
+ProgressionService = Annotated[
+    DiagnosisProgressionService,
+    Depends(get_diagnosis_progression_service),
+]
 AppSettings = Annotated[Settings, Depends(get_app_settings)]
 
 
@@ -91,6 +101,18 @@ async def get_diagnosis(
     service: Service,
 ) -> DiagnosisCaseResponse:
     return await service.get_case(farmer_id, case_id)
+
+
+@router.post("/{case_id}/progression", response_model=ProgressionComparisonResponse)
+async def compare_diagnosis_progression(
+    case_id: UUID,
+    selection: ProgressionComparisonRequest,
+    farmer_id: FarmerId,
+    service: ProgressionService,
+) -> ProgressionComparisonResponse:
+    """Compare visible symptom change without changing or replacing diagnosis."""
+
+    return await service.compare(farmer_id, case_id, selection)
 
 
 @router.get("/{case_id}/assessments", response_model=list[AssessmentHistoryResponse])

@@ -4,7 +4,6 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -144,7 +143,10 @@ class _FarmMap extends StatelessWidget {
               ),
               children: [
                 TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  urlTemplate: context
+                      .read<AppController>()
+                      .config
+                      .mapTileUrlTemplate,
                   userAgentPackageName: 'com.krishisathi.mobile',
                   maxZoom: 19,
                 ),
@@ -238,6 +240,7 @@ class _FarmListItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final controller = context.watch<AppController>();
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -283,7 +286,7 @@ class _FarmListItem extends StatelessWidget {
                         ),
                         _InlineFact(
                           icon: LucideIcons.ruler,
-                          text: '${farm.totalArea.toStringAsFixed(1)} ac',
+                          text: controller.formatFarmArea(farm, compact: true),
                         ),
                       ],
                     ),
@@ -312,7 +315,8 @@ class FarmDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final farm = context.watch<AppController>().farmById(farmId);
+    final controller = context.watch<AppController>();
+    final farm = controller.farmById(farmId);
     if (farm == null) {
       return Scaffold(
         appBar: AppBar(),
@@ -383,8 +387,7 @@ class FarmDetailScreen extends StatelessWidget {
                             ),
                             _ImageFact(
                               icon: LucideIcons.ruler,
-                              text:
-                                  '${farm.totalArea.toStringAsFixed(1)} acres',
+                              text: controller.formatFarmArea(farm),
                             ),
                           ],
                         ),
@@ -430,7 +433,9 @@ class FarmDetailScreen extends StatelessWidget {
     try {
       impact = await context.read<AppController>().farmDeletionImpact(farm.id);
     } on ApiException catch (error) {
-      if (context.mounted) showAppSnackBar(context, error.message);
+      if (context.mounted) {
+        showAppSnackBar(context, context.localizedError(error));
+      }
       return;
     }
     if (!context.mounted) return;
@@ -496,7 +501,9 @@ class FarmDetailScreen extends StatelessWidget {
       await context.read<AppController>().deleteFarm(farm.id);
       if (context.mounted) context.go('/farm');
     } on ApiException catch (error) {
-      if (context.mounted) showAppSnackBar(context, error.message);
+      if (context.mounted) {
+        showAppSnackBar(context, context.localizedError(error));
+      }
     }
   }
 }
@@ -532,6 +539,7 @@ class _PlotRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final controller = context.watch<AppController>();
     final crop = plot.crops.firstOrNull;
     return Card(
       child: InkWell(
@@ -563,8 +571,8 @@ class _PlotRow extends StatelessWidget {
                     Text(
                       [
                         crop?.name ?? 'No active crop',
-                        if (plot.area != null && plot.areaUnit != null)
-                          '${plot.area} ${plot.areaUnit}',
+                        if (plot.area != null)
+                          controller.formatArea(plot.area!, plot.areaUnit),
                       ].join(' · '),
                       style: Theme.of(context).textTheme.bodySmall
                           ?.copyWith(color: AppColors.mutedInk),
@@ -621,7 +629,7 @@ class _FarmActivitiesTab extends StatelessWidget {
           ),
           title: Text(activity.title),
           subtitle: Text(
-            '${plot.name} · ${DateFormat.MMMd().format(activity.occurredAt)}',
+            '${plot.name} · ${context.strings.formatShortDate(activity.occurredAt)}',
           ),
         );
       },
@@ -751,8 +759,10 @@ class _PlotDetailScreenState extends State<PlotDetailScreen> {
                   Expanded(
                     child: MetricCell(
                       icon: LucideIcons.ruler,
-                      value: plot.area?.toString() ?? '—',
-                      label: plot.areaUnit ?? context.tr('area'),
+                      value: plot.area == null
+                          ? '—'
+                          : controller.formatArea(plot.area!, plot.areaUnit),
+                      label: context.tr('area'),
                     ),
                   ),
                   Expanded(
@@ -1106,13 +1116,11 @@ class _TimelineItem extends StatelessWidget {
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    DateFormat.yMMMd().add_jm().format(
-                      event.occurredAt.toLocal(),
-                    ),
+                    context.strings.formatDateTime(event.occurredAt.toLocal()),
                     style: Theme.of(context).textTheme.bodySmall
                         ?.copyWith(color: AppColors.mutedInk),
                   ),
-                  if (_timelineDetail(event) case final detail?) ...[
+                  if (_timelineDetail(context, event) case final detail?) ...[
                     const SizedBox(height: 6),
                     Text(detail),
                   ],
@@ -1140,20 +1148,24 @@ Color _timelineColor(String category) => switch (category) {
   _ => AppColors.leaf,
 };
 
-String? _timelineDetail(TimelineEventModel event) => switch (event.category) {
-  'diagnosis' => switch (event.data['confidence_label']) {
-    final String confidence => '$confidence confidence',
-    _ => event.data['plant_name'] as String?,
-  },
-  'activity' => event.data['notes'] as String?,
-  'chat' => 'Saathi conversation',
-  'reminder' => switch (event.data['due_at']) {
-    final String dueAt =>
-      'Due ${DateFormat.MMMd().add_jm().format(DateTime.parse(dueAt).toLocal())}',
-    _ => null,
-  },
-  _ => null,
-};
+String? _timelineDetail(BuildContext context, TimelineEventModel event) =>
+    switch (event.category) {
+      'diagnosis' => switch (event.data['confidence_label']) {
+        final String confidence => '$confidence confidence',
+        _ => event.data['plant_name'] as String?,
+      },
+      'activity' => event.data['notes'] as String?,
+      'chat' => 'Saathi conversation',
+      'reminder' => switch (event.data['due_at']) {
+        final String dueAt => context.tr('date.due', {
+          'date': context.strings.formatDateTime(
+            DateTime.parse(dueAt).toLocal(),
+          ),
+        }),
+        _ => null,
+      },
+      _ => null,
+    };
 
 class ManageCropsScreen extends StatelessWidget {
   const ManageCropsScreen({super.key, required this.plotId});
@@ -1277,7 +1289,11 @@ class ManageCropsScreen extends StatelessWidget {
                           if (crop.sownOn != null) ...[
                             const SizedBox(height: 10),
                             Text(
-                              'Sown or transplanted ${DateFormat.yMMMd().format(crop.sownOn!)}',
+                              context.tr('date.sownOrTransplanted', {
+                                'date': context.strings.formatDate(
+                                  crop.sownOn!,
+                                ),
+                              }),
                               style: Theme.of(context).textTheme.bodySmall,
                             ),
                           ],
@@ -1366,7 +1382,9 @@ class ManageCropsScreen extends StatelessWidget {
         stage: value,
       );
     } on ApiException catch (error) {
-      if (context.mounted) showAppSnackBar(context, error.message);
+      if (context.mounted) {
+        showAppSnackBar(context, context.localizedError(error));
+      }
     }
   }
 
@@ -1402,7 +1420,9 @@ class ManageCropsScreen extends StatelessWidget {
         endedOn: DateTime.now(),
       );
     } on ApiException catch (error) {
-      if (context.mounted) showAppSnackBar(context, error.message);
+      if (context.mounted) {
+        showAppSnackBar(context, context.localizedError(error));
+      }
     }
   }
 
@@ -1466,7 +1486,9 @@ class ManageCropsScreen extends StatelessWidget {
         confirmHistoryLoss: linked.isNotEmpty,
       );
     } on ApiException catch (error) {
-      if (context.mounted) showAppSnackBar(context, error.message);
+      if (context.mounted) {
+        showAppSnackBar(context, context.localizedError(error));
+      }
     }
   }
 }
@@ -1530,7 +1552,7 @@ class _CropEditorSheetState extends State<_CropEditorSheet> {
       }
       if (mounted) Navigator.pop(context);
     } on ApiException catch (error) {
-      if (mounted) showAppSnackBar(context, error.message);
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -1595,7 +1617,7 @@ class _CropEditorSheetState extends State<_CropEditorSheet> {
                 subtitle: Text(
                   _date == null
                       ? 'Optional'
-                      : DateFormat.yMMMd().format(_date!),
+                      : context.strings.formatDate(_date!),
                 ),
                 trailing: _date == null
                     ? const Icon(LucideIcons.chevronRight)
@@ -1701,7 +1723,10 @@ class _AddFarmScreenState extends State<AddFarmScreen> {
                             if (context.mounted) context.go('/farm/${farm.id}');
                           } on ApiException catch (error) {
                             if (context.mounted) {
-                              showAppSnackBar(context, error.message);
+                              showAppSnackBar(
+                                context,
+                                context.localizedError(error),
+                              );
                             }
                           }
                         },
@@ -1823,7 +1848,7 @@ class _EditFarmScreenState extends State<EditFarmScreen> {
       );
       if (mounted) context.pop();
     } on ApiException catch (error) {
-      if (mounted) showAppSnackBar(context, error.message);
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
     }
   }
 }
@@ -1847,7 +1872,16 @@ class _AddPlotScreenState extends State<AddPlotScreen> {
   LocationPoint? _confirmedLocation;
   String _stage = 'Sowing';
   String _areaUnit = 'acre';
+  bool _loadedPreferredAreaUnit = false;
   DateTime? _sowingOrTransplantDate;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_loadedPreferredAreaUnit) return;
+    _areaUnit = context.read<AppController>().preferredAreaUnit;
+    _loadedPreferredAreaUnit = true;
+  }
 
   @override
   void dispose() {
@@ -1921,6 +1955,7 @@ class _AddPlotScreenState extends State<AddPlotScreen> {
                 const SizedBox(height: 14),
                 DropdownButtonFormField<String>(
                   initialValue: _stage,
+                  isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Crop stage',
                     prefixIcon: Icon(LucideIcons.sprout),
@@ -1963,7 +1998,9 @@ class _AddPlotScreenState extends State<AddPlotScreen> {
                     child: Text(
                       _sowingOrTransplantDate == null
                           ? 'Sowing or transplant date (optional)'
-                          : DateFormat.yMMMd().format(_sowingOrTransplantDate!),
+                          : context.strings.formatDate(
+                              _sowingOrTransplantDate!,
+                            ),
                     ),
                   ),
                 ),
@@ -1973,52 +2010,63 @@ class _AddPlotScreenState extends State<AddPlotScreen> {
                   title: 'Field details (optional)',
                 ),
                 const SizedBox(height: 14),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      flex: 3,
-                      child: TextFormField(
-                        controller: _area,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        decoration: InputDecoration(
-                          labelText: context.tr('area'),
-                          prefixIcon: const Icon(LucideIcons.ruler),
-                        ),
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
-                            return null;
-                          }
-                          final area = double.tryParse(value.trim());
-                          return area == null || area <= 0
-                              ? 'Enter a positive area.'
-                              : null;
-                        },
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final stackFields =
+                        constraints.maxWidth < 460 ||
+                        MediaQuery.textScalerOf(context).scale(1) > 1.3;
+                    final areaField = TextFormField(
+                      controller: _area,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      flex: 2,
-                      child: DropdownButtonFormField<String>(
-                        initialValue: _areaUnit,
-                        decoration: const InputDecoration(labelText: 'Unit'),
-                        items: const [
-                          DropdownMenuItem(value: 'acre', child: Text('Acre')),
-                          DropdownMenuItem(
-                            value: 'hectare',
-                            child: Text('Hectare'),
-                          ),
+                      decoration: InputDecoration(
+                        labelText: context.tr('area'),
+                        prefixIcon: const Icon(LucideIcons.ruler),
+                      ),
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) return null;
+                        final area = double.tryParse(value.trim());
+                        return area == null || area <= 0
+                            ? 'Enter a positive area.'
+                            : null;
+                      },
+                    );
+                    final unitField = DropdownButtonFormField<String>(
+                      initialValue: _areaUnit,
+                      isExpanded: true,
+                      decoration: const InputDecoration(labelText: 'Unit'),
+                      items: const [
+                        DropdownMenuItem(value: 'acre', child: Text('Acre')),
+                        DropdownMenuItem(
+                          value: 'hectare',
+                          child: Text('Hectare'),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) {
+                          setState(() => _areaUnit = value);
+                        }
+                      },
+                    );
+                    if (stackFields) {
+                      return Column(
+                        children: [
+                          areaField,
+                          const SizedBox(height: 14),
+                          unitField,
                         ],
-                        onChanged: (value) {
-                          if (value != null) {
-                            setState(() => _areaUnit = value);
-                          }
-                        },
-                      ),
-                    ),
-                  ],
+                      );
+                    }
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(flex: 3, child: areaField),
+                        const SizedBox(width: 10),
+                        Expanded(flex: 2, child: unitField),
+                      ],
+                    );
+                  },
                 ),
                 const SizedBox(height: 14),
                 TextFormField(
@@ -2079,7 +2127,10 @@ class _AddPlotScreenState extends State<AddPlotScreen> {
                             if (context.mounted) context.go('/plot/${plot.id}');
                           } on ApiException catch (error) {
                             if (context.mounted) {
-                              showAppSnackBar(context, error.message);
+                              showAppSnackBar(
+                                context,
+                                context.localizedError(error),
+                              );
                             }
                           }
                         },
@@ -2129,7 +2180,13 @@ class _FormSectionLabel extends StatelessWidget {
           child: Text(number, style: Theme.of(context).textTheme.labelLarge),
         ),
         const SizedBox(width: 10),
-        Text(title, style: Theme.of(context).textTheme.titleMedium),
+        Expanded(
+          child: Text(
+            title,
+            style: Theme.of(context).textTheme.titleMedium,
+            softWrap: true,
+          ),
+        ),
       ],
     );
   }
@@ -2176,7 +2233,7 @@ class _PlotLocationPickerState extends State<_PlotLocationPicker> {
       );
       if (mounted) setState(() => _results = results);
     } on ApiException catch (error) {
-      if (mounted) showAppSnackBar(context, error.message);
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -2189,7 +2246,7 @@ class _PlotLocationPickerState extends State<_PlotLocationPicker> {
       if (!mounted) return;
       _select(point);
     } on ApiException catch (error) {
-      if (mounted) showAppSnackBar(context, error.message);
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -2285,7 +2342,10 @@ class _PlotLocationPickerState extends State<_PlotLocationPicker> {
               ),
               children: [
                 TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  urlTemplate: context
+                      .read<AppController>()
+                      .config
+                      .mapTileUrlTemplate,
                   userAgentPackageName: 'com.krishisathi.mobile',
                   maxZoom: 19,
                 ),
@@ -2321,33 +2381,45 @@ class _PlotLocationPickerState extends State<_PlotLocationPicker> {
             icon: LucideIcons.mapPinned,
           )
         else
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: InlineNotice(
-                  title: _confirmed
-                      ? 'Map pointer confirmed'
-                      : 'Confirm pointer',
-                  message:
-                      '${selected.displayLabel}\n${selected.latitude.toStringAsFixed(5)}, ${selected.longitude.toStringAsFixed(5)}',
-                  icon: _confirmed
-                      ? LucideIcons.circleCheck
-                      : LucideIcons.mapPin,
-                  color: _confirmed ? AppColors.leaf : AppColors.amber,
-                ),
-              ),
-              const SizedBox(width: 10),
-              FilledButton(
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final stackAction =
+                  constraints.maxWidth < 440 ||
+                  MediaQuery.textScalerOf(context).scale(1) > 1.3;
+              final notice = InlineNotice(
+                title: _confirmed ? 'Map pointer confirmed' : 'Confirm pointer',
+                message:
+                    '${selected.displayLabel}\n${selected.latitude.toStringAsFixed(5)}, ${selected.longitude.toStringAsFixed(5)}',
+                icon: _confirmed ? LucideIcons.circleCheck : LucideIcons.mapPin,
+                color: _confirmed ? AppColors.leaf : AppColors.amber,
+              );
+              final action = FilledButton.icon(
                 onPressed: _confirmed
                     ? null
                     : () {
                         setState(() => _confirmed = true);
                         widget.onConfirmed(selected);
                       },
-                child: Text(_confirmed ? 'Confirmed' : 'Confirm'),
-              ),
-            ],
+                icon: Icon(
+                  _confirmed ? LucideIcons.circleCheck : LucideIcons.mapPin,
+                ),
+                label: Text(_confirmed ? 'Confirmed' : 'Confirm pointer'),
+              );
+              if (stackAction) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [notice, const SizedBox(height: 10), action],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: notice),
+                  const SizedBox(width: 10),
+                  action,
+                ],
+              );
+            },
           ),
       ],
     );
@@ -2455,52 +2527,61 @@ class _EditPlotScreenState extends State<EditPlotScreen> {
                       setState(() => _confirmedLocation = location),
                 ),
                 const SizedBox(height: 24),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      flex: 3,
-                      child: TextFormField(
-                        controller: _area,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        decoration: const InputDecoration(
-                          labelText: 'Area (optional)',
-                          prefixIcon: Icon(LucideIcons.ruler),
-                        ),
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
-                            return null;
-                          }
-                          final parsed = double.tryParse(value.trim());
-                          return parsed == null || parsed <= 0
-                              ? 'Enter a positive area.'
-                              : null;
-                        },
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final stackFields =
+                        constraints.maxWidth < 460 ||
+                        MediaQuery.textScalerOf(context).scale(1) > 1.3;
+                    final areaField = TextFormField(
+                      controller: _area,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      flex: 2,
-                      child: DropdownButtonFormField<String>(
-                        initialValue: _areaUnit,
-                        decoration: const InputDecoration(labelText: 'Unit'),
-                        items: const [
-                          DropdownMenuItem(value: 'acre', child: Text('Acre')),
-                          DropdownMenuItem(
-                            value: 'hectare',
-                            child: Text('Hectare'),
-                          ),
+                      decoration: const InputDecoration(
+                        labelText: 'Area (optional)',
+                        prefixIcon: Icon(LucideIcons.ruler),
+                      ),
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) return null;
+                        final parsed = double.tryParse(value.trim());
+                        return parsed == null || parsed <= 0
+                            ? 'Enter a positive area.'
+                            : null;
+                      },
+                    );
+                    final unitField = DropdownButtonFormField<String>(
+                      initialValue: _areaUnit,
+                      isExpanded: true,
+                      decoration: const InputDecoration(labelText: 'Unit'),
+                      items: const [
+                        DropdownMenuItem(value: 'acre', child: Text('Acre')),
+                        DropdownMenuItem(
+                          value: 'hectare',
+                          child: Text('Hectare'),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) setState(() => _areaUnit = value);
+                      },
+                    );
+                    if (stackFields) {
+                      return Column(
+                        children: [
+                          areaField,
+                          const SizedBox(height: 14),
+                          unitField,
                         ],
-                        onChanged: (value) {
-                          if (value != null) {
-                            setState(() => _areaUnit = value);
-                          }
-                        },
-                      ),
-                    ),
-                  ],
+                      );
+                    }
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(flex: 3, child: areaField),
+                        const SizedBox(width: 10),
+                        Expanded(flex: 2, child: unitField),
+                      ],
+                    );
+                  },
                 ),
                 const SizedBox(height: 14),
                 TextFormField(
@@ -2561,7 +2642,7 @@ class _EditPlotScreenState extends State<EditPlotScreen> {
       );
       if (mounted) context.pop();
     } on ApiException catch (error) {
-      if (mounted) showAppSnackBar(context, error.message);
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
     }
   }
 }
@@ -2638,7 +2719,7 @@ class _ActivityDetailScreenState extends State<ActivityDetailScreen> {
         showAppSnackBar(context, 'Field photos added.', success: true);
       }
     } on ApiException catch (error) {
-      if (mounted) showAppSnackBar(context, error.message);
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
     }
   }
 
@@ -2681,7 +2762,7 @@ class _ActivityDetailScreenState extends State<ActivityDetailScreen> {
         );
       }
     } on ApiException catch (error) {
-      if (mounted) showAppSnackBar(context, error.message);
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
     }
   }
 
@@ -2736,9 +2817,7 @@ class _ActivityDetailScreenState extends State<ActivityDetailScreen> {
                     contentPadding: EdgeInsets.zero,
                     leading: const Icon(LucideIcons.calendarClock),
                     title: const Text('Activity date and time'),
-                    subtitle: Text(
-                      DateFormat.yMMMd().add_jm().format(occurredAt),
-                    ),
+                    subtitle: Text(context.strings.formatDateTime(occurredAt)),
                     trailing: const Icon(LucideIcons.chevronRight),
                     onTap: () async {
                       final date = await showDatePicker(
@@ -2797,7 +2876,7 @@ class _ActivityDetailScreenState extends State<ActivityDetailScreen> {
       );
       if (mounted) setState(() => _activity = updated);
     } on ApiException catch (error) {
-      if (mounted) showAppSnackBar(context, error.message);
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
     }
   }
 
@@ -2831,7 +2910,7 @@ class _ActivityDetailScreenState extends State<ActivityDetailScreen> {
       );
       if (mounted) context.pop();
     } on ApiException catch (error) {
-      if (mounted) showAppSnackBar(context, error.message);
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
     }
   }
 
@@ -2898,7 +2977,7 @@ class _ActivityDetailScreenState extends State<ActivityDetailScreen> {
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              DateFormat.yMMMMd().add_jm().format(
+                              context.strings.formatDateTime(
                                 activity.occurredAt.toLocal(),
                               ),
                               style: Theme.of(context).textTheme.bodyMedium
@@ -3098,6 +3177,7 @@ class _AddActivityScreenState extends State<AddActivityScreen> {
               const SizedBox(height: 24),
               DropdownButtonFormField<String?>(
                 initialValue: _cropId,
+                isExpanded: true,
                 decoration: InputDecoration(labelText: context.tr('crop')),
                 items: [
                   const DropdownMenuItem<String?>(
@@ -3118,7 +3198,7 @@ class _AddActivityScreenState extends State<AddActivityScreen> {
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(LucideIcons.calendarClock),
                 title: const Text('Activity date and time'),
-                subtitle: Text(DateFormat.yMMMd().add_jm().format(_occurredAt)),
+                subtitle: Text(context.strings.formatDateTime(_occurredAt)),
                 trailing: const Icon(LucideIcons.chevronRight),
                 onTap: _pickOccurredAt,
               ),
@@ -3221,7 +3301,10 @@ class _AddActivityScreenState extends State<AddActivityScreen> {
                           }
                         } on ApiException catch (error) {
                           if (context.mounted) {
-                            showAppSnackBar(context, error.message);
+                            showAppSnackBar(
+                              context,
+                              context.localizedError(error),
+                            );
                           }
                         } finally {
                           if (mounted) setState(() => _saving = false);

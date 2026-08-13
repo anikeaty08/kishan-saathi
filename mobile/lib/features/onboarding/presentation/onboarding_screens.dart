@@ -164,7 +164,7 @@ class _AuthScreenState extends State<AuthScreen> {
       }
     } on ApiException catch (error) {
       if (!mounted) return;
-      showAppSnackBar(context, error.message);
+      showAppSnackBar(context, context.localizedError(error));
     }
   }
 
@@ -422,7 +422,7 @@ class _SignUpConfirmationSheetState extends State<_SignUpConfirmationSheet> {
       );
       if (mounted) Navigator.of(context).pop(true);
     } on ApiException catch (error) {
-      if (mounted) showAppSnackBar(context, error.message);
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
     }
   }
 
@@ -542,7 +542,7 @@ class _PasswordRecoverySheetState extends State<_PasswordRecoverySheet> {
       );
       Navigator.of(context).pop();
     } on ApiException catch (error) {
-      if (mounted) showAppSnackBar(context, error.message);
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
     }
   }
 

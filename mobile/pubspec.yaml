@@ -70,14 +70,13 @@ dev_dependencies:
 
 # The following section is specific to Flutter packages.
 flutter:
-  generate: true
-
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
 
   assets:
+    - lib/l10n/
     - assets/branding/app_icon.png
     - assets/images/auth_field_hero.webp
     - assets/images/crop_maize.jpg

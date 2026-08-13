@@ -13,6 +13,11 @@ from app.integrations.llm.openai_responses import OpenAIResponsesProvider
 from app.integrations.llm.provider import LLMProvider, UnavailableLLMProvider
 from app.integrations.memory.mem0 import Mem0MemoryProvider
 from app.integrations.memory.provider import MemoryProvider, UnavailableMemoryProvider
+from app.integrations.progression.openai_responses import OpenAIProgressionProvider
+from app.integrations.progression.provider import (
+    ProgressionProvider,
+    UnavailableProgressionProvider,
+)
 from app.integrations.storage.local import LocalObjectStorage
 from app.integrations.storage.provider import ObjectStorageProvider
 from app.integrations.weather.open_meteo import OpenMeteoForecastProvider
@@ -53,6 +58,14 @@ def build_memory_provider(settings: Settings) -> MemoryProvider:
     if not settings.mem0_api_key:
         return UnavailableMemoryProvider()
     return Mem0MemoryProvider(settings.mem0_api_key)
+
+
+def build_progression_provider(settings: Settings) -> ProgressionProvider:
+    """Bind visual comparison only when the shared OpenAI credential exists."""
+
+    if not settings.openai_api_key:
+        return UnavailableProgressionProvider()
+    return OpenAIProgressionProvider(settings)
 
 
 def build_current_weather_provider(settings: Settings) -> CurrentWeatherProvider:

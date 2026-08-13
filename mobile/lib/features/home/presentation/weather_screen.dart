@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:provider/provider.dart';
 
@@ -110,7 +109,10 @@ class _WeatherScreenState extends State<WeatherScreen> {
                               await controller.refreshCurrentWeather();
                             } on ApiException catch (error) {
                               if (context.mounted) {
-                                showAppSnackBar(context, error.message);
+                                showAppSnackBar(
+                                  context,
+                                  context.localizedError(error),
+                                );
                               }
                             }
                           }
@@ -264,7 +266,7 @@ class _CurrentWeatherCard extends StatelessWidget {
                         weather.isStale
                             ? context.tr('weatherStale')
                             : context.tr('lastUpdated', {
-                                'time': DateFormat.jm().format(
+                                'time': context.strings.formatTime(
                                   weather.fetchedAt.toLocal(),
                                 ),
                               }),
@@ -370,11 +372,13 @@ class _ForecastStrip extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      index == 0 ? 'Today' : DateFormat.E().format(day.date),
+                      index == 0
+                          ? context.tr('date.today')
+                          : context.tr('weekday.short.${day.date.weekday}'),
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                     Text(
-                      DateFormat.MMMd().format(day.date),
+                      context.strings.formatShortDate(day.date),
                       style: Theme.of(context).textTheme.bodySmall
                           ?.copyWith(color: AppColors.mutedInk),
                     ),

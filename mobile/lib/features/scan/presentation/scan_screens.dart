@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:intl/intl.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -157,7 +156,7 @@ class _ScanScreenState extends State<ScanScreen> {
       );
       if (mounted) setState(() => _step = _ScanStep.saved);
     } on ApiException catch (error) {
-      if (mounted) showAppSnackBar(context, error.message);
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
     }
   }
 
@@ -694,7 +693,7 @@ class QueuedScansScreen extends StatelessWidget {
                                   ),
                                   const SizedBox(height: 3),
                                   Text(
-                                    '${scan.imagePaths.length} ${scan.imagePaths.length == 1 ? 'photo' : 'photos'} - saved ${DateFormat.MMMd().add_jm().format(scan.createdAt)}',
+                                    '${scan.imagePaths.length} ${scan.imagePaths.length == 1 ? 'photo' : 'photos'} - ${context.tr('date.saved', {'date': context.strings.formatDateTime(scan.createdAt)})}',
                                     style: Theme.of(context).textTheme.bodySmall
                                         ?.copyWith(color: AppColors.mutedInk),
                                   ),
@@ -746,7 +745,9 @@ class QueuedScansScreen extends StatelessWidget {
         context.push('/scan/result/${diagnosis.id}');
       }
     } on ApiException catch (error) {
-      if (context.mounted) showAppSnackBar(context, error.message);
+      if (context.mounted) {
+        showAppSnackBar(context, context.localizedError(error));
+      }
     }
   }
 
@@ -774,7 +775,9 @@ class QueuedScansScreen extends StatelessWidget {
       try {
         await context.read<AppController>().removeQueuedScan(scan.id);
       } on ApiException catch (error) {
-        if (context.mounted) showAppSnackBar(context, error.message);
+        if (context.mounted) {
+          showAppSnackBar(context, context.localizedError(error));
+        }
       }
     }
   }
@@ -806,7 +809,7 @@ class _HistoryRow extends StatelessWidget {
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      '${diagnosis.cropName} · ${DateFormat.MMMd().format(diagnosis.createdAt)}',
+                      '${diagnosis.cropName} · ${context.strings.formatShortDate(diagnosis.createdAt)}',
                       style: Theme.of(context).textTheme.bodySmall
                           ?.copyWith(color: AppColors.mutedInk),
                     ),
@@ -846,7 +849,7 @@ class _DiagnosisResultScreenState extends State<DiagnosisResultScreen> {
         await controller.loadDiagnosis(widget.diagnosisId);
         _history = await controller.loadDiagnosisHistory(widget.diagnosisId);
       } on ApiException catch (error) {
-        if (mounted) showAppSnackBar(context, error.message);
+        if (mounted) showAppSnackBar(context, context.localizedError(error));
       } finally {
         if (mounted) setState(() => _loadingHistory = false);
       }
@@ -1065,7 +1068,7 @@ class _DiagnosisResultScreenState extends State<DiagnosisResultScreen> {
                     ),
                     title: Text(assessment.diseaseName),
                     subtitle: Text(
-                      '${assessment.cropName} · ${_confidenceText(assessment.confidenceLabel)} · ${DateFormat.yMMMd().add_jm().format(assessment.createdAt.toLocal())}',
+                      '${assessment.cropName} · ${_confidenceText(assessment.confidenceLabel)} · ${context.strings.formatDateTime(assessment.createdAt.toLocal())}',
                     ),
                     trailing: assessment.isActive
                         ? const Text('Current')
@@ -1178,7 +1181,9 @@ class _DiagnosisResultScreenState extends State<DiagnosisResultScreen> {
       await context.read<AppController>().deleteDiagnosis(diagnosis.id);
       if (context.mounted) context.go('/scan');
     } on ApiException catch (error) {
-      if (context.mounted) showAppSnackBar(context, error.message);
+      if (context.mounted) {
+        showAppSnackBar(context, context.localizedError(error));
+      }
     }
   }
 
@@ -1297,7 +1302,9 @@ class _DiagnosisResultScreenState extends State<DiagnosisResultScreen> {
         showAppSnackBar(context, 'Leaf check link updated.', success: true);
       }
     } on ApiException catch (error) {
-      if (context.mounted) showAppSnackBar(context, error.message);
+      if (context.mounted) {
+        showAppSnackBar(context, context.localizedError(error));
+      }
     }
   }
 }
@@ -1390,12 +1397,12 @@ class _ReportApprovalSheetState extends State<_ReportApprovalSheet> {
               'KrishiSathi leaf report\n'
               'Report ID: ${report.id}\n'
               'Private access code: ${report.token}\n'
-              'Expires: ${DateFormat.yMMMd().add_jm().format(report.expiresAt.toLocal())}\n\n'
+              '${context.tr('date.expires', {'date': context.strings.formatDateTime(report.expiresAt.toLocal())})}\n\n'
               'Share this only with the person you want to review the report.',
         ),
       );
     } on ApiException catch (error) {
-      if (mounted) showAppSnackBar(context, error.message);
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
     } finally {
       if (mounted) setState(() => _creating = false);
     }
@@ -1524,7 +1531,7 @@ class _DiagnosisFeedbackSheetState extends State<_DiagnosisFeedbackSheet> {
         });
       }
     } on ApiException catch (error) {
-      if (mounted) showAppSnackBar(context, error.message);
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -1552,7 +1559,7 @@ class _DiagnosisFeedbackSheetState extends State<_DiagnosisFeedbackSheet> {
       Navigator.pop(context);
       showAppSnackBar(context, 'Feedback saved.', success: true);
     } on ApiException catch (error) {
-      if (mounted) showAppSnackBar(context, error.message);
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
     } finally {
       if (mounted) setState(() => _saving = false);
     }

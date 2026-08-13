@@ -17,6 +17,7 @@ from app.core.container import (
     build_llm_provider,
     build_memory_provider,
     build_object_storage,
+    build_progression_provider,
 )
 from app.core.errors import register_error_handlers
 from app.core.logging import configure_logging, request_context_middleware
@@ -26,8 +27,10 @@ from app.integrations.geocoding.provider import GeocodingProvider
 from app.integrations.inference.provider import LeafInferenceProvider
 from app.integrations.llm.provider import LLMProvider
 from app.integrations.memory.provider import MemoryProvider
+from app.integrations.progression.provider import ProgressionProvider
 from app.integrations.storage.provider import ObjectStorageProvider
 from app.integrations.weather.provider import CurrentWeatherProvider, ForecastWeatherProvider
+from app.modules.chats.worker import ChatTurnWorker
 from app.modules.memories.worker import MemoryCaptureWorker
 from app.modules.storage_cleanup.worker import ObjectCleanupWorker
 
@@ -43,6 +46,7 @@ def create_app(
     current_weather_provider: CurrentWeatherProvider | None = None,
     forecast_weather_provider: ForecastWeatherProvider | None = None,
     geocoding_provider: GeocodingProvider | None = None,
+    progression_provider: ProgressionProvider | None = None,
 ) -> FastAPI:
     """Build an application with explicit, replaceable process dependencies."""
 
@@ -56,6 +60,9 @@ def create_app(
     )
     resolved_llm_provider = llm_provider or build_llm_provider(resolved_settings)
     resolved_memory_provider = memory_provider or build_memory_provider(resolved_settings)
+    resolved_progression_provider = progression_provider or build_progression_provider(
+        resolved_settings
+    )
     resolved_current_weather = current_weather_provider or build_current_weather_provider(
         resolved_settings
     )
@@ -74,6 +81,14 @@ def create_app(
         llm_provider=resolved_llm_provider,
         memory_provider=resolved_memory_provider,
     )
+    chat_turn_worker = ChatTurnWorker(
+        settings=resolved_settings,
+        database=resolved_database,
+        llm_provider=resolved_llm_provider,
+        memory_provider=resolved_memory_provider,
+        current_weather_provider=resolved_current_weather,
+        forecast_weather_provider=resolved_forecast_weather,
+    )
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -81,15 +96,18 @@ def create_app(
         logger.info("application.started", environment=resolved_settings.app_env)
         await cleanup_worker.start()
         await memory_capture_worker.start()
+        await chat_turn_worker.start()
         try:
             yield
         finally:
+            await chat_turn_worker.stop()
             await memory_capture_worker.stop()
             await cleanup_worker.stop()
             await application.state.geocoding_provider.close()
             await application.state.forecast_weather_provider.close()
             await application.state.current_weather_provider.close()
             await application.state.memory_provider.close()
+            await application.state.progression_provider.close()
             await application.state.llm_provider.close()
             await application.state.leaf_inference_provider.close()
             await application.state.object_storage.close()
@@ -110,6 +128,7 @@ def create_app(
     application.state.leaf_inference_provider = resolved_leaf_inference
     application.state.llm_provider = resolved_llm_provider
     application.state.memory_provider = resolved_memory_provider
+    application.state.progression_provider = resolved_progression_provider
     application.state.current_weather_provider = resolved_current_weather
     application.state.forecast_weather_provider = resolved_forecast_weather
     application.state.geocoding_provider = resolved_geocoding

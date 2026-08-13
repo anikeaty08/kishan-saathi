@@ -479,6 +479,53 @@ class QueuedScanModel {
 
 enum ChatAuthor { farmer, assistant, system }
 
+enum ChatDelivery { queued, sending, sent, failed }
+
+class ChatAnswerSectionModel {
+  const ChatAnswerSectionModel({required this.title, required this.body});
+
+  final String title;
+  final String body;
+}
+
+class ChatRetakeAdviceModel {
+  const ChatRetakeAdviceModel({
+    required this.reasonCodes,
+    required this.instructions,
+  });
+
+  final List<String> reasonCodes;
+  final List<String> instructions;
+}
+
+class ChatAssistantReplyModel {
+  const ChatAssistantReplyModel({
+    required this.shortAnswer,
+    required this.disposition,
+    required this.certainty,
+    required this.answerSections,
+    required this.explanationPoints,
+    required this.nextSteps,
+    required this.followUpQuestions,
+    required this.generalPrecautions,
+    required this.consultLocalExpert,
+    this.details,
+    this.retakeAdvice,
+  });
+
+  final String shortAnswer;
+  final String disposition;
+  final String certainty;
+  final List<ChatAnswerSectionModel> answerSections;
+  final List<String> explanationPoints;
+  final List<String> nextSteps;
+  final List<String> followUpQuestions;
+  final List<String> generalPrecautions;
+  final bool consultLocalExpert;
+  final String? details;
+  final ChatRetakeAdviceModel? retakeAdvice;
+}
+
 class ChatMessageModel {
   const ChatMessageModel({
     required this.id,
@@ -486,6 +533,10 @@ class ChatMessageModel {
     required this.text,
     required this.sentAt,
     this.failed = false,
+    this.delivery = ChatDelivery.sent,
+    this.turnId,
+    this.idempotencyKey,
+    this.structuredReply,
   });
 
   final String id;
@@ -493,6 +544,51 @@ class ChatMessageModel {
   final String text;
   final DateTime sentAt;
   final bool failed;
+  final ChatDelivery delivery;
+  final String? turnId;
+  final String? idempotencyKey;
+  final ChatAssistantReplyModel? structuredReply;
+
+  ChatMessageModel copyWith({
+    ChatDelivery? delivery,
+    bool? failed,
+    String? turnId,
+    String? idempotencyKey,
+  }) => ChatMessageModel(
+    id: id,
+    author: author,
+    text: text,
+    sentAt: sentAt,
+    failed: failed ?? this.failed,
+    delivery: delivery ?? this.delivery,
+    turnId: turnId ?? this.turnId,
+    idempotencyKey: idempotencyKey ?? this.idempotencyKey,
+    structuredReply: structuredReply,
+  );
+}
+
+class ChatTurnModel {
+  const ChatTurnModel({
+    required this.id,
+    required this.chatId,
+    required this.idempotencyKey,
+    required this.content,
+    required this.status,
+    required this.createdAt,
+    required this.queuePosition,
+    this.errorCode,
+    this.messages = const [],
+  });
+
+  final String id;
+  final String chatId;
+  final String idempotencyKey;
+  final String content;
+  final String status;
+  final DateTime createdAt;
+  final int? queuePosition;
+  final String? errorCode;
+  final List<ChatMessageModel> messages;
 }
 
 class ChatThreadModel {

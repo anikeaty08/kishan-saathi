@@ -1,4 +1,4 @@
-"""On-demand weather orchestration with a one-hour PostgreSQL cache."""
+"""On-demand current-weather caching and fresh plot-forecast orchestration."""
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -97,7 +97,12 @@ class WeatherService:
         return self._current_response(snapshot, stale=False)
 
     async def forecast_for_plot(self, farmer_id: UUID, plot_id: UUID) -> PlotForecastResponse:
-        """Backend-controlled Open-Meteo tool target using an owned plot's coordinates."""
+        """Fetch a fresh Open-Meteo forecast for an owned plot whenever requested.
+
+        The latest snapshot is retained only as a bounded provider-failure fallback.
+        The one-hour freshness rule applies to current/home OpenWeather, not this
+        future forecast.
+        """
 
         plot = await self._farms.get_plot(farmer_id, plot_id)
         if plot is None:
@@ -109,8 +114,6 @@ class WeatherService:
         cache_matches_plot = cached is not None and self._same_location(
             cached, plot.latitude, plot.longitude
         )
-        if cache_matches_plot and cached is not None and self._fresh(cached):
-            return self._forecast_response(cached, stale=False)
         try:
             value = await self._forecast_provider.forecast(
                 latitude=float(plot.latitude), longitude=float(plot.longitude)

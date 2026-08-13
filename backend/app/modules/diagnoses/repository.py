@@ -142,6 +142,49 @@ class DiagnosisRepository:
         )
         return list(result)
 
+    async def get_assessment(
+        self,
+        farmer_id: UUID,
+        case_id: UUID,
+        assessment_id: UUID,
+    ) -> DiagnosisAssessment | None:
+        result = await self.session.execute(
+            select(DiagnosisAssessment).where(
+                DiagnosisAssessment.id == assessment_id,
+                DiagnosisAssessment.farmer_id == farmer_id,
+                DiagnosisAssessment.case_id == case_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def assessment_images(
+        self,
+        farmer_id: UUID,
+        case_id: UUID,
+        assessment_id: UUID,
+    ) -> list[DiagnosisImage]:
+        """Return the immutable image batch that produced one assessment."""
+
+        result = await self.session.scalars(
+            select(DiagnosisImage)
+            .join(
+                DiagnosisPrediction,
+                DiagnosisPrediction.image_id == DiagnosisImage.id,
+            )
+            .where(
+                DiagnosisImage.farmer_id == farmer_id,
+                DiagnosisImage.case_id == case_id,
+                DiagnosisPrediction.assessment_id == assessment_id,
+                DiagnosisPrediction.scope == "image",
+            )
+            .distinct()
+            .order_by(
+                DiagnosisImage.captured_or_uploaded_at,
+                DiagnosisImage.created_at,
+            )
+        )
+        return list(result)
+
     async def combined_predictions(self, assessment_id: UUID) -> list[DiagnosisPrediction]:
         result = await self.session.scalars(
             select(DiagnosisPrediction)

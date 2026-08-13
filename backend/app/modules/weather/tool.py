@@ -20,7 +20,9 @@ class PlotWeatherContext(BaseModel):
 
 
 class PlotWeatherTool(Protocol):
-    async def get(self, farmer_id: UUID, plot_id: UUID) -> PlotWeatherContext: ...
+    async def current(self, farmer_id: UUID, plot_id: UUID) -> CurrentWeatherResponse: ...
+
+    async def forecast(self, farmer_id: UUID, plot_id: UUID) -> PlotForecastResponse: ...
 
 
 class DatabasePlotWeatherTool:
@@ -39,7 +41,7 @@ class DatabasePlotWeatherTool:
         self._current_provider = current_provider
         self._forecast_provider = forecast_provider
 
-    async def get(self, farmer_id: UUID, plot_id: UUID) -> PlotWeatherContext:
+    async def current(self, farmer_id: UUID, plot_id: UUID) -> CurrentWeatherResponse:
         async with self._database.session() as session:
             service = WeatherService(
                 settings=self._settings,
@@ -48,6 +50,15 @@ class DatabasePlotWeatherTool:
                 current_provider=self._current_provider,
                 forecast_provider=self._forecast_provider,
             )
-            current = await service.current_for_plot(farmer_id, plot_id)
-            forecast = await service.forecast_for_plot(farmer_id, plot_id)
-            return PlotWeatherContext(current=current, forecast=forecast)
+            return await service.current_for_plot(farmer_id, plot_id)
+
+    async def forecast(self, farmer_id: UUID, plot_id: UUID) -> PlotForecastResponse:
+        async with self._database.session() as session:
+            service = WeatherService(
+                settings=self._settings,
+                repository=WeatherRepository(session),
+                farms=FarmRepository(session),
+                current_provider=self._current_provider,
+                forecast_provider=self._forecast_provider,
+            )
+            return await service.forecast_for_plot(farmer_id, plot_id)

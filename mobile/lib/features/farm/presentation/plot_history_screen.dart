@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:provider/provider.dart';
 
@@ -318,7 +317,7 @@ class _FilterPanel extends StatelessWidget {
                   label: Text(
                     dates == null
                         ? 'Any date'
-                        : '${DateFormat.MMMd().format(dates!.start)} – ${DateFormat.MMMd().format(dates!.end)}',
+                        : '${context.strings.formatShortDate(dates!.start)} – ${context.strings.formatShortDate(dates!.end)}',
                   ),
                 );
                 if (constraints.maxWidth < 560) {
@@ -373,7 +372,7 @@ class _HistoryEventTile extends StatelessWidget {
           ),
           title: Text(event.title),
           subtitle: Text(
-            DateFormat.yMMMd().add_jm().format(event.occurredAt.toLocal()),
+            context.strings.formatDateTime(event.occurredAt.toLocal()),
           ),
           trailing: route == null
               ? null

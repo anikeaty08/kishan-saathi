@@ -15,8 +15,8 @@ from app.modules.chats.schemas import (
     ChatMessagePage,
     ChatResponse,
     ChatScope,
+    ChatTurnResponse,
     ChatUpdate,
-    SendMessageResponse,
 )
 from app.modules.chats.service import ChatService
 from app.modules.users.dependencies import get_current_farmer_id, get_user_service
@@ -89,7 +89,11 @@ async def delete_chat(chat_id: UUID, farmer_id: FarmerId, service: Service) -> R
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post("/{chat_id}/messages", response_model=SendMessageResponse)
+@router.post(
+    "/{chat_id}/messages",
+    response_model=ChatTurnResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def send_message(
     chat_id: UUID,
     data: ChatMessageCreate,
@@ -98,12 +102,48 @@ async def send_message(
     context: Annotated[AuthContext, Depends(get_auth_context)],
     user_service: Annotated[UserServicePort, Depends(get_user_service)],
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=128)],
-) -> SendMessageResponse:
+) -> ChatTurnResponse:
     profile = await user_service.get_profile(context)
-    return await service.send_message(
+    return await service.enqueue_message(
         farmer_id,
         chat_id,
         data,
         preferred_language=profile.preferred_language,
         idempotency_key=idempotency_key,
     )
+
+
+@router.get("/{chat_id}/turns", response_model=list[ChatTurnResponse])
+async def list_chat_turns(
+    chat_id: UUID,
+    farmer_id: FarmerId,
+    service: Service,
+    active_only: Annotated[bool, Query()] = True,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> list[ChatTurnResponse]:
+    return await service.list_turns(
+        farmer_id,
+        chat_id,
+        active_only=active_only,
+        limit=limit,
+    )
+
+
+@router.get("/{chat_id}/turns/{turn_id}", response_model=ChatTurnResponse)
+async def get_chat_turn(
+    chat_id: UUID,
+    turn_id: UUID,
+    farmer_id: FarmerId,
+    service: Service,
+) -> ChatTurnResponse:
+    return await service.get_turn(farmer_id, chat_id, turn_id)
+
+
+@router.post("/{chat_id}/turns/{turn_id}/retry", response_model=ChatTurnResponse)
+async def retry_chat_turn(
+    chat_id: UUID,
+    turn_id: UUID,
+    farmer_id: FarmerId,
+    service: Service,
+) -> ChatTurnResponse:
+    return await service.retry_turn(farmer_id, chat_id, turn_id)

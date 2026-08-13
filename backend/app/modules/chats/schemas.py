@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
+from app.integrations.llm.provider import AssistantReply
 from app.modules.reminders.schemas import ProposalResponse
 
 
@@ -67,6 +68,7 @@ class ChatMessageResponse(BaseModel):
     sequence: int
     role: str
     content: str
+    structured_content: AssistantReply | None = None
     created_at: datetime
 
 
@@ -97,3 +99,26 @@ class SendMessageResponse(BaseModel):
     assistant_message: ChatMessageResponse
     follow_up_questions: list[str]
     reminder_proposal: ProposalResponse | None
+
+
+class ChatTurnStatus(StrEnum):
+    QUEUED = "queued"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class ChatTurnResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    chat_id: UUID
+    idempotency_key: str
+    content: str
+    status: ChatTurnStatus
+    attempts: int
+    error_code: str | None
+    result: SendMessageResponse | None = None
+    queue_position: int | None = None
+    created_at: datetime
+    updated_at: datetime

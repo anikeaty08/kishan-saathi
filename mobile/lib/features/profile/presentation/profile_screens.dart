@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:provider/provider.dart';
 
@@ -106,6 +105,14 @@ class ProfileScreen extends StatelessWidget {
                       _ => context.tr('systemTheme'),
                     },
                     onTap: () => _showThemeSheet(context, controller),
+                  ),
+                  _SettingsTile(
+                    icon: LucideIcons.ruler,
+                    title: 'Area measurements',
+                    subtitle: controller.preferredAreaUnit == 'hectare'
+                        ? 'Hectares'
+                        : 'Acres',
+                    onTap: () => _showAreaUnitSheet(context, controller),
                   ),
                 ],
               ),
@@ -259,6 +266,54 @@ class ProfileScreen extends StatelessWidget {
             child: Text(context.tr('signOut')),
           ),
         ],
+      ),
+    );
+  }
+
+  void _showAreaUnitSheet(BuildContext context, AppController controller) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Area measurements',
+                style: Theme.of(context).textTheme.headlineMedium,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Existing plot values are converted for display. New plot forms start with this unit.',
+                style: Theme.of(context).textTheme.bodyMedium
+                    ?.copyWith(color: AppColors.mutedInk),
+              ),
+              const SizedBox(height: 18),
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(
+                    value: 'acre',
+                    icon: Icon(LucideIcons.ruler),
+                    label: Text('Acres'),
+                  ),
+                  ButtonSegment(
+                    value: 'hectare',
+                    icon: Icon(LucideIcons.map),
+                    label: Text('Hectares'),
+                  ),
+                ],
+                selected: {controller.preferredAreaUnit},
+                onSelectionChanged: (value) async {
+                  await controller.setPreferredAreaUnit(value.first);
+                  if (context.mounted) Navigator.pop(context);
+                },
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -486,7 +541,11 @@ class PrivacyScreen extends StatelessWidget {
                       ),
                       title: Text(report.title),
                       subtitle: Text(
-                        'Expires ${DateFormat.MMMd().add_jm().format(report.expiresAt.toLocal())}',
+                        context.tr('date.expires', {
+                          'date': context.strings.formatDateTime(
+                            report.expiresAt.toLocal(),
+                          ),
+                        }),
                       ),
                       trailing: TextButton(
                         onPressed: controller.busy
@@ -527,7 +586,9 @@ class PrivacyScreen extends StatelessWidget {
         showAppSnackBar(context, 'Report access revoked.', success: true);
       }
     } on ApiException catch (error) {
-      if (context.mounted) showAppSnackBar(context, error.message);
+      if (context.mounted) {
+        showAppSnackBar(context, context.localizedError(error));
+      }
     }
   }
 
@@ -542,7 +603,9 @@ class PrivacyScreen extends StatelessWidget {
         );
       }
     } on ApiException catch (error) {
-      if (context.mounted) showAppSnackBar(context, error.message);
+      if (context.mounted) {
+        showAppSnackBar(context, context.localizedError(error));
+      }
     }
   }
 }
@@ -665,7 +728,7 @@ class MemoryScreen extends StatelessWidget {
               } on ApiException catch (error) {
                 if (dialogContext.mounted) {
                   Navigator.pop(dialogContext);
-                  showAppSnackBar(context, error.message);
+                  showAppSnackBar(context, context.localizedError(error));
                 }
               }
             },
@@ -763,7 +826,7 @@ class _ReminderList extends StatelessWidget {
             ),
             title: Text(item.title),
             subtitle: Text(
-              '${item.plotName} · ${DateFormat.MMMd().add_jm().format(item.dueAt)}',
+              '${item.plotName} · ${context.strings.formatDateTime(item.dueAt)}',
             ),
             trailing: item.status == ReminderStatus.pending
                 ? PopupMenuButton<String>(
@@ -843,7 +906,9 @@ class _ReminderList extends StatelessWidget {
         }, success: true);
       }
     } on ApiException catch (error) {
-      if (context.mounted) showAppSnackBar(context, error.message);
+      if (context.mounted) {
+        showAppSnackBar(context, context.localizedError(error));
+      }
     }
   }
 }
@@ -914,7 +979,7 @@ class _ManualReminderSheetState extends State<_ManualReminderSheet> {
       Navigator.pop(context);
       showAppSnackBar(context, 'Reminder scheduled.', success: true);
     } on ApiException catch (error) {
-      if (mounted) showAppSnackBar(context, error.message);
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -976,7 +1041,7 @@ class _ManualReminderSheetState extends State<_ManualReminderSheet> {
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(LucideIcons.calendarClock),
                 title: const Text('Date and time'),
-                subtitle: Text(DateFormat.yMMMd().add_jm().format(_dueAt)),
+                subtitle: Text(context.strings.formatDateTime(_dueAt)),
                 trailing: const Icon(LucideIcons.chevronRight),
                 onTap: _pickDateTime,
               ),
@@ -1052,7 +1117,7 @@ class _ProposalList extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  DateFormat.MMMd().add_jm().format(proposal.dueAt.toLocal()),
+                  context.strings.formatDateTime(proposal.dueAt.toLocal()),
                   style: Theme.of(context).textTheme.bodySmall
                       ?.copyWith(color: AppColors.mutedInk),
                 ),
@@ -1099,7 +1164,9 @@ class _ProposalList extends StatelessWidget {
         );
       }
     } on ApiException catch (error) {
-      if (context.mounted) showAppSnackBar(context, error.message);
+      if (context.mounted) {
+        showAppSnackBar(context, context.localizedError(error));
+      }
     }
   }
 }

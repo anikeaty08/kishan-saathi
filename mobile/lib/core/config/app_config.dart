@@ -5,6 +5,7 @@ class AppConfig {
     required this.cognitoUserPoolId,
     required this.cognitoAppClientId,
     required this.environment,
+    this.mapTileUrlTemplate = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
   });
 
   factory AppConfig.fromEnvironment() {
@@ -24,6 +25,10 @@ class AppConfig {
         'APP_ENV',
         defaultValue: 'development',
       ),
+      mapTileUrlTemplate: const String.fromEnvironment(
+        'MAP_TILE_URL_TEMPLATE',
+        defaultValue: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      ),
     );
   }
 
@@ -32,6 +37,7 @@ class AppConfig {
   final String cognitoUserPoolId;
   final String cognitoAppClientId;
   final String environment;
+  final String mapTileUrlTemplate;
 
   bool get isCognitoConfigured =>
       cognitoUserPoolId.isNotEmpty && cognitoAppClientId.isNotEmpty;

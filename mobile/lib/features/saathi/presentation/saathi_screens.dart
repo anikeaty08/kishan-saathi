@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:provider/provider.dart';
 
@@ -256,7 +255,7 @@ class _ChatRow extends StatelessWidget {
                           ),
                           if (latest != null)
                             Text(
-                              DateFormat.MMMd().format(latest.sentAt),
+                              context.strings.formatShortDate(latest.sentAt),
                               style: Theme.of(context).textTheme.labelSmall
                                   ?.copyWith(color: AppColors.mutedInk),
                             ),
@@ -349,7 +348,7 @@ class _NewChatScreenState extends State<NewChatScreen> {
       await controller.sendMessage(chat.id, prompt);
       if (mounted) context.go('/saathi/chat/${chat.id}');
     } on ApiException catch (error) {
-      if (mounted) showAppSnackBar(context, error.message);
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
     }
   }
 
@@ -487,6 +486,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   final _scrollController = ScrollController();
   Timer? _draftDebounce;
   late final AppController _controller;
+  int _lastMessageCount = 0;
 
   @override
   void initState() {
@@ -494,11 +494,12 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     _controller = context.read<AppController>();
     _message.text = _controller.chatDraft(widget.chatId);
     _message.addListener(_scheduleDraftSave);
+    _controller.addListener(_handleChatUpdate);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       try {
         await context.read<AppController>().loadChat(widget.chatId);
       } on ApiException catch (error) {
-        if (mounted) showAppSnackBar(context, error.message);
+        if (mounted) showAppSnackBar(context, context.localizedError(error));
       }
     });
   }
@@ -508,6 +509,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     _draftDebounce?.cancel();
     unawaited(_controller.saveChatDraft(widget.chatId, _message.text));
     _message.removeListener(_scheduleDraftSave);
+    _controller.removeListener(_handleChatUpdate);
     _message.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -522,8 +524,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       await _controller.saveChatDraft(widget.chatId, '');
     } on ApiException catch (error) {
       if (mounted) {
-        _message.text = text;
-        showAppSnackBar(context, error.message);
+        showAppSnackBar(context, context.localizedError(error));
       }
       return;
     }
@@ -537,6 +538,29 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
           curve: Curves.easeOutCubic,
         );
       }
+    });
+  }
+
+  void _handleChatUpdate() {
+    final chat = _controller.chats.cast<ChatThreadModel?>().firstWhere(
+      (item) => item?.id == widget.chatId,
+      orElse: () => null,
+    );
+    final count = chat?.messages.length ?? 0;
+    if (count == _lastMessageCount) return;
+    _lastMessageCount = count;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      final nearBottom = position.maxScrollExtent - position.pixels < 240;
+      if (!nearBottom) return;
+      _scrollController.animateTo(
+        position.maxScrollExtent,
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
     });
   }
 
@@ -564,6 +588,9 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         ),
       );
     }
+    final controller = context.watch<AppController>();
+    final responding = controller.isChatResponding(chat.id);
+    final queued = controller.queuedChatTurns(chat.id);
     return Scaffold(
       appBar: AppBar(
         title: Column(
@@ -612,10 +639,28 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                         ),
                       );
                     }
-                    return _MessageBubble(message: chat.messages[index - 1]);
+                    return _MessageBubble(
+                      message: chat.messages[index - 1],
+                      onRetry:
+                          chat.messages[index - 1].delivery ==
+                              ChatDelivery.failed
+                          ? () => _retry(chat.messages[index - 1])
+                          : null,
+                    );
                   },
                 ),
               ),
+            ),
+            AnimatedSwitcher(
+              duration: MediaQuery.disableAnimationsOf(context)
+                  ? Duration.zero
+                  : const Duration(milliseconds: 180),
+              child: responding
+                  ? _ThinkingBar(
+                      key: const ValueKey('thinking'),
+                      queuedCount: queued,
+                    )
+                  : const SizedBox.shrink(key: ValueKey('idle')),
             ),
             DecoratedBox(
               decoration: BoxDecoration(
@@ -648,9 +693,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                       const SizedBox(width: 8),
                       IconButton.filled(
                         tooltip: context.tr('send'),
-                        onPressed: context.watch<AppController>().busy
-                            ? null
-                            : _send,
+                        onPressed: _send,
                         icon: const Icon(LucideIcons.send, size: 19),
                       ),
                     ],
@@ -662,6 +705,14 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _retry(ChatMessageModel message) async {
+    try {
+      await _controller.retryChatMessage(widget.chatId, message.id);
+    } on ApiException catch (error) {
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
+    }
   }
 
   Future<void> _showConversationOptions(ChatThreadModel chat) async {
@@ -760,7 +811,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
           break;
       }
     } on ApiException catch (error) {
-      if (mounted) showAppSnackBar(context, error.message);
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
     }
   }
 
@@ -881,8 +932,9 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 }
 
 class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({required this.message});
+  const _MessageBubble({required this.message, this.onRetry});
   final ChatMessageModel message;
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -904,29 +956,209 @@ class _MessageBubble extends StatelessWidget {
                 ? AppColors.amber.withValues(alpha: 0.1)
                 : farmer
                 ? AppColors.forest
-                : Theme.of(context).colorScheme.surface,
+                : Colors.transparent,
             borderRadius: BorderRadius.circular(AppRadius.medium),
-            border: farmer ? null : Border.all(color: AppColors.divider),
+            border: farmer || !system
+                ? null
+                : Border.all(color: AppColors.divider),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                message.text,
-                style: Theme.of(context).textTheme.bodyMedium
-                    ?.copyWith(color: farmer ? Colors.white : null),
-              ),
-              const SizedBox(height: 5),
-              Text(
-                message.failed
-                    ? 'Not sent'
-                    : DateFormat.jm().format(message.sentAt),
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: farmer ? Colors.white70 : AppColors.mutedInk,
+              if (!farmer && !system)
+                Row(
+                  children: [
+                    Container(
+                      width: 26,
+                      height: 26,
+                      decoration: const BoxDecoration(
+                        color: AppColors.leaf,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        LucideIcons.sprout,
+                        size: 15,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(width: 9),
+                    Text(
+                      'KrishiSathi',
+                      style: Theme.of(context).textTheme.labelLarge,
+                    ),
+                  ],
                 ),
+              if (!farmer && !system) const SizedBox(height: 10),
+              _MessageContent(message: message, farmer: farmer),
+              const SizedBox(height: 5),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    _deliveryLabel(context, message),
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: farmer ? Colors.white70 : AppColors.mutedInk,
+                    ),
+                  ),
+                  if (onRetry != null) ...[
+                    const SizedBox(width: 8),
+                    TextButton.icon(
+                      onPressed: onRetry,
+                      icon: const Icon(LucideIcons.refreshCw, size: 14),
+                      label: Text(context.tr('retry')),
+                    ),
+                  ],
+                ],
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  String _deliveryLabel(BuildContext context, ChatMessageModel value) =>
+      switch (value.delivery) {
+        ChatDelivery.queued => context.tr('chatQueued'),
+        ChatDelivery.sending => context.tr('chatProcessing'),
+        ChatDelivery.failed => context.tr('chatFailed'),
+        ChatDelivery.sent => context.strings.formatTime(value.sentAt),
+      };
+}
+
+class _MessageContent extends StatelessWidget {
+  const _MessageContent({required this.message, required this.farmer});
+
+  final ChatMessageModel message;
+  final bool farmer;
+
+  @override
+  Widget build(BuildContext context) {
+    final reply = message.structuredReply;
+    if (reply == null || farmer) {
+      return Text(
+        message.text,
+        style: Theme.of(context).textTheme.bodyMedium
+            ?.copyWith(color: farmer ? Colors.white : null),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(reply.shortAnswer, style: Theme.of(context).textTheme.bodyLarge),
+        if (reply.details case final details?) ...[
+          const SizedBox(height: 10),
+          Text(details),
+        ],
+        for (final section in reply.answerSections) ...[
+          const SizedBox(height: 14),
+          Text(section.title, style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 4),
+          Text(section.body),
+        ],
+        if (reply.explanationPoints.isNotEmpty)
+          _ReplyList(
+            title: context.tr('whyThisMatters'),
+            values: reply.explanationPoints,
+          ),
+        if (reply.nextSteps.isNotEmpty)
+          _ReplyList(
+            title: context.tr('nextSteps'),
+            values: reply.nextSteps,
+            numbered: true,
+          ),
+        if (reply.retakeAdvice case final advice?)
+          _ReplyList(
+            title: context.tr('retakePhotos'),
+            values: advice.instructions,
+          ),
+        if (reply.generalPrecautions.isNotEmpty)
+          _ReplyList(
+            title: context.tr('generalPrecautions'),
+            values: reply.generalPrecautions,
+          ),
+        if (reply.followUpQuestions.isNotEmpty)
+          _ReplyList(
+            title: context.tr('followUpQuestions'),
+            values: reply.followUpQuestions,
+          ),
+        if (reply.consultLocalExpert) ...[
+          const SizedBox(height: 12),
+          InlineNotice(
+            title: context.tr('localExpertRecommended'),
+            message: context.tr('localExpertBody'),
+            icon: LucideIcons.shieldCheck,
+            color: AppColors.amber,
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _ReplyList extends StatelessWidget {
+  const _ReplyList({
+    required this.title,
+    required this.values,
+    this.numbered = false,
+  });
+
+  final String title;
+  final List<String> values;
+  final bool numbered;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 5),
+          for (var index = 0; index < values.length; index++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 5),
+              child: Text(
+                '${numbered ? '${index + 1}.' : '•'} ${values[index]}',
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ThinkingBar extends StatelessWidget {
+  const _ThinkingBar({super.key, required this.queuedCount});
+
+  final int queuedCount;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      liveRegion: true,
+      label: context.tr('saathiThinking'),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
+        color: AppColors.leaf.withValues(alpha: 0.06),
+        child: Row(
+          children: [
+            const SizedBox.square(
+              dimension: 15,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                queuedCount > 0
+                    ? context.tr('saathiThinkingQueued', {'count': queuedCount})
+                    : context.tr('saathiThinking'),
+                style: Theme.of(context).textTheme.labelMedium,
+              ),
+            ),
+          ],
         ),
       ),
     );

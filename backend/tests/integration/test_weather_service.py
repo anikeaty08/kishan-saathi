@@ -1,4 +1,4 @@
-"""Integration tests for separate, owner-scoped one-hour weather caches."""
+"""Integration tests for cached current and on-demand plot forecast weather."""
 
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -117,11 +117,11 @@ async def test_weather_is_cached_separately_and_owner_isolation_is_enforced() ->
         await engine.dispose()
 
     assert current.calls == 1
-    assert forecast.calls == 1
+    assert forecast.calls == 2
     assert first_current.is_stale is False
     assert second_current.fetched_at == first_current.fetched_at
     assert first_forecast.provider == "open-meteo"
-    assert second_forecast.fetched_at == first_forecast.fetched_at
+    assert second_forecast.fetched_at >= first_forecast.fetched_at
     assert hidden.value.code == "PLOT_NOT_FOUND"
 
 

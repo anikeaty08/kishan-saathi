@@ -16,6 +16,7 @@ from app.integrations.geocoding.provider import GeocodingProvider
 from app.integrations.inference.provider import LeafInferenceProvider
 from app.integrations.llm.provider import LLMProvider
 from app.integrations.memory.provider import MemoryProvider
+from app.integrations.progression.provider import ProgressionProvider
 from app.integrations.storage.provider import ObjectStorageProvider
 from app.integrations.weather.provider import CurrentWeatherProvider, ForecastWeatherProvider
 
@@ -58,6 +59,10 @@ def get_llm_provider(request: Request) -> LLMProvider:
 
 def get_memory_provider(request: Request) -> MemoryProvider:
     return cast(MemoryProvider, request.app.state.memory_provider)
+
+
+def get_progression_provider(request: Request) -> ProgressionProvider:
+    return cast(ProgressionProvider, request.app.state.progression_provider)
 
 
 def get_current_weather_provider(request: Request) -> CurrentWeatherProvider:

@@ -1,5 +1,3 @@
-import 'package:uuid/uuid.dart';
-
 import '../../../core/models/app_models.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/network/krishi_api.dart';
@@ -56,15 +54,33 @@ class ChatRepository {
     return _thread(row).copyWith(messages: messages);
   }
 
-  Future<List<ChatMessageModel>> sendMessage(String id, String content) async {
+  Future<ChatTurnModel> enqueueMessage(
+    String id,
+    String content, {
+    required String idempotencyKey,
+  }) async {
     final payload = await _api.sendChatMessage(id, {
       'content': content.trim(),
-    }, idempotencyKey: const Uuid().v4());
-    final row = _map(payload, contract: 'chat message');
-    return [
-      _message(_map(row['user_message'], contract: 'user message')),
-      _message(_map(row['assistant_message'], contract: 'assistant message')),
-    ];
+    }, idempotencyKey: idempotencyKey);
+    return _turn(_map(payload, contract: 'chat turn'));
+  }
+
+  Future<List<ChatTurnModel>> recentTurns(String id) async {
+    final payload = await _api.listChatTurns(id, activeOnly: false);
+    return _list(
+      payload,
+      contract: 'chat turns',
+    ).map(_turn).toList(growable: false);
+  }
+
+  Future<ChatTurnModel> getTurn(String chatId, String turnId) async {
+    final payload = await _api.getChatTurn(chatId, turnId);
+    return _turn(_map(payload, contract: 'chat turn'));
+  }
+
+  Future<ChatTurnModel> retryTurn(String chatId, String turnId) async {
+    final payload = await _api.retryChatTurn(chatId, turnId);
+    return _turn(_map(payload, contract: 'chat turn'));
   }
 
   Future<ChatThreadModel> updateChat(
@@ -121,6 +137,63 @@ class ChatRepository {
       },
       text: _requiredString(row, 'content'),
       sentAt: _requiredDateTime(row, 'created_at'),
+      structuredReply: switch (row['structured_content']) {
+        final Map<String, dynamic> value => _structuredReply(value),
+        _ => null,
+      },
+    );
+  }
+
+  ChatTurnModel _turn(Map<String, dynamic> row) {
+    final result = row['result'];
+    final messages = <ChatMessageModel>[];
+    if (result is Map<String, dynamic>) {
+      if (result['user_message'] case final Map<String, dynamic> message) {
+        messages.add(_message(message));
+      }
+      if (result['assistant_message'] case final Map<String, dynamic> message) {
+        messages.add(_message(message));
+      }
+    }
+    return ChatTurnModel(
+      id: _requiredString(row, 'id'),
+      chatId: _requiredString(row, 'chat_id'),
+      idempotencyKey: _requiredString(row, 'idempotency_key'),
+      content: _requiredString(row, 'content'),
+      status: _requiredString(row, 'status'),
+      createdAt: _requiredDateTime(row, 'created_at'),
+      queuePosition: (row['queue_position'] as num?)?.toInt(),
+      errorCode: row['error_code'] as String?,
+      messages: messages,
+    );
+  }
+
+  ChatAssistantReplyModel _structuredReply(Map<String, dynamic> row) {
+    return ChatAssistantReplyModel(
+      shortAnswer: _requiredString(row, 'short_answer'),
+      disposition: _requiredString(row, 'disposition'),
+      certainty: _requiredString(row, 'certainty'),
+      answerSections: _maps(row['answer_sections'])
+          .map(
+            (item) => ChatAnswerSectionModel(
+              title: _requiredString(item, 'title'),
+              body: _requiredString(item, 'body'),
+            ),
+          )
+          .toList(growable: false),
+      explanationPoints: _strings(row['explanation_points']),
+      nextSteps: _strings(row['next_steps']),
+      followUpQuestions: _strings(row['follow_up_questions']),
+      generalPrecautions: _strings(row['general_precautions']),
+      consultLocalExpert: row['consult_local_expert'] == true,
+      details: row['details'] as String?,
+      retakeAdvice: switch (row['retake_advice']) {
+        final Map<String, dynamic> value => ChatRetakeAdviceModel(
+          reasonCodes: _strings(value['reason_codes']),
+          instructions: _strings(value['instructions']),
+        ),
+        _ => null,
+      },
     );
   }
 }
@@ -142,6 +215,16 @@ List<Map<String, dynamic>> _list(Object? value, {required String contract}) {
     message: 'The $contract response could not be read',
   );
 }
+
+List<Map<String, dynamic>> _maps(Object? value) => switch (value) {
+  final List<dynamic> items => items.whereType<Map<String, dynamic>>().toList(),
+  _ => const [],
+};
+
+List<String> _strings(Object? value) => switch (value) {
+  final List<dynamic> items => items.whereType<String>().toList(),
+  _ => const [],
+};
 
 String _requiredString(Map<String, dynamic> row, String key) {
   final value = row[key];

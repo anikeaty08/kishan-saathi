@@ -1,6 +1,5 @@
 """Typed language-model provider contracts."""
 
-import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -8,9 +7,10 @@ from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.errors import ApplicationError
+from app.integrations.llm.safety import reject_specific_treatment
 
 
 class LLMTask(StrEnum):
@@ -42,47 +42,108 @@ class ReminderProposalDraft(BaseModel):
 class TreatmentGuidance(BaseModel):
     """General safety guidance until an authoritative local treatment source exists."""
 
-    active_ingredient: str | None = Field(default=None, max_length=200)
-    dosage: str | None = Field(default=None, max_length=300)
-    application_method: str | None = Field(default=None, max_length=500)
-    frequency: str | None = Field(default=None, max_length=300)
+    model_config = ConfigDict(extra="forbid")
+
     safety_precautions: list[str] = Field(default_factory=list, max_length=8)
     consult_local_approved_guidance: bool = True
 
-    @field_validator("safety_precautions")
+    @field_validator("safety_precautions", mode="after")
     @classmethod
     def reject_prescriptive_precautions(cls, values: list[str]) -> list[str]:
-        """Keep the safety-only field from becoming a treatment-detail escape hatch."""
-
-        prescriptive_pattern = re.compile(
-            r"(?:\b\d+(?:\.\d+)?\s*(?:mg|g|kg|ml|l)\s*(?:/|per)\s*"
-            r"(?:l|lit(?:re|er)s?|kg|acre|hectare)\b|"
-            r"\bevery\s+\d+\s*(?:hour|day|week)s?\b|"
-            r"\b(?:spray|apply|drench|inject|mix)\b)",
-            flags=re.IGNORECASE,
-        )
-        if any(prescriptive_pattern.search(value) for value in values):
-            raise ValueError("SPECIFIC_TREATMENT_SOURCE_NOT_CONFIGURED")
+        reject_specific_treatment(values)
         return values
 
-    @model_validator(mode="after")
-    def require_safety_for_specific_treatment(self) -> "TreatmentGuidance":
-        has_specifics = any(
-            (self.active_ingredient, self.dosage, self.application_method, self.frequency)
-        )
-        if has_specifics:
-            raise ValueError("SPECIFIC_TREATMENT_SOURCE_NOT_CONFIGURED")
-        return self
+
+class ReplyCertainty(StrEnum):
+    CONFIRMED_CONTEXT = "confirmed_context"
+    POSSIBLE = "possible"
+    INSUFFICIENT_CONTEXT = "insufficient_context"
+    INSUFFICIENT_IMAGE_QUALITY = "insufficient_image_quality"
+
+
+class ReplyDisposition(StrEnum):
+    """High-level response policy selected for one farmer turn."""
+
+    IN_SCOPE = "in_scope"
+    OUT_OF_SCOPE = "out_of_scope"
+
+
+class AnswerSection(BaseModel):
+    """One independently readable answer when a turn contains multiple questions."""
+
+    title: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=2000)
+
+
+class EvidenceSource(StrEnum):
+    TRAINED_LEAF_CLASSIFIER = "trained_leaf_classifier"
+    FARMER_MESSAGE = "farmer_message"
+    TRUSTED_CONTEXT = "trusted_context"
+    LINKED_WEATHER = "linked_weather"
+
+
+class EvidenceRef(BaseModel):
+    source: EvidenceSource
+    summary: str = Field(min_length=1, max_length=500)
+
+
+class RetakeAdvice(BaseModel):
+    reason_codes: list[str] = Field(default_factory=list, max_length=6)
+    instructions: list[str] = Field(default_factory=list, max_length=6)
+
+
+class DiagnosisDiscussion(BaseModel):
+    """A classifier-grounded disease reference; never a free model diagnosis."""
+
+    assessment_id: UUID
+    crop_name: str = Field(min_length=1, max_length=200)
+    disease_name: str = Field(min_length=1, max_length=300)
+    confidence_label: str = Field(min_length=1, max_length=50)
 
 
 class AssistantReply(BaseModel):
     """Structured farmer-facing response from the LLM."""
 
     short_answer: str = Field(min_length=1, max_length=3000)
+    disposition: ReplyDisposition = ReplyDisposition.IN_SCOPE
+    answer_sections: list[AnswerSection] = Field(default_factory=list, max_length=6)
     details: str | None = Field(default=None, max_length=6000)
+    explanation_points: list[str] = Field(default_factory=list, max_length=8)
+    next_steps: list[str] = Field(default_factory=list, max_length=8)
     follow_up_questions: list[str] = Field(default_factory=list, max_length=5)
+    certainty: ReplyCertainty = ReplyCertainty.POSSIBLE
+    evidence_used: list[EvidenceRef] = Field(default_factory=list, max_length=10)
+    diagnosis_discussion: DiagnosisDiscussion | None = None
+    retake_advice: RetakeAdvice | None = None
+    general_precautions: list[str] = Field(default_factory=list, max_length=8)
+    consult_local_expert: bool = False
     treatment: TreatmentGuidance | None = None
     reminder_proposal: ReminderProposalDraft | None = None
+
+    @model_validator(mode="after")
+    def reject_prescriptive_visible_text(self) -> "AssistantReply":
+        reject_specific_treatment(self)
+        if self.certainty is ReplyCertainty.INSUFFICIENT_IMAGE_QUALITY and not self.retake_advice:
+            raise ValueError("RETAKE_ADVICE_REQUIRED")
+        if self.disposition is ReplyDisposition.OUT_OF_SCOPE:
+            if any(
+                (
+                    self.answer_sections,
+                    self.explanation_points,
+                    self.next_steps,
+                    self.follow_up_questions,
+                    self.evidence_used,
+                    self.diagnosis_discussion,
+                    self.retake_advice,
+                    self.general_precautions,
+                    self.treatment,
+                    self.reminder_proposal,
+                )
+            ):
+                raise ValueError("OUT_OF_SCOPE_REPLY_MUST_BE_REDIRECT_ONLY")
+            if self.consult_local_expert:
+                raise ValueError("OUT_OF_SCOPE_REPLY_MUST_BE_REDIRECT_ONLY")
+        return self
 
 
 class MemoryCandidate(BaseModel):
@@ -105,7 +166,19 @@ class ChatRiskClassification(BaseModel):
     """Typed classification used only to choose an approved model policy."""
 
     requires_primary_model: bool
-    reason_code: str = Field(min_length=1, max_length=80)
+    is_agricultural: bool = True
+    reason_code: "ChatRiskReason"
+
+
+class ChatRiskReason(StrEnum):
+    ROUTINE = "routine"
+    SCAN_CONTEXT = "scan_context"
+    DIAGNOSIS_OR_SYMPTOMS = "diagnosis_or_symptoms"
+    TREATMENT_SAFETY = "treatment_safety"
+    FARM_OR_PLOT_CONTEXT = "farm_or_plot_context"
+    URGENT_OR_AMBIGUOUS = "urgent_or_ambiguous"
+    UNCERTAIN = "uncertain"
+    OUT_OF_SCOPE = "out_of_scope"
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +197,8 @@ class LLMRequest:
     input_text: str
     farmer_id: UUID
     tools: tuple[LLMTool, ...] = ()
+    allow_diagnosis: bool = False
+    required_disposition: ReplyDisposition | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +206,7 @@ class LLMResult:
     reply: AssistantReply
     provider_response_id: str
     model: str
+    policy_reviewed: bool
 
 
 @dataclass(frozen=True, slots=True)

@@ -2,10 +2,13 @@
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+
+from app.integrations.progression.provider import ProgressionImageQuality, ProgressionTrend
+from app.modules.users.schemas import SupportedLanguage
 
 PlantName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
 
@@ -104,3 +107,45 @@ class DiagnosisFeedbackResponse(BaseModel):
     notes: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class ProgressionComparisonRequest(BaseModel):
+    """Select two timepoints, or omit both to compare the latest two."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    earlier_assessment_id: UUID | None = None
+    later_assessment_id: UUID | None = None
+    response_language: SupportedLanguage = SupportedLanguage.ENGLISH
+
+    @model_validator(mode="after")
+    def validate_selection(self) -> Self:
+        selected = self.earlier_assessment_id is not None
+        if selected != (self.later_assessment_id is not None):
+            raise ValueError("PROGRESSION_BOTH_ASSESSMENTS_REQUIRED")
+        if selected and self.earlier_assessment_id == self.later_assessment_id:
+            raise ValueError("PROGRESSION_DISTINCT_ASSESSMENTS_REQUIRED")
+        return self
+
+
+class ProgressionComparisonResponse(BaseModel):
+    """Farmer-visible visual comparison, explicitly separate from diagnosis."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    case_id: UUID
+    earlier_assessment_id: UUID
+    later_assessment_id: UUID
+    earlier_captured_at: datetime
+    later_captured_at: datetime
+    earlier_image_ids: list[UUID] = Field(min_length=1, max_length=6)
+    later_image_ids: list[UUID] = Field(min_length=1, max_length=6)
+    trend: ProgressionTrend
+    confidence: float = Field(ge=0, le=1)
+    summary: str
+    evidence: list[str]
+    limitations: list[str]
+    image_quality: ProgressionImageQuality
+    model_name: str
+    generated_at: datetime
+    scope: Literal["visible_symptom_progression_only"] = "visible_symptom_progression_only"

@@ -14,14 +14,22 @@ class Mem0MemoryProvider(MemoryProvider):
     """Use one Mem0 entity plus metadata to isolate farmer workspace memories."""
 
     def __init__(self, api_key: str, *, client: MemoryClient | None = None) -> None:
-        self._client = client or MemoryClient(api_key=api_key)
+        self._api_key = api_key
+        self._client: MemoryClient | None = client
+
+    def _sdk(self) -> MemoryClient:
+        """Construct lazily so importing the FastAPI app never performs network I/O."""
+
+        if self._client is None:
+            self._client = MemoryClient(api_key=self._api_key)
+        return self._client
 
     async def search(
         self, *, scope: MemoryScope, query: str, limit: int
     ) -> tuple[MemoryFact, ...]:
         try:
             payload = await asyncio.to_thread(
-                self._client.search,
+                self._sdk().search,
                 query,
                 filters=self._scope_filters(scope),
                 top_k=limit,
@@ -41,7 +49,7 @@ class Mem0MemoryProvider(MemoryProvider):
 
         try:
             existing = await asyncio.to_thread(
-                self._client.get_all,
+                self._sdk().get_all,
                 filters=self._fact_filters(scope, canonical_fact_id),
                 page=1,
                 page_size=2,
@@ -50,7 +58,7 @@ class Mem0MemoryProvider(MemoryProvider):
             if facts:
                 return facts[0]
             payload = await asyncio.to_thread(
-                self._client.add,
+                self._sdk().add,
                 text,
                 user_id=str(scope.farmer_id),
                 metadata={
@@ -69,7 +77,7 @@ class Mem0MemoryProvider(MemoryProvider):
 
     async def delete_fact(self, *, memory_id: str) -> None:
         try:
-            await asyncio.to_thread(self._client.delete, memory_id=memory_id)
+            await asyncio.to_thread(self._sdk().delete, memory_id=memory_id)
         except Exception as exc:
             if type(exc).__name__ == "MemoryNotFoundError":
                 return

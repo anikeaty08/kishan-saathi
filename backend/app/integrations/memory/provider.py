@@ -49,9 +49,7 @@ class MemoryProvider(Protocol):
 class UnavailableMemoryProvider:
     """Degrade retrieval, while making requested writes fail honestly."""
 
-    async def search(
-        self, *, scope: MemoryScope, query: str, limit: int
-    ) -> tuple[MemoryFact, ...]:
+    async def search(self, *, scope: MemoryScope, query: str, limit: int) -> tuple[MemoryFact, ...]:
         del scope, query, limit
         return ()
 

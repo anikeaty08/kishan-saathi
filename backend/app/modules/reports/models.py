@@ -12,9 +12,7 @@ from app.database.base import Base
 class DiagnosisReport(Base):
     __tablename__ = "diagnosis_reports"
     __table_args__ = (
-        CheckConstraint(
-            "status IN ('active', 'revoked')", name="ck_diagnosis_reports_status"
-        ),
+        CheckConstraint("status IN ('active', 'revoked')", name="ck_diagnosis_reports_status"),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -30,12 +28,8 @@ class DiagnosisReport(Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     status: Mapped[str] = mapped_column(String(16), default="active", index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    revoked_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class DiagnosisReportImage(Base):
@@ -53,6 +47,4 @@ class DiagnosisReportImage(Base):
     )
     object_key: Mapped[str] = mapped_column(String(512), unique=True)
     size_bytes: Mapped[int] = mapped_column(Integer)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

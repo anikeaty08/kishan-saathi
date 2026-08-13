@@ -15,18 +15,14 @@ class _GeocodingEnvelope(BaseModel):
 
 
 class OpenMeteoGeocodingProvider:
-    def __init__(
-        self, settings: Settings, *, client: httpx.AsyncClient | None = None
-    ) -> None:
+    def __init__(self, settings: Settings, *, client: httpx.AsyncClient | None = None) -> None:
         self._client = client or httpx.AsyncClient(
             base_url=settings.open_meteo_geocoding_base_url,
             timeout=settings.external_request_timeout_seconds,
         )
         self._owns_client = client is None
 
-    async def search(
-        self, *, query: str, language: str, limit: int
-    ) -> tuple[GeocodingResult, ...]:
+    async def search(self, *, query: str, language: str, limit: int) -> tuple[GeocodingResult, ...]:
         try:
             response = await self._client.get(
                 "/search",

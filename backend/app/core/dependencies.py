@@ -9,8 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.errors import ApplicationError
+from app.core.rate_limits import PaidOperationRateLimiter
 from app.core.security import AuthContext
 from app.database.session import DatabasePort
+from app.integrations.audio.provider import AudioProvider
 from app.integrations.auth.provider import AuthProvider
 from app.integrations.geocoding.provider import GeocodingProvider
 from app.integrations.inference.provider import LeafInferenceProvider
@@ -63,6 +65,14 @@ def get_memory_provider(request: Request) -> MemoryProvider:
 
 def get_progression_provider(request: Request) -> ProgressionProvider:
     return cast(ProgressionProvider, request.app.state.progression_provider)
+
+
+def get_audio_provider(request: Request) -> AudioProvider:
+    return cast(AudioProvider, request.app.state.audio_provider)
+
+
+def get_paid_operation_rate_limiter(request: Request) -> PaidOperationRateLimiter:
+    return cast(PaidOperationRateLimiter, request.app.state.paid_operation_rate_limiter)
 
 
 def get_current_weather_provider(request: Request) -> CurrentWeatherProvider:

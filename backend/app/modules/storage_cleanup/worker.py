@@ -28,9 +28,7 @@ class ObjectCleanupWorker:
 
     async def start(self) -> None:
         if self._task is None:
-            self._task = asyncio.create_task(
-                self._run(), name="object-cleanup-worker"
-            )
+            self._task = asyncio.create_task(self._run(), name="object-cleanup-worker")
 
     async def stop(self) -> None:
         self._stop.set()
@@ -47,21 +45,15 @@ class ObjectCleanupWorker:
                     processed = await ObjectCleanupService(
                         session,
                         self._storage,
-                        backoff_base_seconds=(
-                            self._settings.object_cleanup_backoff_base_seconds
-                        ),
-                        backoff_max_seconds=(
-                            self._settings.object_cleanup_backoff_max_seconds
-                        ),
+                        backoff_base_seconds=(self._settings.object_cleanup_backoff_base_seconds),
+                        backoff_max_seconds=(self._settings.object_cleanup_backoff_max_seconds),
                     ).process_due(limit=self._settings.object_cleanup_batch_size)
                 if processed:
                     self._logger.info("object_cleanup.batch_processed", jobs=processed)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self._logger.warning(
-                    "object_cleanup.worker_failed", error_type=type(exc).__name__
-                )
+                self._logger.warning("object_cleanup.worker_failed", error_type=type(exc).__name__)
             with suppress(TimeoutError):
                 await asyncio.wait_for(
                     self._stop.wait(),

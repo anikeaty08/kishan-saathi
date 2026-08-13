@@ -154,9 +154,7 @@ class ReportService:
             **(await self._response(report)).model_dump(), share_token=token
         )
 
-    async def list_for_case(
-        self, farmer_id: UUID, case_id: UUID
-    ) -> list[DiagnosisReportResponse]:
+    async def list_for_case(self, farmer_id: UUID, case_id: UUID) -> list[DiagnosisReportResponse]:
         if await self._diagnoses.get_case(farmer_id, case_id) is None:
             raise ApplicationError(code="DIAGNOSIS_CASE_NOT_FOUND", status_code=404)
         return [
@@ -188,29 +186,21 @@ class ReportService:
             images=[ReportImageResponse.model_validate(image) for image in images],
         )
 
-    async def owner_image(
-        self, farmer_id: UUID, report_id: UUID, image_id: UUID
-    ) -> bytes:
+    async def owner_image(self, farmer_id: UUID, report_id: UUID, image_id: UUID) -> bytes:
         report = await self._repository.get(farmer_id, report_id)
         if report is None:
             raise ApplicationError(code="REPORT_NOT_FOUND", status_code=404)
         image = await self._repository.get_image(report.id, image_id)
         if image is None:
             raise ApplicationError(code="REPORT_IMAGE_NOT_FOUND", status_code=404)
-        return await self._storage.read_private(
-            owner_id=farmer_id, key=image.object_key
-        )
+        return await self._storage.read_private(owner_id=farmer_id, key=image.object_key)
 
-    async def public_image(
-        self, report_id: UUID, token: str, image_id: UUID
-    ) -> bytes:
+    async def public_image(self, report_id: UUID, token: str, image_id: UUID) -> bytes:
         report = await self._public_report(report_id, token)
         image = await self._repository.get_image(report.id, image_id)
         if image is None:
             raise ApplicationError(code="REPORT_IMAGE_NOT_FOUND", status_code=404)
-        return await self._storage.read_private(
-            owner_id=report.farmer_id, key=image.object_key
-        )
+        return await self._storage.read_private(owner_id=report.farmer_id, key=image.object_key)
 
     async def _public_report(self, report_id: UUID, token: str) -> DiagnosisReport:
         if len(token) < 32:

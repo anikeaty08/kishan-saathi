@@ -7,8 +7,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile, status
 
 from app.core.config import Settings
-from app.core.dependencies import get_app_settings
+from app.core.dependencies import get_app_settings, get_paid_operation_rate_limiter
 from app.core.errors import ApplicationError
+from app.core.rate_limits import PaidOperationRateLimiter
 from app.modules.diagnoses.dependencies import (
     get_diagnosis_progression_service,
     get_diagnosis_service,
@@ -109,10 +110,12 @@ async def compare_diagnosis_progression(
     selection: ProgressionComparisonRequest,
     farmer_id: FarmerId,
     service: ProgressionService,
+    limiter: Annotated[PaidOperationRateLimiter, Depends(get_paid_operation_rate_limiter)],
 ) -> ProgressionComparisonResponse:
     """Compare visible symptom change without changing or replacing diagnosis."""
 
-    return await service.compare(farmer_id, case_id, selection)
+    async with limiter.request(farmer_id, "progression"):
+        return await service.compare(farmer_id, case_id, selection)
 
 
 @router.get("/{case_id}/assessments", response_model=list[AssessmentHistoryResponse])

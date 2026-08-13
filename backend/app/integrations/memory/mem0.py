@@ -24,9 +24,7 @@ class Mem0MemoryProvider(MemoryProvider):
             self._client = MemoryClient(api_key=self._api_key)
         return self._client
 
-    async def search(
-        self, *, scope: MemoryScope, query: str, limit: int
-    ) -> tuple[MemoryFact, ...]:
+    async def search(self, *, scope: MemoryScope, query: str, limit: int) -> tuple[MemoryFact, ...]:
         try:
             payload = await asyncio.to_thread(
                 self._sdk().search,
@@ -96,9 +94,7 @@ class Mem0MemoryProvider(MemoryProvider):
         }
 
     @classmethod
-    def _fact_filters(
-        cls, scope: MemoryScope, canonical_fact_id: UUID
-    ) -> dict[str, Any]:
+    def _fact_filters(cls, scope: MemoryScope, canonical_fact_id: UUID) -> dict[str, Any]:
         return {
             "AND": [
                 {"user_id": str(scope.farmer_id)},

@@ -326,6 +326,8 @@ async def test_general_and_plot_chats_use_distinct_context_and_models() -> None:
     plot_input = json.loads(plot_request.input_text)
     assert general_input["verified_context"] == []
     assert general_input["untrusted_context"] == []
+    assert not general_request.allow_diagnosis
+    assert plot_request.allow_diagnosis
     assert "Tomato Plot" not in general_request.input_text
     assert "Tomato Plot" in plot_request.input_text
     classifier_records = [

@@ -15,9 +15,7 @@ class MemoryDiagnosisContextCleaner:
         self._provider = provider
 
     async def delete_scan_context(self, farmer_id: UUID, case_id: UUID) -> None:
-        facts = await self._repository.list_diagnosis_facts(
-            farmer_id, case_id, for_update=True
-        )
+        facts = await self._repository.list_diagnosis_facts(farmer_id, case_id, for_update=True)
         for fact in facts:
             fact.index_status = "deleting"
         if facts:

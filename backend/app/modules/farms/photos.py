@@ -24,9 +24,7 @@ class ActivityPhotoService:
         self._repository = repository
         self._storage = storage
         self._cleanup = cleanup
-        self._preprocessor = ImagePreprocessor(
-            settings, error_prefix="ACTIVITY_PHOTO"
-        )
+        self._preprocessor = ImagePreprocessor(settings, error_prefix="ACTIVITY_PHOTO")
 
     async def add(
         self, farmer_id: UUID, activity_id: UUID, content: bytes
@@ -51,42 +49,28 @@ class ActivityPhotoService:
             await self._repository.commit()
         except Exception:
             await self._repository.session.rollback()
-            job = self._cleanup.enqueue(
-                farmer_id, stored.key, "activity_photo_create_rollback"
-            )
+            job = self._cleanup.enqueue(farmer_id, stored.key, "activity_photo_create_rollback")
             await self._repository.commit()
             await self._cleanup.process([job.id])
             raise
         await self._repository.refresh(photo)
         return ActivityPhotoResponse.model_validate(photo)
 
-    async def list(
-        self, farmer_id: UUID, activity_id: UUID
-    ) -> list[ActivityPhotoResponse]:
+    async def list(self, farmer_id: UUID, activity_id: UUID) -> list[ActivityPhotoResponse]:
         await self._activity(farmer_id, activity_id)
         return [
             ActivityPhotoResponse.model_validate(photo)
-            for photo in await self._repository.list_activity_photos(
-                farmer_id, activity_id
-            )
+            for photo in await self._repository.list_activity_photos(farmer_id, activity_id)
         ]
 
-    async def read(
-        self, farmer_id: UUID, activity_id: UUID, photo_id: UUID
-    ) -> bytes:
+    async def read(self, farmer_id: UUID, activity_id: UUID, photo_id: UUID) -> bytes:
         photo = await self._photo(farmer_id, activity_id, photo_id)
-        return await self._storage.read_private(
-            owner_id=farmer_id, key=photo.object_key
-        )
+        return await self._storage.read_private(owner_id=farmer_id, key=photo.object_key)
 
-    async def delete(
-        self, farmer_id: UUID, activity_id: UUID, photo_id: UUID
-    ) -> None:
+    async def delete(self, farmer_id: UUID, activity_id: UUID, photo_id: UUID) -> None:
         photo = await self._photo(farmer_id, activity_id, photo_id)
         object_key = photo.object_key
-        job = self._cleanup.enqueue(
-            farmer_id, object_key, "activity_photo_deleted"
-        )
+        job = self._cleanup.enqueue(farmer_id, object_key, "activity_photo_deleted")
         await self._repository.delete(photo)
         await self._repository.commit()
         await self._cleanup.process([job.id])
@@ -97,9 +81,7 @@ class ActivityPhotoService:
             raise ApplicationError(code="ACTIVITY_NOT_FOUND", status_code=404)
         photos = await self._repository.list_activity_photos(farmer_id, activity_id)
         jobs = [
-            self._cleanup.enqueue(
-                farmer_id, photo.object_key, "activity_deleted"
-            )
+            self._cleanup.enqueue(farmer_id, photo.object_key, "activity_deleted")
             for photo in photos
         ]
         await self._repository.delete(activity)
@@ -110,13 +92,9 @@ class ActivityPhotoService:
         if await self._repository.get_activity(farmer_id, activity_id) is None:
             raise ApplicationError(code="ACTIVITY_NOT_FOUND", status_code=404)
 
-    async def _photo(
-        self, farmer_id: UUID, activity_id: UUID, photo_id: UUID
-    ) -> ActivityPhoto:
+    async def _photo(self, farmer_id: UUID, activity_id: UUID, photo_id: UUID) -> ActivityPhoto:
         await self._activity(farmer_id, activity_id)
-        photo = await self._repository.get_activity_photo(
-            farmer_id, activity_id, photo_id
-        )
+        photo = await self._repository.get_activity_photo(farmer_id, activity_id, photo_id)
         if photo is None:
             raise ApplicationError(code="ACTIVITY_PHOTO_NOT_FOUND", status_code=404)
         return photo

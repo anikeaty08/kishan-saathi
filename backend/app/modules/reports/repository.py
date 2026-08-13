@@ -27,9 +27,7 @@ class ReportRepository:
         )
         return result.scalar_one_or_none()
 
-    async def list_for_case(
-        self, farmer_id: UUID, case_id: UUID
-    ) -> list[DiagnosisReport]:
+    async def list_for_case(self, farmer_id: UUID, case_id: UUID) -> list[DiagnosisReport]:
         result = await self.session.scalars(
             select(DiagnosisReport)
             .where(
@@ -40,9 +38,7 @@ class ReportRepository:
         )
         return list(result)
 
-    async def list_images(
-        self, report_id: UUID
-    ) -> list[DiagnosisReportImage]:
+    async def list_images(self, report_id: UUID) -> list[DiagnosisReportImage]:
         result = await self.session.scalars(
             select(DiagnosisReportImage)
             .where(DiagnosisReportImage.report_id == report_id)
@@ -50,9 +46,7 @@ class ReportRepository:
         )
         return list(result)
 
-    async def get_image(
-        self, report_id: UUID, image_id: UUID
-    ) -> DiagnosisReportImage | None:
+    async def get_image(self, report_id: UUID, image_id: UUID) -> DiagnosisReportImage | None:
         result = await self.session.execute(
             select(DiagnosisReportImage).where(
                 DiagnosisReportImage.id == image_id,

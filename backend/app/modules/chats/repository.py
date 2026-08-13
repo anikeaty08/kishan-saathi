@@ -208,6 +208,16 @@ class ChatRepository:
         )
         return int(value or 0) + 1
 
+    async def pending_turn_count(self, farmer_id: UUID, chat_id: UUID) -> int:
+        value = await self.session.scalar(
+            select(func.count(ChatTurn.id)).where(
+                ChatTurn.farmer_id == farmer_id,
+                ChatTurn.chat_id == chat_id,
+                ChatTurn.status.in_(("queued", "processing")),
+            )
+        )
+        return int(value or 0)
+
     async def get_claimed_turn(
         self, turn_id: UUID, lease_token: UUID, *, for_update: bool = False
     ) -> ChatTurn | None:
@@ -234,9 +244,7 @@ class ChatRepository:
         )
         if active_only:
             statement = statement.where(ChatTurn.status.in_(("queued", "processing")))
-        values = await self.session.scalars(
-            statement.order_by(ChatTurn.sequence).limit(limit)
-        )
+        values = await self.session.scalars(statement.order_by(ChatTurn.sequence).limit(limit))
         return list(values)
 
     async def queue_position(self, turn: ChatTurn) -> int | None:

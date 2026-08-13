@@ -6,6 +6,7 @@ from uuid import UUID
 from app.core.config import Settings
 from app.core.errors import ApplicationError
 from app.integrations.progression.provider import (
+    ProgressionDiagnosisContext,
     ProgressionImage,
     ProgressionProvider,
     ProgressionRequest,
@@ -16,6 +17,7 @@ from app.modules.diagnoses.repository import DiagnosisRepository
 from app.modules.diagnoses.schemas import (
     ProgressionComparisonRequest,
     ProgressionComparisonResponse,
+    ProgressionDiagnosisContextResponse,
 )
 
 _BLOCKING_QUALITY_FLAGS = frozenset(
@@ -58,9 +60,7 @@ class DiagnosisProgressionService:
             raise ApplicationError(code="DIAGNOSIS_CASE_NOT_FOUND", status_code=404)
 
         earlier, later = await self._timepoints(farmer_id, case_id, selection)
-        earlier_images = await self._repository.assessment_images(
-            farmer_id, case_id, earlier.id
-        )
+        earlier_images = await self._repository.assessment_images(farmer_id, case_id, earlier.id)
         later_images = await self._repository.assessment_images(farmer_id, case_id, later.id)
         earlier_images = self._usable_timepoint_images(earlier_images, "EARLIER")
         later_images = self._usable_timepoint_images(later_images, "LATER")
@@ -91,6 +91,12 @@ class DiagnosisProgressionService:
                 earlier_images=earlier_payload,
                 later_images=later_payload,
                 response_language=selection.response_language.value,
+                classifier_context=ProgressionDiagnosisContext(
+                    assessment_id=later.id,
+                    crop_name=later.predicted_crop,
+                    disease_name=later.primary_disease,
+                    confidence_label=later.confidence_label,
+                ),
             )
         )
         return ProgressionComparisonResponse(
@@ -103,10 +109,16 @@ class DiagnosisProgressionService:
             later_image_ids=[item.id for item in later_images],
             trend=result.analysis.trend,
             confidence=result.analysis.confidence,
-            summary=result.analysis.summary,
-            evidence=result.analysis.evidence,
-            limitations=result.analysis.limitations,
+            evidence=[item.value for item in result.analysis.evidence],
+            limitations=[item.value for item in result.analysis.limitations],
+            recommendations=[item.value for item in result.analysis.recommendations],
             image_quality=result.analysis.image_quality,
+            diagnosis_context=ProgressionDiagnosisContextResponse(
+                assessment_id=later.id,
+                crop_name=later.predicted_crop,
+                disease_name=later.primary_disease,
+                confidence_label=later.confidence_label,
+            ),
             model_name=result.model,
             generated_at=datetime.now(tz=UTC),
         )
@@ -135,9 +147,7 @@ class DiagnosisProgressionService:
             )
             valid: list[tuple[datetime, DiagnosisAssessment]] = []
             for assessment in newest:
-                images = await self._repository.assessment_images(
-                    farmer_id, case_id, assessment.id
-                )
+                images = await self._repository.assessment_images(farmer_id, case_id, assessment.id)
                 if images:
                     valid.append(
                         (

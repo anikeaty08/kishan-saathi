@@ -45,6 +45,10 @@ class HealthService:
             "memory": bool(self._settings.mem0_api_key),
             "current_weather": self._settings.openweather_configured,
             "leaf_inference": self._leaf_inference_available,
+            "object_storage": (
+                self._settings.storage_backend == "local"
+                or bool(self._settings.s3_bucket and self._settings.s3_expected_bucket_owner)
+            ),
         }
         checks = {
             name: DependencyCheck(

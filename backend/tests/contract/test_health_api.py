@@ -77,6 +77,7 @@ async def test_readiness_reports_available_database() -> None:
         "memory": {"status": "down"},
         "current_weather": {"status": "down"},
         "leaf_inference": {"status": "down"},
+        "object_storage": {"status": "up"},
     }
     assert database.ping_count == 1
 

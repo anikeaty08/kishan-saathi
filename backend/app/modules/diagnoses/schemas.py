@@ -128,8 +128,19 @@ class ProgressionComparisonRequest(BaseModel):
         return self
 
 
+class ProgressionDiagnosisContextResponse(BaseModel):
+    """Backend-owned trained-classifier context shown with progression output."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    assessment_id: UUID
+    crop_name: str
+    disease_name: str
+    confidence_label: str
+
+
 class ProgressionComparisonResponse(BaseModel):
-    """Farmer-visible visual comparison, explicitly separate from diagnosis."""
+    """Farmer-visible comparison with backend-owned diagnosis context."""
 
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
@@ -142,10 +153,11 @@ class ProgressionComparisonResponse(BaseModel):
     later_image_ids: list[UUID] = Field(min_length=1, max_length=6)
     trend: ProgressionTrend
     confidence: float = Field(ge=0, le=1)
-    summary: str
     evidence: list[str]
     limitations: list[str]
+    recommendations: list[str] = Field(default_factory=list)
     image_quality: ProgressionImageQuality
+    diagnosis_context: ProgressionDiagnosisContextResponse | None = None
     model_name: str
     generated_at: datetime
     scope: Literal["visible_symptom_progression_only"] = "visible_symptom_progression_only"

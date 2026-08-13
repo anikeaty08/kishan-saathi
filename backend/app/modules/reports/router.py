@@ -31,9 +31,7 @@ async def create_report(
     return await service.create(farmer_id, case_id, data)
 
 
-@router.get(
-    "/diagnoses/{case_id}/reports", response_model=list[DiagnosisReportResponse]
-)
+@router.get("/diagnoses/{case_id}/reports", response_model=list[DiagnosisReportResponse])
 async def list_reports(
     case_id: UUID, farmer_id: FarmerId, service: Service
 ) -> list[DiagnosisReportResponse]:
@@ -64,9 +62,7 @@ async def owner_report_image(
 ShareToken = Annotated[str, Header(alias="X-Report-Token", min_length=32, max_length=128)]
 
 
-@router.get(
-    "/shared/diagnosis-reports/{report_id}", response_model=PublicDiagnosisReport
-)
+@router.get("/shared/diagnosis-reports/{report_id}", response_model=PublicDiagnosisReport)
 async def public_report(
     report_id: UUID, token: ShareToken, service: Service, response: Response
 ) -> PublicDiagnosisReport:

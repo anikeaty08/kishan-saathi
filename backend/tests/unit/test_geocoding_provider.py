@@ -35,9 +35,7 @@ async def test_open_meteo_geocoding_maps_location_results() -> None:
     client = httpx.AsyncClient(
         transport=httpx.MockTransport(handler), base_url="https://geocoding.test"
     )
-    provider = OpenMeteoGeocodingProvider(
-        Settings(_env_file=None), client=client
-    )
+    provider = OpenMeteoGeocodingProvider(Settings(_env_file=None), client=client)
     try:
         results = await provider.search(query="Pune", language="mr", limit=5)
     finally:

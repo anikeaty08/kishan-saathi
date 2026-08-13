@@ -19,8 +19,11 @@ from app.core.errors import ApplicationError
 from app.database.base import Base
 from app.integrations.progression.provider import (
     ProgressionAnalysis,
+    ProgressionEvidenceCode,
     ProgressionImageQuality,
+    ProgressionLimitationCode,
     ProgressionProvider,
+    ProgressionRecommendationCode,
     ProgressionRequest,
     ProgressionResult,
     ProgressionTrend,
@@ -52,9 +55,9 @@ class RecordingProgressionProvider(ProgressionProvider):
             analysis=ProgressionAnalysis(
                 trend=ProgressionTrend.IMPROVING,
                 confidence=0.81,
-                summary="Visible affected area is smaller.",
-                evidence=["The later leaf has less brown surface."],
-                limitations=["Camera angle changed slightly."],
+                evidence=[ProgressionEvidenceCode.AFFECTED_AREA_REDUCED],
+                limitations=[ProgressionLimitationCode.DIFFERENT_VIEWPOINT],
+                recommendations=[ProgressionRecommendationCode.MONITOR_SAME_LEAF],
                 image_quality=ProgressionImageQuality(sufficient_for_comparison=True),
             ),
             provider_response_id="resp_test",
@@ -86,6 +89,11 @@ async def test_progression_success_uses_two_batches_without_diagnosis_labels(
     assert len(context.provider.requests) == 1
     request = context.provider.requests[0]
     assert request.response_language == "hi"
+    assert request.classifier_context is not None
+    assert request.classifier_context.crop_name == "Tomato"
+    assert response.diagnosis_context is not None
+    assert response.diagnosis_context.crop_name == "Tomato"
+    assert response.recommendations == ["monitor_same_leaf"]
     assert request.earlier_images[0].content != request.later_images[0].content
 
 
@@ -210,9 +218,7 @@ async def _add_timepoint(
     data = BytesIO()
     Image.new("RGB", (256, 256), color=color).save(data, format="JPEG")
     content = data.getvalue()
-    stored = await storage.put_private_image(
-        owner_id=FARMER, category="diagnoses", content=content
-    )
+    stored = await storage.put_private_image(owner_id=FARMER, category="diagnoses", content=content)
     image_id, assessment_id = uuid4(), uuid4()
     session.add(
         DiagnosisImage(

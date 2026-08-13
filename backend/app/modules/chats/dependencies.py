@@ -88,4 +88,5 @@ def build_chat_service(
             llm=LLMRouter(llm_provider, settings),
             max_capture_attempts=settings.memory_capture_max_attempts,
         ),
+        max_pending_turns=settings.chat_max_pending_turns,
     )

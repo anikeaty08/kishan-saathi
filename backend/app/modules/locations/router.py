@@ -25,8 +25,4 @@ async def search_locations(
     normalized_query = query.strip()
     if len(normalized_query) < 2:
         raise ApplicationError(code="GEOCODING_QUERY_INVALID", status_code=422)
-    return list(
-        await provider.search(
-            query=normalized_query, language=language.value, limit=limit
-        )
-    )
+    return list(await provider.search(query=normalized_query, language=language.value, limit=limit))

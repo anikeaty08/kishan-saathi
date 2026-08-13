@@ -125,7 +125,5 @@ async def test_report_is_approved_snapshot_and_revocable(tmp_path: Path) -> None
 
 def _image() -> bytes:
     value = BytesIO()
-    Image.new("RGB", (200, 200), color=(30, 130, 40)).save(
-        value, format="JPEG"
-    )
+    Image.new("RGB", (200, 200), color=(30, 130, 40)).save(value, format="JPEG")
     return value.getvalue()

@@ -27,18 +27,20 @@ class CognitoAuthProvider:
         self._region = settings.aws_region
         self._pool_id = settings.cognito_user_pool_id
         self._client_id = settings.cognito_app_client_id
-        self._issuer = (
-            f"https://cognito-idp.{self._region}.amazonaws.com/{self._pool_id}"
-        )
+        self._issuer = f"https://cognito-idp.{self._region}.amazonaws.com/{self._pool_id}"
         self._jwks_url = f"{self._issuer}/.well-known/jwks.json"
         self._identity_url = f"https://cognito-idp.{self._region}.amazonaws.com/"
         self._jwks_ttl = settings.cognito_jwks_cache_seconds
+        self._jwks_min_refresh = settings.cognito_jwks_min_refresh_seconds
+        self._jwks_max_bytes = settings.cognito_jwks_max_bytes
         self._http = http_client or httpx.AsyncClient(
             timeout=settings.external_request_timeout_seconds
         )
         self._owns_http_client = http_client is None
         self._jwks_by_kid: dict[str, dict[str, Any]] = {}
         self._jwks_expires_at = 0.0
+        self._jwks_last_refresh_at = 0.0
+        self._unknown_kids: dict[str, float] = {}
         self._jwks_lock = asyncio.Lock()
 
     async def verify_access_token(self, access_token: str) -> AuthenticatedPrincipal:
@@ -140,12 +142,17 @@ class CognitoAuthProvider:
             await self._http.aclose()
 
     async def _jwk_for_kid(self, kid: str) -> dict[str, Any]:
+        now = time.monotonic()
+        unknown_until = self._unknown_kids.get(kid, 0)
+        if unknown_until > now:
+            raise ApplicationError(code="AUTH_TOKEN_INVALID", status_code=401)
         keys = await self._get_jwks(force_refresh=False)
         key = keys.get(kid)
-        if key is None:
+        if key is None and now - self._jwks_last_refresh_at >= self._jwks_min_refresh:
             keys = await self._get_jwks(force_refresh=True)
             key = keys.get(kid)
         if key is None:
+            self._unknown_kids[kid] = time.monotonic() + self._jwks_min_refresh
             raise ApplicationError(code="AUTH_TOKEN_INVALID", status_code=401)
         return key
 
@@ -161,6 +168,8 @@ class CognitoAuthProvider:
             try:
                 response = await self._http.get(self._jwks_url)
                 response.raise_for_status()
+                if len(response.content) > self._jwks_max_bytes:
+                    raise ValueError("JWKS_RESPONSE_TOO_LARGE")
                 payload = response.json()
                 keys = payload["keys"]
                 parsed = {
@@ -176,5 +185,8 @@ class CognitoAuthProvider:
             if not parsed:
                 raise ApplicationError(code="AUTH_PROVIDER_UNAVAILABLE", status_code=503)
             self._jwks_by_kid = parsed
-            self._jwks_expires_at = time.monotonic() + self._jwks_ttl
+            refreshed_at = time.monotonic()
+            self._jwks_last_refresh_at = refreshed_at
+            self._jwks_expires_at = refreshed_at + self._jwks_ttl
+            self._unknown_kids.clear()
             return self._jwks_by_kid

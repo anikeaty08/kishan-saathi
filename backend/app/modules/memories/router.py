@@ -5,6 +5,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response, status
 
+from app.core.dependencies import get_paid_operation_rate_limiter
+from app.core.rate_limits import PaidOperationRateLimiter
 from app.modules.memories.dependencies import get_memory_service
 from app.modules.memories.schemas import (
     ChatMemoryConnectionCreate,
@@ -30,8 +32,10 @@ async def connect_general_chat(
     data: ChatMemoryConnectionCreate,
     farmer_id: FarmerId,
     service: Service,
+    limiter: Annotated[PaidOperationRateLimiter, Depends(get_paid_operation_rate_limiter)],
 ) -> ChatMemoryConnectionResponse:
-    return await service.connect_chat(farmer_id, chat_id, data)
+    async with limiter.request(farmer_id, "memory_connection"):
+        return await service.connect_chat(farmer_id, chat_id, data)
 
 
 @router.get("/farms/{farm_id}/memories", response_model=list[MemoryFactResponse])

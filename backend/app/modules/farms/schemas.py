@@ -58,17 +58,17 @@ class PlotCreate(BaseModel):
     farm_id: UUID | None = None
     latitude: Decimal = Field(ge=-90, le=90, max_digits=9, decimal_places=6)
     longitude: Decimal = Field(ge=-180, le=180, max_digits=9, decimal_places=6)
-    location_label: Annotated[
-        str, StringConstraints(strip_whitespace=True, max_length=255)
-    ] | None = None
+    location_label: (
+        Annotated[str, StringConstraints(strip_whitespace=True, max_length=255)] | None
+    ) = None
     area_value: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=3)
     area_unit: AreaUnit | None = None
-    soil_notes: Annotated[
-        str, StringConstraints(strip_whitespace=True, max_length=2000)
-    ] | None = None
-    irrigation_details: Annotated[
-        str, StringConstraints(strip_whitespace=True, max_length=2000)
-    ] | None = None
+    soil_notes: Annotated[str, StringConstraints(strip_whitespace=True, max_length=2000)] | None = (
+        None
+    )
+    irrigation_details: (
+        Annotated[str, StringConstraints(strip_whitespace=True, max_length=2000)] | None
+    ) = None
     crops: list[CropCreate] = Field(min_length=1, max_length=20)
 
     @model_validator(mode="after")
@@ -84,17 +84,17 @@ class PlotUpdate(BaseModel):
     farm_id: UUID | None = None
     latitude: Decimal | None = Field(default=None, ge=-90, le=90, max_digits=9, decimal_places=6)
     longitude: Decimal | None = Field(default=None, ge=-180, le=180, max_digits=9, decimal_places=6)
-    location_label: Annotated[
-        str, StringConstraints(strip_whitespace=True, max_length=255)
-    ] | None = None
+    location_label: (
+        Annotated[str, StringConstraints(strip_whitespace=True, max_length=255)] | None
+    ) = None
     area_value: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=3)
     area_unit: AreaUnit | None = None
-    soil_notes: Annotated[
-        str, StringConstraints(strip_whitespace=True, max_length=2000)
-    ] | None = None
-    irrigation_details: Annotated[
-        str, StringConstraints(strip_whitespace=True, max_length=2000)
-    ] | None = None
+    soil_notes: Annotated[str, StringConstraints(strip_whitespace=True, max_length=2000)] | None = (
+        None
+    )
+    irrigation_details: (
+        Annotated[str, StringConstraints(strip_whitespace=True, max_length=2000)] | None
+    ) = None
 
     @model_validator(mode="after")
     def require_non_null_changes(self) -> Self:
@@ -143,10 +143,7 @@ class CropUpdate(BaseModel):
     def require_change(self) -> Self:
         if not self.model_fields_set:
             raise ValueError("CROP_UPDATE_EMPTY")
-        if any(
-            getattr(self, field) is None
-            for field in self.model_fields_set & {"name", "stage"}
-        ):
+        if any(getattr(self, field) is None for field in self.model_fields_set & {"name", "stage"}):
             raise ValueError("CROP_REQUIRED_FIELD_NULL")
         return self
 
@@ -166,9 +163,10 @@ class ActivityCreate(BaseModel):
 
 class ActivityUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    title: Annotated[
-        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=150)
-    ] | None = None
+    title: (
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=150)]
+        | None
+    ) = None
     notes: Annotated[str, StringConstraints(strip_whitespace=True, max_length=4000)] | None = None
     occurred_at: datetime | None = None
 

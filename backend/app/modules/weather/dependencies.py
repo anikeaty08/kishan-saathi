@@ -21,12 +21,8 @@ from app.modules.weather.service import WeatherService
 def get_weather_service(
     settings: Annotated[Settings, Depends(get_app_settings)],
     session: Annotated[AsyncSession, Depends(get_db_session)],
-    current_provider: Annotated[
-        CurrentWeatherProvider, Depends(get_current_weather_provider)
-    ],
-    forecast_provider: Annotated[
-        ForecastWeatherProvider, Depends(get_forecast_weather_provider)
-    ],
+    current_provider: Annotated[CurrentWeatherProvider, Depends(get_current_weather_provider)],
+    forecast_provider: Annotated[ForecastWeatherProvider, Depends(get_forecast_weather_provider)],
 ) -> WeatherService:
     return WeatherService(
         settings=settings,

@@ -13,6 +13,7 @@ from app.modules.reminders.router import router as reminders_router
 from app.modules.reports.router import router as reports_router
 from app.modules.storage_cleanup.router import router as storage_cleanup_router
 from app.modules.users.router import router as users_router
+from app.modules.voice.router import router as voice_router
 from app.modules.weather.router import router as weather_router
 
 api_router = APIRouter()
@@ -30,3 +31,4 @@ versioned_api_router.include_router(reminders_router)
 versioned_api_router.include_router(reports_router)
 versioned_api_router.include_router(storage_cleanup_router)
 versioned_api_router.include_router(weather_router)
+versioned_api_router.include_router(voice_router)

@@ -64,15 +64,11 @@ async def test_failed_object_delete_remains_retryable() -> None:
             await session.commit()
 
             await service.process([job.id])
-            remaining = await session.scalar(
-                select(func.count()).select_from(ObjectDeletionJob)
-            )
+            remaining = await session.scalar(select(func.count()).select_from(ObjectDeletionJob))
             persisted = await session.get(ObjectDeletionJob, job.id)
             storage.fail = False
             attempted = await service.retry_owner(FARMER)
-            final = await session.scalar(
-                select(func.count()).select_from(ObjectDeletionJob)
-            )
+            final = await session.scalar(select(func.count()).select_from(ObjectDeletionJob))
     finally:
         await engine.dispose()
 
@@ -127,9 +123,7 @@ async def test_background_worker_automatically_reconciles_due_jobs() -> None:
         await asyncio.wait_for(storage.deleted.wait(), timeout=5)
         for _ in range(100):
             async with sessions() as session:
-                count = await session.scalar(
-                    select(func.count()).select_from(ObjectDeletionJob)
-                )
+                count = await session.scalar(select(func.count()).select_from(ObjectDeletionJob))
             if count == 0:
                 break
             await asyncio.sleep(0.01)

@@ -91,9 +91,7 @@ class ChatTurnWorker:
             await service.process_claimed_turn(
                 claim,
                 max_attempts=self._settings.chat_turn_max_attempts,
-                processing_timeout_seconds=(
-                    self._settings.chat_turn_processing_timeout_seconds
-                ),
+                processing_timeout_seconds=(self._settings.chat_turn_processing_timeout_seconds),
                 backoff_base_seconds=self._settings.chat_turn_backoff_base_seconds,
                 backoff_max_seconds=self._settings.chat_turn_backoff_max_seconds,
             )

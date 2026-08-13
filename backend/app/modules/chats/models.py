@@ -165,9 +165,7 @@ class ChatTurn(Base):
         DateTime(timezone=True), nullable=True, index=True
     )
     lease_token: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

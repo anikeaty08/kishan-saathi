@@ -1,6 +1,8 @@
 """Startup dependency container and provider/plugin bindings."""
 
 from app.core.config import Settings
+from app.integrations.audio.openai_audio import OpenAIAudioProvider
+from app.integrations.audio.provider import AudioProvider, UnavailableAudioProvider
 from app.integrations.auth.cognito import CognitoAuthProvider
 from app.integrations.auth.provider import AuthProvider, UnavailableAuthProvider
 from app.integrations.geocoding.open_meteo import OpenMeteoGeocodingProvider
@@ -20,6 +22,7 @@ from app.integrations.progression.provider import (
 )
 from app.integrations.storage.local import LocalObjectStorage
 from app.integrations.storage.provider import ObjectStorageProvider
+from app.integrations.storage.s3 import S3ObjectStorage
 from app.integrations.weather.open_meteo import OpenMeteoForecastProvider
 from app.integrations.weather.openweather import (
     OpenWeatherCurrentProvider,
@@ -37,8 +40,10 @@ def build_auth_provider(settings: Settings) -> AuthProvider:
 
 
 def build_object_storage(settings: Settings) -> ObjectStorageProvider:
-    """Select local private storage until an S3 adapter is configured."""
+    """Select local development storage or private production S3."""
 
+    if settings.storage_backend == "s3":
+        return S3ObjectStorage(settings)
     return LocalObjectStorage(settings.local_storage_path)
 
 
@@ -66,6 +71,14 @@ def build_progression_provider(settings: Settings) -> ProgressionProvider:
     if not settings.openai_api_key:
         return UnavailableProgressionProvider()
     return OpenAIProgressionProvider(settings)
+
+
+def build_audio_provider(settings: Settings) -> AudioProvider:
+    """Bind request-based speech only when the shared server credential exists."""
+
+    if not settings.openai_api_key:
+        return UnavailableAudioProvider()
+    return OpenAIAudioProvider(settings)
 
 
 def build_current_weather_provider(settings: Settings) -> CurrentWeatherProvider:

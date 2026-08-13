@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from app.api.router import api_router, versioned_api_router
 from app.core.config import Settings, get_settings
 from app.core.container import (
+    build_audio_provider,
     build_auth_provider,
     build_current_weather_provider,
     build_forecast_weather_provider,
@@ -21,7 +22,9 @@ from app.core.container import (
 )
 from app.core.errors import register_error_handlers
 from app.core.logging import configure_logging, request_context_middleware
+from app.core.rate_limits import PaidOperationRateLimiter
 from app.database.session import Database, DatabasePort
+from app.integrations.audio.provider import AudioProvider
 from app.integrations.auth.provider import AuthProvider
 from app.integrations.geocoding.provider import GeocodingProvider
 from app.integrations.inference.provider import LeafInferenceProvider
@@ -47,6 +50,7 @@ def create_app(
     forecast_weather_provider: ForecastWeatherProvider | None = None,
     geocoding_provider: GeocodingProvider | None = None,
     progression_provider: ProgressionProvider | None = None,
+    audio_provider: AudioProvider | None = None,
 ) -> FastAPI:
     """Build an application with explicit, replaceable process dependencies."""
 
@@ -63,6 +67,8 @@ def create_app(
     resolved_progression_provider = progression_provider or build_progression_provider(
         resolved_settings
     )
+    resolved_audio_provider = audio_provider or build_audio_provider(resolved_settings)
+    paid_operation_rate_limiter = PaidOperationRateLimiter(resolved_settings)
     resolved_current_weather = current_weather_provider or build_current_weather_provider(
         resolved_settings
     )
@@ -107,6 +113,7 @@ def create_app(
             await application.state.forecast_weather_provider.close()
             await application.state.current_weather_provider.close()
             await application.state.memory_provider.close()
+            await application.state.audio_provider.close()
             await application.state.progression_provider.close()
             await application.state.llm_provider.close()
             await application.state.leaf_inference_provider.close()
@@ -129,6 +136,8 @@ def create_app(
     application.state.llm_provider = resolved_llm_provider
     application.state.memory_provider = resolved_memory_provider
     application.state.progression_provider = resolved_progression_provider
+    application.state.audio_provider = resolved_audio_provider
+    application.state.paid_operation_rate_limiter = paid_operation_rate_limiter
     application.state.current_weather_provider = resolved_current_weather
     application.state.forecast_weather_provider = resolved_forecast_weather
     application.state.geocoding_provider = resolved_geocoding

@@ -19,9 +19,7 @@ async def test_request_logging_uses_route_template_for_secret_tokens() -> None:
         return PlainTextResponse("ok")
 
     with capture_logs() as logs:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/shared/do-not-log-this-secret")
 
     assert response.status_code == 200

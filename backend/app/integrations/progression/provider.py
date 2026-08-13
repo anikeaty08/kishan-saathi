@@ -1,36 +1,14 @@
 """Typed contracts for visual change comparison across diagnosis timepoints."""
 
-import re
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.core.errors import ApplicationError
-
-
-def _reject_out_of_scope_language(text: str) -> None:
-    """Reject diagnosis authority and common prescriptive forms."""
-
-    diagnosis = re.compile(
-        r"\b(?:diagnos(?:is|e|ed|tic)|disease|pathogen|fungal|bacterial|viral|"
-        r"blight|mildew|canker|mosaic\s+virus)\b",
-        flags=re.IGNORECASE,
-    )
-    treatment = re.compile(
-        r"(?:\b\d+(?:\.\d+)?\s*(?:mg|g|kg|ml|l)\s*(?:/|per)\s*"
-        r"(?:l|lit(?:re|er)s?|kg|acre|hectare)\b|"
-        r"\bevery\s+\d+\s*(?:hour|day|week)s?\b|"
-        r"\b(?:spray|apply|drench|inject|mix)\s+\d)",
-        flags=re.IGNORECASE,
-    )
-    if diagnosis.search(text):
-        raise ValueError("PROGRESSION_DIAGNOSIS_LANGUAGE_FORBIDDEN")
-    if treatment.search(text):
-        raise ValueError("PROGRESSION_TREATMENT_GUIDANCE_FORBIDDEN")
 
 
 class ProgressionTrend(StrEnum):
@@ -42,43 +20,64 @@ class ProgressionTrend(StrEnum):
     UNCLEAR = "unclear"
 
 
+class ProgressionEvidenceCode(StrEnum):
+    AFFECTED_AREA_REDUCED = "affected_area_reduced"
+    AFFECTED_AREA_INCREASED = "affected_area_increased"
+    AFFECTED_AREA_SIMILAR = "affected_area_similar"
+    YELLOWING_REDUCED = "yellowing_reduced"
+    YELLOWING_INCREASED = "yellowing_increased"
+    BROWNING_REDUCED = "browning_reduced"
+    BROWNING_INCREASED = "browning_increased"
+    CURLING_REDUCED = "curling_reduced"
+    CURLING_INCREASED = "curling_increased"
+    WILTING_REDUCED = "wilting_reduced"
+    WILTING_INCREASED = "wilting_increased"
+    NO_RELIABLE_VISIBLE_DIFFERENCE = "no_reliable_visible_difference"
+
+
+class ProgressionLimitationCode(StrEnum):
+    DIFFERENT_LIGHTING = "different_lighting"
+    DIFFERENT_VIEWPOINT = "different_viewpoint"
+    DIFFERENT_ZOOM = "different_zoom"
+    DIFFERENT_LEAF = "different_leaf"
+    DIFFERENT_BACKGROUND = "different_background"
+    EARLIER_IMAGE_QUALITY = "earlier_image_quality"
+    LATER_IMAGE_QUALITY = "later_image_quality"
+    TOO_LITTLE_VISIBLE_EVIDENCE = "too_little_visible_evidence"
+
+
+class ProgressionRecommendationCode(StrEnum):
+    MONITOR_SAME_LEAF = "monitor_same_leaf"
+    RETAKE_SAME_ANGLE = "retake_same_angle"
+    RETAKE_SAME_LIGHTING = "retake_same_lighting"
+    RETAKE_FULL_PLANT_AND_CLOSE_LEAF = "retake_full_plant_and_close_leaf"
+    KEEP_FOLIAGE_DRY = "keep_foliage_dry"
+    USE_CLEAN_HANDS_AND_TOOLS = "use_clean_hands_and_tools"
+    CONSULT_LOCAL_EXPERT_IF_WORSENING = "consult_local_expert_if_worsening"
+
+
 class ProgressionImageQuality(BaseModel):
     """Provider assessment of whether the two image groups are comparable."""
 
     model_config = ConfigDict(extra="forbid")
 
     sufficient_for_comparison: bool
-    earlier_issues: list[str] = Field(default_factory=list, max_length=6)
-    later_issues: list[str] = Field(default_factory=list, max_length=6)
-    retake_guidance: list[str] = Field(default_factory=list, max_length=6)
-
-    @field_validator("earlier_issues", "later_issues", "retake_guidance")
-    @classmethod
-    def enforce_scope(cls, value: list[str]) -> list[str]:
-        _reject_out_of_scope_language(" ".join(value))
-        return value
+    earlier_issues: list[ProgressionLimitationCode] = Field(default_factory=list, max_length=6)
+    later_issues: list[ProgressionLimitationCode] = Field(default_factory=list, max_length=6)
+    retake_guidance: list[ProgressionRecommendationCode] = Field(default_factory=list, max_length=6)
 
 
 class ProgressionAnalysis(BaseModel):
-    """Strict provider output containing observations, never a diagnosis."""
+    """Strict provider output containing observations and general next steps."""
 
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     trend: ProgressionTrend
     confidence: float = Field(ge=0, le=1)
-    summary: str = Field(min_length=1, max_length=1200)
-    evidence: list[str] = Field(min_length=1, max_length=8)
-    limitations: list[str] = Field(default_factory=list, max_length=8)
+    evidence: list[ProgressionEvidenceCode] = Field(min_length=1, max_length=8)
+    limitations: list[ProgressionLimitationCode] = Field(default_factory=list, max_length=8)
+    recommendations: list[ProgressionRecommendationCode] = Field(default_factory=list, max_length=8)
     image_quality: ProgressionImageQuality
-
-    @field_validator("summary", "evidence", "limitations")
-    @classmethod
-    def reject_prescriptive_treatment_language(cls, value: str | list[str]) -> str | list[str]:
-        """Block diagnosis authority or treatment if a provider ignores its scope."""
-
-        text = value if isinstance(value, str) else " ".join(value)
-        _reject_out_of_scope_language(text)
-        return value
 
     @model_validator(mode="after")
     def unclear_when_images_are_not_comparable(self) -> "ProgressionAnalysis":
@@ -100,6 +99,16 @@ class ProgressionImage:
 
 
 @dataclass(frozen=True, slots=True)
+class ProgressionDiagnosisContext:
+    """Backend-owned classifier result that the visual comparison may reference."""
+
+    assessment_id: UUID
+    crop_name: str
+    disease_name: str
+    confidence_label: str
+
+
+@dataclass(frozen=True, slots=True)
 class ProgressionRequest:
     """Two ordered image groups from one already owner-authorized case."""
 
@@ -107,6 +116,7 @@ class ProgressionRequest:
     earlier_images: tuple[ProgressionImage, ...]
     later_images: tuple[ProgressionImage, ...]
     response_language: str
+    classifier_context: ProgressionDiagnosisContext | None = None
 
 
 @dataclass(frozen=True, slots=True)

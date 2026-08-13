@@ -29,10 +29,16 @@ class FakeProgressionService:
             "later_image_ids": [UUID(int=21)],
             "trend": "unchanged",
             "confidence": 0.6,
-            "summary": "Visible area looks similar.",
-            "evidence": ["Affected coverage is similar."],
+            "evidence": ["affected_area_similar"],
             "limitations": [],
+            "recommendations": ["monitor_same_leaf"],
             "image_quality": {"sufficient_for_comparison": True},
+            "diagnosis_context": {
+                "assessment_id": UUID(int=11),
+                "crop_name": "Tomato",
+                "disease_name": "tomato early blight",
+                "confidence_label": "medium",
+            },
             "model_name": "gpt-5",
             "generated_at": "2026-08-13T00:00:00Z",
             "scope": "visible_symptom_progression_only",
@@ -42,13 +48,14 @@ class FakeProgressionService:
 @pytest.mark.asyncio
 async def test_progression_endpoint_requires_authentication() -> None:
     app = create_app(_test_settings(), FakeDatabase())
-    async with LifespanManager(app), AsyncClient(
-        transport=ASGITransport(app=app, raise_app_exceptions=False),
-        base_url="http://test",
-    ) as client:
-        response = await client.post(
-            f"/api/v1/diagnoses/{UUID(int=1)}/progression", json={}
-        )
+    async with (
+        LifespanManager(app),
+        AsyncClient(
+            transport=ASGITransport(app=app, raise_app_exceptions=False),
+            base_url="http://test",
+        ) as client,
+    ):
+        response = await client.post(f"/api/v1/diagnoses/{UUID(int=1)}/progression", json={})
 
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "AUTH_TOKEN_REQUIRED"
@@ -59,15 +66,18 @@ async def test_progression_endpoint_returns_typed_non_diagnostic_contract() -> N
     app = create_app(_test_settings(), FakeDatabase())
     app.dependency_overrides[get_current_farmer_id] = lambda: FARMER
     app.dependency_overrides[get_diagnosis_progression_service] = FakeProgressionService
-    async with LifespanManager(app), AsyncClient(
-        transport=ASGITransport(app=app, raise_app_exceptions=False),
-        base_url="http://test",
-    ) as client:
-        response = await client.post(
-            f"/api/v1/diagnoses/{UUID(int=1)}/progression", json={}
-        )
+    async with (
+        LifespanManager(app),
+        AsyncClient(
+            transport=ASGITransport(app=app, raise_app_exceptions=False),
+            base_url="http://test",
+        ) as client,
+    ):
+        response = await client.post(f"/api/v1/diagnoses/{UUID(int=1)}/progression", json={})
 
     assert response.status_code == 200
     assert response.json()["trend"] == "unchanged"
+    assert response.json()["recommendations"] == ["monitor_same_leaf"]
+    assert response.json()["diagnosis_context"]["disease_name"] == "tomato early blight"
     assert response.json()["scope"] == "visible_symptom_progression_only"
     assert "diagnosis" not in response.json()

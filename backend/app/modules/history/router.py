@@ -30,13 +30,14 @@ async def plot_timeline(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> TimelinePage:
     return await service.timeline(
-        farmer_id, plot_id,
+        farmer_id,
+        plot_id,
         query=TimelineQuery(
-        crop_id=crop_id,
-        categories=set(category or ()),
-        date_from=date_from,
-        date_to=date_to,
-        limit=limit,
-        offset=offset,
+            crop_id=crop_id,
+            categories=set(category or ()),
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit,
+            offset=offset,
         ),
     )

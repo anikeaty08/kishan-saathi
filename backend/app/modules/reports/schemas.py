@@ -9,9 +9,10 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_vali
 
 class ReportApproval(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    title: Annotated[
-        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)
-    ] | None = None
+    title: (
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
+        | None
+    ) = None
     include_alternatives: bool = False
     include_feedback: bool = False
     include_plot_name: bool = False

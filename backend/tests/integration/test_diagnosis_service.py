@@ -242,9 +242,7 @@ async def test_retake_processes_only_new_batch_and_keeps_unbounded_case_history(
 
             updated = case
             for image_index in range(2, 23):
-                updated = await service.add_retakes(
-                    FARMER, case.id, [_incoming(image_index)]
-                )
+                updated = await service.add_retakes(FARMER, case.id, [_incoming(image_index)])
             first_page = await service.image_page(FARMER, case.id, limit=12, offset=0)
             second_page = await service.image_page(FARMER, case.id, limit=12, offset=12)
             stored_prediction_count = await session.scalar(

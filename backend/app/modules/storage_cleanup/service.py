@@ -40,16 +40,12 @@ class ObjectCleanupService:
 
         for job_id in job_ids:
             job = await self._session.scalar(
-                select(ObjectDeletionJob)
-                .where(ObjectDeletionJob.id == job_id)
-                .with_for_update()
+                select(ObjectDeletionJob).where(ObjectDeletionJob.id == job_id).with_for_update()
             )
             if job is None:
                 continue
             try:
-                await self._storage.delete_private(
-                    owner_id=job.owner_id, key=job.object_key
-                )
+                await self._storage.delete_private(owner_id=job.owner_id, key=job.object_key)
             except Exception as exc:
                 job.attempts += 1
                 job.last_attempted_at = datetime.now(tz=UTC)

@@ -71,7 +71,48 @@ class ApiClient {
         code: 'REQUEST_TIMEOUT',
         message: 'Request timed out',
       );
-    } on SocketException {
+    } on http.ClientException {
+      throw const ApiException(
+        code: 'NETWORK_UNAVAILABLE',
+        message: 'The network request could not be completed',
+      );
+    } on IOException {
+      throw const ApiException(
+        code: 'NETWORK_UNAVAILABLE',
+        message: 'No network connection',
+      );
+    }
+  }
+
+  Future<List<int>> postBytes(
+    String path, {
+    Map<String, String>? headers,
+    bool auth = true,
+  }) async {
+    try {
+      final response = await _client
+          .post(
+            _resolve(path),
+            headers: await _headers(auth: auth, extra: headers),
+          )
+          .timeout(_uploadTimeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw _exceptionFrom(response);
+      }
+      return response.bodyBytes;
+    } on ApiException {
+      rethrow;
+    } on TimeoutException {
+      throw const ApiException(
+        code: 'REQUEST_TIMEOUT',
+        message: 'Audio generation timed out',
+      );
+    } on http.ClientException {
+      throw const ApiException(
+        code: 'NETWORK_UNAVAILABLE',
+        message: 'The network request could not be completed',
+      );
+    } on IOException {
       throw const ApiException(
         code: 'NETWORK_UNAVAILABLE',
         message: 'No network connection',
@@ -103,7 +144,12 @@ class ApiClient {
         code: 'REQUEST_TIMEOUT',
         message: 'Upload timed out',
       );
-    } on SocketException {
+    } on http.ClientException {
+      throw const ApiException(
+        code: 'NETWORK_UNAVAILABLE',
+        message: 'The network request could not be completed',
+      );
+    } on IOException {
       throw const ApiException(
         code: 'NETWORK_UNAVAILABLE',
         message: 'No network connection',
@@ -138,7 +184,12 @@ class ApiClient {
         code: 'REQUEST_TIMEOUT',
         message: 'Request timed out',
       );
-    } on SocketException {
+    } on http.ClientException {
+      throw const ApiException(
+        code: 'NETWORK_UNAVAILABLE',
+        message: 'The network request could not be completed',
+      );
+    } on IOException {
       throw const ApiException(
         code: 'NETWORK_UNAVAILABLE',
         message: 'No network connection',

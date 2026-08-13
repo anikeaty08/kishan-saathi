@@ -784,14 +784,7 @@ class _PlotDetailScreenState extends State<PlotDetailScreen> {
                 ],
               ),
               const SizedBox(height: 24),
-              SectionHeader(
-                title: context.tr('weather'),
-                action: TextButton.icon(
-                  onPressed: () => context.push('/weather?plot=${plot.id}'),
-                  icon: const Icon(LucideIcons.arrowUpRight, size: 17),
-                  label: const Text('Full forecast'),
-                ),
-              ),
+              SectionHeader(title: context.tr('weather')),
               const SizedBox(height: 10),
               if (plotWeather != null)
                 _PlotWeatherSummary(weather: plotWeather)

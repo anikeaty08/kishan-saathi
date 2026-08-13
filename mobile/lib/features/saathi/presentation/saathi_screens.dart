@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:provider/provider.dart';
@@ -11,6 +14,7 @@ import '../../../core/network/api_exception.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/ui/app_ui.dart';
 import '../../shared/presentation/app_controller.dart';
+import 'voice_composer_controller.dart';
 
 class SaathiScreen extends StatefulWidget {
   const SaathiScreen({super.key});
@@ -339,16 +343,20 @@ class _NewChatScreenState extends State<NewChatScreen> {
       showAppSnackBar(context, 'Write the first question for Saathi.');
       return;
     }
+    final controller = context.read<AppController>();
+    late final ChatThreadModel chat;
     try {
-      final controller = context.read<AppController>();
-      final chat = await controller.createChat(
-        scope: _scope,
-        contextId: _contextId,
-      );
-      await controller.sendMessage(chat.id, prompt);
-      if (mounted) context.go('/saathi/chat/${chat.id}');
+      chat = await controller.createChat(scope: _scope, contextId: _contextId);
     } on ApiException catch (error) {
       if (mounted) showAppSnackBar(context, context.localizedError(error));
+      return;
+    }
+    if (!mounted) return;
+    context.go('/saathi/chat/${chat.id}');
+    try {
+      await controller.sendMessage(chat.id, prompt);
+    } on ApiException {
+      // The destination chat now owns the failed bubble and retry action.
     }
   }
 
@@ -483,21 +491,40 @@ class ChatDetailScreen extends StatefulWidget {
 
 class _ChatDetailScreenState extends State<ChatDetailScreen> {
   final _message = TextEditingController();
+  final _messageFocus = FocusNode();
   final _scrollController = ScrollController();
   Timer? _draftDebounce;
   late final AppController _controller;
+  late final VoiceComposerController _voice;
   int _lastMessageCount = 0;
+  final Set<String> _decidingProposalIds = {};
+  final Map<String, bool> _messageFeedback = {};
 
   @override
   void initState() {
     super.initState();
     _controller = context.read<AppController>();
+    _voice = VoiceComposerController(
+      transcribe: _controller.transcribeChatVoice,
+      loadSpeech: _controller.loadAssistantSpeech,
+    )..addListener(_handleVoiceUpdate);
     _message.text = _controller.chatDraft(widget.chatId);
     _message.addListener(_scheduleDraftSave);
     _controller.addListener(_handleChatUpdate);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       try {
-        await context.read<AppController>().loadChat(widget.chatId);
+        await _controller.loadChat(widget.chatId);
+        final loadedChat = _controller.chats
+            .cast<ChatThreadModel?>()
+            .firstWhere(
+              (item) => item?.id == widget.chatId,
+              orElse: () => null,
+            );
+        final caseId = loadedChat?.diagnosisCaseId;
+        if (caseId != null &&
+            !_controller.diagnoses.any((item) => item.id == caseId)) {
+          await _controller.loadDiagnosis(caseId);
+        }
       } on ApiException catch (error) {
         if (mounted) showAppSnackBar(context, context.localizedError(error));
       }
@@ -511,6 +538,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     _message.removeListener(_scheduleDraftSave);
     _controller.removeListener(_handleChatUpdate);
     _message.dispose();
+    _messageFocus.dispose();
+    _voice
+      ..removeListener(_handleVoiceUpdate)
+      ..dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -571,6 +602,181 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     });
   }
 
+  void _useFollowUp(String question) {
+    _message
+      ..text = question
+      ..selection = TextSelection.collapsed(offset: question.length);
+    _messageFocus.requestFocus();
+  }
+
+  Future<void> _copyMessage(ChatMessageModel message) async {
+    await Clipboard.setData(ClipboardData(text: message.text));
+    if (mounted) showAppSnackBar(context, 'Response copied.');
+  }
+
+  Future<void> _readMessage(ChatMessageModel message) async {
+    final languageTag = Localizations.localeOf(context).toLanguageTag();
+    try {
+      final usedAiVoice = await _voice.toggleSpeech(
+        chatId: widget.chatId,
+        messageId: message.id,
+        fallbackText: message.text,
+        languageTag: languageTag,
+      );
+      if (usedAiVoice && mounted && _voice.speakingMessageId != null) {
+        showAppSnackBar(context, context.tr('voiceAiDisclosure'));
+      }
+    } on ApiException catch (error) {
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
+    } catch (_) {
+      if (mounted) showAppSnackBar(context, context.tr('voiceUnavailable'));
+    }
+  }
+
+  void _handleVoiceUpdate() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _toggleRecording() async {
+    if (_voice.isTranscribing) return;
+    if (_voice.isRecording) {
+      await _finishVoiceRecording();
+      return;
+    }
+    if (!_controller.canUseLiveServices) {
+      showAppSnackBar(context, context.tr('error.VOICE_REQUIRES_CONNECTION'));
+      return;
+    }
+    try {
+      await _voice.startRecording(onLimitReached: _finishVoiceRecording);
+    } on ApiException catch (error) {
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
+    } catch (_) {
+      if (mounted) showAppSnackBar(context, context.tr('voiceUnavailable'));
+    }
+  }
+
+  Future<void> _finishVoiceRecording() async {
+    try {
+      final transcript = await _voice.stopAndTranscribe(widget.chatId);
+      if (transcript == null || transcript.trim().isEmpty || !mounted) return;
+      final current = _message.text.trim();
+      final composed = current.isEmpty
+          ? transcript.trim()
+          : '$current ${transcript.trim()}';
+      _message
+        ..text = composed
+        ..selection = TextSelection.collapsed(offset: composed.length);
+      _messageFocus.requestFocus();
+      showAppSnackBar(context, context.tr('voiceTranscriptReady'));
+    } on ApiException catch (error) {
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
+    } catch (_) {
+      if (mounted) showAppSnackBar(context, context.tr('voiceUnavailable'));
+    }
+  }
+
+  Future<void> _cancelRecording() async {
+    await _voice.cancelRecording();
+  }
+
+  void _setFeedback(ChatMessageModel message, bool helpful) {
+    setState(() => _messageFeedback[message.id] = helpful);
+    showAppSnackBar(
+      context,
+      helpful
+          ? 'Marked as helpful on this device.'
+          : 'Feedback noted on this device.',
+    );
+  }
+
+  void _openAttachmentMenu(ChatThreadModel chat) {
+    final retake = chat.diagnosisCaseId == null
+        ? ''
+        : '&retake=${Uri.encodeQueryComponent(chat.diagnosisCaseId!)}';
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      useSafeArea: true,
+      builder: (sheetContext) => Padding(
+        padding: const EdgeInsets.fromLTRB(18, 4, 18, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              chat.diagnosisCaseId == null
+                  ? 'Start a leaf check'
+                  : 'Add follow-up leaf photos',
+              style: Theme.of(sheetContext).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              chat.diagnosisCaseId == null
+                  ? 'Photos are processed by the trained leaf model before Saathi can discuss the result.'
+                  : 'New photos stay linked to this scan and its conversation.',
+              style: Theme.of(sheetContext).textTheme.bodyMedium
+                  ?.copyWith(color: AppColors.mutedInk),
+            ),
+            const SizedBox(height: 14),
+            ListTile(
+              leading: const Icon(LucideIcons.camera),
+              title: const Text('Take a photo'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                context.push('/scan?source=camera$retake');
+              },
+            ),
+            ListTile(
+              leading: const Icon(LucideIcons.images),
+              title: const Text('Choose from gallery'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                context.push('/scan?source=gallery$retake');
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showContextSheet(ChatThreadModel chat) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      useSafeArea: true,
+      builder: (sheetContext) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 4, 20, 28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(LucideIcons.brain, color: AppColors.forest),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Context Saathi can use',
+                    style: Theme.of(sheetContext).textTheme.titleLarge,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              chat.scopeLabel == null
+                  ? 'Only messages in this conversation are used. You can connect it to a farm or plot from conversation options.'
+                  : 'This conversation can use relevant records linked to ${chat.scopeLabel}. Saathi receives filtered facts, not your complete history.',
+              style: Theme.of(sheetContext).textTheme.bodyLarge,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final chat = context
@@ -591,18 +797,36 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     final controller = context.watch<AppController>();
     final responding = controller.isChatResponding(chat.id);
     final queued = controller.queuedChatTurns(chat.id);
+    final hasOlder = controller.hasOlderChatMessages(chat.id);
+    final proposals = controller.reminderProposals
+        .where(
+          (proposal) =>
+              proposal.chatId == chat.id && proposal.status == 'pending',
+        )
+        .toList(growable: false);
+    final linkedDiagnosis = chat.diagnosisCaseId == null
+        ? null
+        : controller.diagnoses.cast<DiagnosisCaseModel?>().firstWhere(
+            (item) => item?.id == chat.diagnosisCaseId,
+            orElse: () => null,
+          );
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
+      backgroundColor: dark ? const Color(0xFF0E1812) : const Color(0xFFF8F5EC),
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(chat.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-            if (chat.scopeLabel != null)
-              Text(
-                chat.scopeLabel!,
-                style: Theme.of(context).textTheme.labelSmall
-                    ?.copyWith(color: AppColors.mutedInk),
+            Text(
+              _chatScopeCaption(chat),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                fontWeight: FontWeight.w500,
               ),
+            ),
           ],
         ),
         actions: [
@@ -619,88 +843,127 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         child: Column(
           children: [
             Expanded(
-              child: AppContent(
-                maxWidth: 760,
-                child: ListView.builder(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  itemCount: chat.messages.length + 1,
-                  itemBuilder: (context, index) {
-                    if (index == 0) {
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 18),
-                        child: InlineNotice(
-                          title: '${chat.scope.toUpperCase()} context',
-                          message: chat.scopeLabel == null
-                              ? 'Saathi is using only this conversation.'
-                              : 'Saathi can use records linked to ${chat.scopeLabel}.',
-                          icon: LucideIcons.brain,
-                          color: AppColors.leaf,
-                        ),
-                      );
-                    }
-                    return _MessageBubble(
-                      message: chat.messages[index - 1],
-                      onRetry:
-                          chat.messages[index - 1].delivery ==
-                              ChatDelivery.failed
-                          ? () => _retry(chat.messages[index - 1])
-                          : null,
-                    );
-                  },
-                ),
-              ),
-            ),
-            AnimatedSwitcher(
-              duration: MediaQuery.disableAnimationsOf(context)
-                  ? Duration.zero
-                  : const Duration(milliseconds: 180),
-              child: responding
-                  ? _ThinkingBar(
-                      key: const ValueKey('thinking'),
-                      queuedCount: queued,
-                    )
-                  : const SizedBox.shrink(key: ValueKey('idle')),
-            ),
-            DecoratedBox(
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface,
-                border: const Border(top: BorderSide(color: AppColors.divider)),
-              ),
-              child: SafeArea(
-                top: false,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 720),
+                  child: ListView(
+                    controller: _scrollController,
+                    keyboardDismissBehavior:
+                        ScrollViewKeyboardDismissBehavior.onDrag,
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
                     children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _message,
-                          minLines: 1,
-                          maxLines: 5,
-                          textCapitalization: TextCapitalization.sentences,
-                          decoration: InputDecoration(
-                            hintText: context.tr('askHint'),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 11,
+                      if (chat.messages.isEmpty && chat.scope == 'general')
+                        _GeneralChatWelcome(onPrompt: _useFollowUp)
+                      else
+                        Align(
+                          alignment: AlignmentDirectional.centerStart,
+                          child: _ConversationContextPill(
+                            chat: chat,
+                            onTap: () => _showContextSheet(chat),
+                          ),
+                        ),
+                      if (linkedDiagnosis != null) ...[
+                        const SizedBox(height: 12),
+                        _LinkedScanCard(
+                          diagnosis: linkedDiagnosis,
+                          onTap: () => context.push(
+                            '/scan/result/${linkedDiagnosis.id}',
+                          ),
+                        ),
+                      ],
+                      if (hasOlder) ...[
+                        const SizedBox(height: 8),
+                        Center(
+                          child: TextButton.icon(
+                            onPressed:
+                                controller.isLoadingOlderChatMessages(chat.id)
+                                ? null
+                                : _loadOlderMessages,
+                            icon: controller.isLoadingOlderChatMessages(chat.id)
+                                ? const SizedBox.square(
+                                    dimension: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(LucideIcons.history, size: 17),
+                            label: Text(
+                              controller.isLoadingOlderChatMessages(chat.id)
+                                  ? context.tr('loading')
+                                  : context.tr('viewAll'),
                             ),
                           ),
-                          onSubmitted: (_) => _send(),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton.filled(
-                        tooltip: context.tr('send'),
-                        onPressed: _send,
-                        icon: const Icon(LucideIcons.send, size: 19),
-                      ),
+                      ],
+                      const SizedBox(height: 18),
+                      for (var index = 0; index < chat.messages.length; index++)
+                        _MessageEntry(
+                          message: chat.messages[index],
+                          showAssistantLabel:
+                              chat.messages[index].author ==
+                                  ChatAuthor.assistant &&
+                              (index == 0 ||
+                                  chat.messages[index - 1].author !=
+                                      ChatAuthor.assistant),
+                          onRetry:
+                              chat.messages[index].delivery ==
+                                  ChatDelivery.failed
+                              ? () => _retry(chat.messages[index])
+                              : null,
+                          onFollowUp: _useFollowUp,
+                          onCopy: () => _copyMessage(chat.messages[index]),
+                          onSpeak: () => _readMessage(chat.messages[index]),
+                          speaking:
+                              _voice.speakingMessageId ==
+                              chat.messages[index].id,
+                          feedback: _messageFeedback[chat.messages[index].id],
+                          onFeedback: (helpful) =>
+                              _setFeedback(chat.messages[index], helpful),
+                        ),
+                      if (responding) _ThinkingIndicator(queuedCount: queued),
                     ],
                   ),
                 ),
               ),
             ),
+            for (final proposal in proposals)
+              AppContent(
+                maxWidth: 760,
+                child: _ReminderProposalCard(
+                  proposal: proposal,
+                  deciding: _decidingProposalIds.contains(proposal.id),
+                  onDecision: (accepted) =>
+                      _decideProposal(proposal.id, accepted: accepted),
+                ),
+              ),
+            if (chat.archived)
+              AppContent(
+                maxWidth: 760,
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: InlineNotice(
+                    title: 'Archived conversation',
+                    message: 'Restore this conversation before sending another message.',
+                    icon: LucideIcons.archive,
+                    color: AppColors.amber,
+                    action: TextButton(
+                      onPressed: () => _controller.restoreChat(chat.id),
+                      child: const Text('Restore'),
+                    ),
+                  ),
+                ),
+              )
+            else
+              _FloatingComposer(
+                controller: _message,
+                focusNode: _messageFocus,
+                onAttach: () => _openAttachmentMenu(chat),
+                voiceState: _voice.state,
+                voiceElapsed: _voice.elapsed,
+                onVoice: _toggleRecording,
+                onCancelVoice: _cancelRecording,
+                onSend: _send,
+              ),
           ],
         ),
       ),
@@ -712,6 +975,46 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       await _controller.retryChatMessage(widget.chatId, message.id);
     } on ApiException catch (error) {
       if (mounted) showAppSnackBar(context, context.localizedError(error));
+    }
+  }
+
+  Future<void> _loadOlderMessages() async {
+    final oldExtent = _scrollController.hasClients
+        ? _scrollController.position.maxScrollExtent
+        : 0.0;
+    try {
+      await _controller.loadOlderChatMessages(widget.chatId);
+    } on ApiException catch (error) {
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final addedExtent =
+          _scrollController.position.maxScrollExtent - oldExtent;
+      _scrollController.jumpTo(
+        (_scrollController.position.pixels + addedExtent).clamp(
+          0,
+          _scrollController.position.maxScrollExtent,
+        ),
+      );
+    });
+  }
+
+  Future<void> _decideProposal(
+    String proposalId, {
+    required bool accepted,
+  }) async {
+    if (!_decidingProposalIds.add(proposalId)) return;
+    setState(() {});
+    try {
+      await _controller.decideReminderProposal(proposalId, accepted: accepted);
+    } on ApiException catch (error) {
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
+    } finally {
+      if (mounted) {
+        setState(() => _decidingProposalIds.remove(proposalId));
+      }
     }
   }
 
@@ -743,11 +1046,18 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                 title: const Text('Disconnect shared memory'),
                 onTap: () => Navigator.pop(context, 'disconnect'),
               ),
-            ListTile(
-              leading: const Icon(LucideIcons.archive),
-              title: const Text('Archive conversation'),
-              onTap: () => Navigator.pop(context, 'archive'),
-            ),
+            if (chat.archived)
+              ListTile(
+                leading: const Icon(LucideIcons.archiveRestore),
+                title: const Text('Restore conversation'),
+                onTap: () => Navigator.pop(context, 'restore'),
+              )
+            else
+              ListTile(
+                leading: const Icon(LucideIcons.archive),
+                title: const Text('Archive conversation'),
+                onTap: () => Navigator.pop(context, 'archive'),
+              ),
             ListTile(
               leading: const Icon(LucideIcons.trash2, color: Colors.red),
               title: const Text(
@@ -783,6 +1093,9 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         case 'archive':
           await _controller.archiveChat(chat.id);
           if (mounted) context.go('/saathi');
+          break;
+        case 'restore':
+          await _controller.restoreChat(chat.id);
           break;
         case 'delete':
           final confirmed = await showDialog<bool>(
@@ -931,7 +1244,88 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   }
 }
 
+class _ReminderProposalCard extends StatelessWidget {
+  const _ReminderProposalCard({
+    required this.proposal,
+    required this.deciding,
+    required this.onDecision,
+  });
+
+  final ReminderProposalModel proposal;
+  final bool deciding;
+  final ValueChanged<bool> onDecision;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 6, 0, 12),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: AppColors.amber.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(AppRadius.medium),
+          border: Border.all(color: AppColors.amber.withValues(alpha: 0.24)),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(
+                    LucideIcons.calendarClock,
+                    color: AppColors.amber,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      context.tr('reminderProposal'),
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(proposal.title),
+              const SizedBox(height: 4),
+              Text(
+                context.strings.formatDateTime(proposal.dueAt.toLocal()),
+                style: Theme.of(context).textTheme.bodySmall
+                    ?.copyWith(color: AppColors.mutedInk),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: deciding ? null : () => onDecision(false),
+                    child: Text(context.tr('notNow')),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    onPressed: deciding ? null : () => onDecision(true),
+                    child: deciding
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Text(context.tr('accept')),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// Kept temporarily for compatibility with older golden fixtures.
+// ignore: unused_element
 class _MessageBubble extends StatelessWidget {
+  // ignore: unused_element_parameter
   const _MessageBubble({required this.message, this.onRetry});
   final ChatMessageModel message;
   final VoidCallback? onRetry;
@@ -1129,7 +1523,10 @@ class _ReplyList extends StatelessWidget {
   }
 }
 
+// Kept temporarily for compatibility with older golden fixtures.
+// ignore: unused_element
 class _ThinkingBar extends StatelessWidget {
+  // ignore: unused_element_parameter
   const _ThinkingBar({super.key, required this.queuedCount});
 
   final int queuedCount;
@@ -1158,6 +1555,1044 @@ class _ThinkingBar extends StatelessWidget {
                 style: Theme.of(context).textTheme.labelMedium,
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ConversationContextPill extends StatelessWidget {
+  const _ConversationContextPill({required this.chat, required this.onTap});
+
+  final ChatThreadModel chat;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final background = dark
+        ? AppColors.leaf.withValues(alpha: 0.14)
+        : const Color(0xFFEAF1E5);
+    final border = dark
+        ? AppColors.leaf.withValues(alpha: 0.28)
+        : AppColors.youngLeaf.withValues(alpha: 0.26);
+    return Material(
+      key: const ValueKey('conversation-context-pill'),
+      color: background,
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: onTap,
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 520),
+          padding: const EdgeInsetsDirectional.fromSTEB(10, 7, 12, 7),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: border),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(LucideIcons.brain, size: 15, color: AppColors.forest),
+              const SizedBox(width: 7),
+              Flexible(
+                child: Text(
+                  chat.scopeLabel == null
+                      ? 'Conversation only'
+                      : '${chat.scopeLabel} context',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: dark
+                        ? Theme.of(context).colorScheme.onSurface
+                        : AppColors.forest,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 5),
+              const Icon(
+                LucideIcons.chevronDown,
+                size: 14,
+                color: AppColors.leaf,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GeneralChatWelcome extends StatelessWidget {
+  const _GeneralChatWelcome({required this.onPrompt});
+
+  final ValueChanged<String> onPrompt;
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final prompts = <(IconData, String)>[
+      (LucideIcons.cloudSun, 'How should I plan farm work around the weather?'),
+      (LucideIcons.sprout, 'Help me think through a crop problem'),
+      (LucideIcons.calendarClock, 'What should I remember this week?'),
+    ];
+    return Padding(
+      key: const ValueKey('general-chat-welcome'),
+      padding: const EdgeInsets.fromLTRB(2, 28, 2, 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: dark
+                  ? AppColors.leaf.withValues(alpha: 0.18)
+                  : const Color(0xFFE7EFE1),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: const Icon(
+              LucideIcons.sprout,
+              color: AppColors.forest,
+              size: 24,
+            ),
+          ),
+          const SizedBox(height: 18),
+          Text(
+            'What can I help with today?',
+            style: Theme.of(context).textTheme.headlineMedium
+                ?.copyWith(letterSpacing: -0.6, height: 1.12),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Ask naturally about crops, field work, weather planning, or a farm decision. You can connect this conversation to a farm or plot later.',
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              height: 1.5,
+            ),
+          ),
+          const SizedBox(height: 26),
+          for (final prompt in prompts)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 9),
+              child: Material(
+                color: dark
+                    ? Theme.of(context).colorScheme.surfaceContainerHigh
+                    : Colors.white.withValues(alpha: 0.72),
+                borderRadius: BorderRadius.circular(18),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(18),
+                  onTap: () => onPrompt(prompt.$2),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 13, 12, 13),
+                    child: Row(
+                      children: [
+                        Icon(prompt.$1, size: 19, color: AppColors.leaf),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            prompt.$2,
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        const Icon(
+                          LucideIcons.arrowUpRight,
+                          size: 17,
+                          color: AppColors.mutedInk,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          const SizedBox(height: 4),
+          TextButton.icon(
+            onPressed: () => onPrompt(''),
+            icon: const Icon(LucideIcons.messageCircle, size: 17),
+            label: const Text('Or write your own question below'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LinkedScanCard extends StatelessWidget {
+  const _LinkedScanCard({required this.diagnosis, required this.onTap});
+
+  final DiagnosisCaseModel diagnosis;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final prediction = diagnosis.predictions.firstOrNull;
+    return Material(
+      color: Theme.of(context).brightness == Brightness.dark
+          ? AppColors.darkSurface
+          : const Color(0xFFEAF1E5),
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        key: const ValueKey('linked-scan-card'),
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: SizedBox.square(
+                  dimension: 64,
+                  child: _DiagnosisThumbnail(diagnosis: diagnosis),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Linked leaf check',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: AppColors.leaf,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '${diagnosis.cropName} · ${prediction?.name ?? 'Possible issue'}',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          '${prediction?.confidenceLabel ?? diagnosis.confidenceLabel} confidence',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: AppColors.mutedInk),
+                        ),
+                        Text(
+                          'View result',
+                          style: Theme.of(context).textTheme.labelMedium
+                              ?.copyWith(
+                                color: AppColors.forest,
+                                fontWeight: FontWeight.w800,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Icon(LucideIcons.chevronRight, size: 19),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DiagnosisThumbnail extends StatelessWidget {
+  const _DiagnosisThumbnail({required this.diagnosis});
+
+  final DiagnosisCaseModel diagnosis;
+
+  @override
+  Widget build(BuildContext context) {
+    final localPath = diagnosis.imagePath;
+    if (localPath != null && File(localPath).existsSync()) {
+      return Image.file(File(localPath), fit: BoxFit.cover);
+    }
+    return Image.asset(
+      diagnosis.imageAsset,
+      fit: BoxFit.cover,
+      errorBuilder: (_, _, _) => const ColoredBox(
+        color: Color(0xFFDCE8D5),
+        child: Icon(LucideIcons.leaf, color: AppColors.forest),
+      ),
+    );
+  }
+}
+
+class _MessageEntry extends StatelessWidget {
+  const _MessageEntry({
+    required this.message,
+    required this.showAssistantLabel,
+    required this.onFollowUp,
+    required this.onCopy,
+    required this.onSpeak,
+    required this.speaking,
+    required this.onFeedback,
+    this.feedback,
+    this.onRetry,
+  });
+
+  final ChatMessageModel message;
+  final bool showAssistantLabel;
+  final ValueChanged<String> onFollowUp;
+  final VoidCallback onCopy;
+  final VoidCallback onSpeak;
+  final bool speaking;
+  final bool? feedback;
+  final ValueChanged<bool> onFeedback;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final farmer = message.author == ChatAuthor.farmer;
+    final system = message.author == ChatAuthor.system;
+    if (!farmer && !system) {
+      return _AssistantResponse(
+        message: message,
+        showLabel: showAssistantLabel,
+        onFollowUp: onFollowUp,
+        onCopy: onCopy,
+        onSpeak: onSpeak,
+        speaking: speaking,
+        feedback: feedback,
+        onFeedback: onFeedback,
+      );
+    }
+    if (system) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: AppColors.amber.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Text(message.text),
+          ),
+        ),
+      );
+    }
+    return Align(
+      alignment: AlignmentDirectional.centerEnd,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: math.min(520, MediaQuery.sizeOf(context).width * 0.82),
+        ),
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 18),
+          padding: const EdgeInsets.fromLTRB(16, 12, 14, 8),
+          decoration: const BoxDecoration(
+            color: AppColors.forest,
+            borderRadius: BorderRadiusDirectional.only(
+              topStart: Radius.circular(20),
+              topEnd: Radius.circular(6),
+              bottomStart: Radius.circular(20),
+              bottomEnd: Radius.circular(20),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                message.text,
+                style: Theme.of(context).textTheme.bodyMedium
+                    ?.copyWith(color: Colors.white),
+              ),
+              const SizedBox(height: 5),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (message.delivery != ChatDelivery.sent)
+                    Padding(
+                      padding: const EdgeInsetsDirectional.only(end: 5),
+                      child: Icon(
+                        message.delivery == ChatDelivery.failed
+                            ? LucideIcons.circleAlert
+                            : LucideIcons.clock3,
+                        size: 12,
+                        color: message.delivery == ChatDelivery.failed
+                            ? const Color(0xFFFFD0C8)
+                            : Colors.white60,
+                      ),
+                    ),
+                  Text(
+                    switch (message.delivery) {
+                      ChatDelivery.queued => context.tr('chatQueued'),
+                      ChatDelivery.sending => context.tr('chatProcessing'),
+                      ChatDelivery.failed => context.tr('chatFailed'),
+                      ChatDelivery.sent => context.strings.formatTime(
+                        message.sentAt,
+                      ),
+                    },
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: message.delivery == ChatDelivery.failed
+                          ? const Color(0xFFFFD0C8)
+                          : Colors.white60,
+                    ),
+                  ),
+                  if (onRetry != null) ...[
+                    const SizedBox(width: 5),
+                    TextButton(
+                      onPressed: onRetry,
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        minimumSize: const Size(44, 30),
+                        padding: const EdgeInsets.symmetric(horizontal: 7),
+                      ),
+                      child: Text(context.tr('retry')),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AssistantResponse extends StatelessWidget {
+  const _AssistantResponse({
+    required this.message,
+    required this.showLabel,
+    required this.onFollowUp,
+    required this.onCopy,
+    required this.onSpeak,
+    required this.speaking,
+    required this.onFeedback,
+    this.feedback,
+  });
+
+  final ChatMessageModel message;
+  final bool showLabel;
+  final ValueChanged<String> onFollowUp;
+  final VoidCallback onCopy;
+  final VoidCallback onSpeak;
+  final bool speaking;
+  final bool? feedback;
+  final ValueChanged<bool> onFeedback;
+
+  @override
+  Widget build(BuildContext context) {
+    final reply = message.structuredReply;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 26),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (showLabel) ...[
+            Row(
+              children: [
+                const Icon(LucideIcons.sprout, size: 17, color: AppColors.leaf),
+                const SizedBox(width: 7),
+                Text(
+                  'Saathi',
+                  style: Theme.of(context).textTheme.labelLarge
+                      ?.copyWith(color: AppColors.forest),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+          ],
+          if (reply == null)
+            SelectableText(
+              message.text,
+              style: Theme.of(context).textTheme.bodyLarge,
+            )
+          else ...[
+            SelectableText(
+              reply.shortAnswer,
+              style: Theme.of(context).textTheme.bodyLarge
+                  ?.copyWith(fontSize: 17, height: 1.5),
+            ),
+            if (reply.nextSteps.isNotEmpty) ...[
+              const SizedBox(height: 20),
+              Text(
+                'What to do now',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 10),
+              for (var index = 0; index < reply.nextSteps.length; index++)
+                _NumberedStep(index: index, text: reply.nextSteps[index]),
+            ],
+            for (final section in reply.answerSections) ...[
+              const SizedBox(height: 18),
+              Text(
+                section.title,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 6),
+              SelectableText(section.body),
+            ],
+            if (reply.retakeAdvice case final advice?) ...[
+              const SizedBox(height: 14),
+              _CautionSection(
+                title: context.tr('retakePhotos'),
+                values: advice.instructions,
+              ),
+            ],
+            if (reply.details != null ||
+                reply.explanationPoints.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _CollapsibleSection(
+                title: context.tr('whyThisMatters'),
+                icon: LucideIcons.circleHelp,
+                text: reply.details,
+                values: reply.explanationPoints,
+              ),
+            ],
+            if (reply.generalPrecautions.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _CollapsibleSection(
+                title: context.tr('generalPrecautions'),
+                icon: LucideIcons.shieldCheck,
+                values: reply.generalPrecautions,
+              ),
+            ],
+            if (reply.consultLocalExpert) ...[
+              const SizedBox(height: 12),
+              _CautionSection(
+                title: context.tr('localExpertRecommended'),
+                values: [context.tr('localExpertBody')],
+              ),
+            ],
+            if (reply.followUpQuestions.isNotEmpty) ...[
+              const SizedBox(height: 18),
+              Text(
+                context.tr('followUpQuestions'),
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final question in reply.followUpQuestions)
+                    ActionChip(
+                      avatar: const Icon(LucideIcons.cornerDownRight, size: 14),
+                      label: Text(question),
+                      onPressed: () => onFollowUp(question),
+                    ),
+                ],
+              ),
+            ],
+          ],
+          const SizedBox(height: 12),
+          _AssistantActions(
+            onCopy: onCopy,
+            onSpeak: onSpeak,
+            speaking: speaking,
+            feedback: feedback,
+            onFeedback: onFeedback,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _chatScopeCaption(ChatThreadModel chat) {
+  final scope = switch (chat.scope) {
+    'scan' => 'Scan context',
+    'plot' => 'Plot context',
+    'farm' => 'Farm context',
+    _ => 'Conversation context',
+  };
+  return [if (chat.scopeLabel != null) chat.scopeLabel!, scope].join(' · ');
+}
+
+class _NumberedStep extends StatelessWidget {
+  const _NumberedStep({required this.index, required this.text});
+
+  final int index;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 27,
+            height: 27,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: AppColors.youngLeaf.withValues(alpha: 0.13),
+              shape: BoxShape.circle,
+            ),
+            child: Text(
+              '${index + 1}',
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                color: AppColors.forest,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Text(text),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CollapsibleSection extends StatelessWidget {
+  const _CollapsibleSection({
+    required this.title,
+    required this.icon,
+    this.text,
+    this.values = const [],
+  });
+
+  final String title;
+  final IconData icon;
+  final String? text;
+  final List<String> values;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: AppColors.youngLeaf.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: ExpansionTile(
+        tilePadding: const EdgeInsets.symmetric(horizontal: 13),
+        childrenPadding: const EdgeInsets.fromLTRB(15, 0, 15, 14),
+        shape: const Border(),
+        collapsedShape: const Border(),
+        leading: Icon(icon, size: 18, color: AppColors.forest),
+        title: Text(title, style: Theme.of(context).textTheme.labelLarge),
+        children: [
+          if (text case final body?)
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: SelectableText(body),
+            ),
+          for (final value in values)
+            Padding(
+              padding: const EdgeInsets.only(top: 7),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.only(top: 7),
+                    child: CircleAvatar(
+                      radius: 2,
+                      backgroundColor: AppColors.leaf,
+                    ),
+                  ),
+                  const SizedBox(width: 9),
+                  Expanded(child: Text(value)),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CautionSection extends StatelessWidget {
+  const _CautionSection({required this.title, required this.values});
+
+  final String title;
+  final List<String> values;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: AppColors.amber.withValues(alpha: 0.11),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.amber.withValues(alpha: 0.25)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(13),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  LucideIcons.triangleAlert,
+                  size: 17,
+                  color: AppColors.soil,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: Theme.of(context).textTheme.labelLarge,
+                  ),
+                ),
+              ],
+            ),
+            for (final value in values)
+              Padding(
+                padding: const EdgeInsetsDirectional.only(start: 25, top: 6),
+                child: Text(value),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AssistantActions extends StatelessWidget {
+  const _AssistantActions({
+    required this.onCopy,
+    required this.onSpeak,
+    required this.speaking,
+    required this.onFeedback,
+    this.feedback,
+  });
+
+  final VoidCallback onCopy;
+  final VoidCallback onSpeak;
+  final bool speaking;
+  final bool? feedback;
+  final ValueChanged<bool> onFeedback;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 2,
+      runSpacing: 2,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        IconButton(
+          visualDensity: VisualDensity.compact,
+          tooltip: 'Copy response',
+          onPressed: onCopy,
+          icon: const Icon(LucideIcons.copy, size: 17),
+        ),
+        IconButton(
+          visualDensity: VisualDensity.compact,
+          tooltip: feedback == true ? 'Marked helpful' : 'Helpful',
+          onPressed: () => onFeedback(true),
+          color: feedback == true ? AppColors.leaf : null,
+          icon: const Icon(LucideIcons.thumbsUp, size: 17),
+        ),
+        IconButton(
+          visualDensity: VisualDensity.compact,
+          tooltip: feedback == false ? 'Marked not helpful' : 'Not helpful',
+          onPressed: () => onFeedback(false),
+          color: feedback == false ? AppColors.danger : null,
+          icon: const Icon(LucideIcons.thumbsDown, size: 17),
+        ),
+        TextButton.icon(
+          onPressed: onSpeak,
+          icon: Icon(
+            speaking ? LucideIcons.square : LucideIcons.volume2,
+            size: 16,
+          ),
+          label: Text(speaking ? 'Stop' : 'Read aloud'),
+        ),
+      ],
+    );
+  }
+}
+
+class _FloatingComposer extends StatelessWidget {
+  const _FloatingComposer({
+    required this.controller,
+    required this.focusNode,
+    required this.onAttach,
+    required this.voiceState,
+    required this.voiceElapsed,
+    required this.onVoice,
+    required this.onCancelVoice,
+    required this.onSend,
+  });
+
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final VoidCallback onAttach;
+  final VoiceComposerState voiceState;
+  final Duration voiceElapsed;
+  final VoidCallback onVoice;
+  final VoidCallback onCancelVoice;
+  final VoidCallback onSend;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      minimum: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720),
+          child: Material(
+            elevation: 8,
+            shadowColor: Colors.black.withValues(alpha: 0.12),
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.circular(28),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(6, 5, 5, 5),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  AnimatedSwitcher(
+                    duration: MediaQuery.disableAnimationsOf(context)
+                        ? Duration.zero
+                        : const Duration(milliseconds: 180),
+                    child: voiceState == VoiceComposerState.idle
+                        ? const SizedBox.shrink()
+                        : _VoiceComposerStatus(
+                            key: ValueKey(voiceState),
+                            state: voiceState,
+                            elapsed: voiceElapsed,
+                            onCancel: onCancelVoice,
+                          ),
+                  ),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      IconButton(
+                        tooltip: 'Add leaf photos',
+                        onPressed: voiceState == VoiceComposerState.idle
+                            ? onAttach
+                            : null,
+                        icon: const Icon(LucideIcons.plus),
+                      ),
+                      Expanded(
+                        child: TextField(
+                          key: const ValueKey('chat-composer'),
+                          controller: controller,
+                          focusNode: focusNode,
+                          minLines: 1,
+                          maxLines: 5,
+                          textCapitalization: TextCapitalization.sentences,
+                          decoration: InputDecoration(
+                            hintText: context.tr('askHint'),
+                            filled: false,
+                            border: InputBorder.none,
+                            enabledBorder: InputBorder.none,
+                            focusedBorder: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 11,
+                            ),
+                          ),
+                          enabled: voiceState == VoiceComposerState.idle,
+                          onSubmitted: (_) => onSend(),
+                        ),
+                      ),
+                      if (voiceState != VoiceComposerState.idle &&
+                          voiceState != VoiceComposerState.recording)
+                        const Padding(
+                          padding: EdgeInsets.all(12),
+                          child: SizedBox.square(
+                            dimension: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2.2),
+                          ),
+                        )
+                      else
+                        IconButton(
+                          key: const ValueKey('chat-voice-button'),
+                          tooltip: voiceState == VoiceComposerState.recording
+                              ? context.tr('voiceStop')
+                              : context.tr('voiceStart'),
+                          onPressed: onVoice,
+                          color: voiceState == VoiceComposerState.recording
+                              ? AppColors.amber
+                              : AppColors.forest,
+                          icon: Icon(
+                            voiceState == VoiceComposerState.recording
+                                ? LucideIcons.square
+                                : LucideIcons.mic,
+                          ),
+                        ),
+                      IconButton.filled(
+                        tooltip: context.tr('send'),
+                        onPressed: voiceState == VoiceComposerState.idle
+                            ? onSend
+                            : null,
+                        icon: const Icon(LucideIcons.arrowUp, size: 20),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _VoiceComposerStatus extends StatelessWidget {
+  const _VoiceComposerStatus({
+    super.key,
+    required this.state,
+    required this.elapsed,
+    required this.onCancel,
+  });
+
+  final VoiceComposerState state;
+  final Duration elapsed;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final recording = state == VoiceComposerState.recording;
+    final minutes = elapsed.inMinutes.toString().padLeft(2, '0');
+    final seconds = (elapsed.inSeconds % 60).toString().padLeft(2, '0');
+    return Semantics(
+      liveRegion: true,
+      label: recording
+          ? context.tr('voiceRecording', {'time': '$minutes:$seconds'})
+          : context.tr('voiceTranscribing'),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 4, 4, 0),
+        child: Row(
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: AppColors.amber,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                recording
+                    ? context.tr('voiceRecording', {
+                        'time': '$minutes:$seconds',
+                      })
+                    : context.tr('voiceTranscribing'),
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+            ),
+            if (recording)
+              TextButton(
+                onPressed: onCancel,
+                child: Text(context.tr('cancel')),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ThinkingIndicator extends StatefulWidget {
+  const _ThinkingIndicator({required this.queuedCount});
+
+  final int queuedCount;
+
+  @override
+  State<_ThinkingIndicator> createState() => _ThinkingIndicatorState();
+}
+
+class _ThinkingIndicatorState extends State<_ThinkingIndicator>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1100),
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _controller
+        ..stop()
+        ..value = 0.5;
+    } else if (!_controller.isAnimating) {
+      _controller.repeat();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      liveRegion: true,
+      label: context.tr('saathiThinking'),
+      child: Padding(
+        key: const ValueKey('saathi-thinking-indicator'),
+        padding: const EdgeInsets.only(bottom: 20),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 30,
+              height: 30,
+              decoration: BoxDecoration(
+                color: AppColors.youngLeaf.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                LucideIcons.sprout,
+                size: 16,
+                color: AppColors.leaf,
+              ),
+            ),
+            const SizedBox(width: 9),
+            AnimatedBuilder(
+              animation: _controller,
+              builder: (context, _) => Row(
+                children: List.generate(3, (index) {
+                  final phase = _controller.value * math.pi * 2 - index * 0.8;
+                  final opacity = 0.25 + ((math.sin(phase) + 1) / 2) * 0.75;
+                  return Container(
+                    width: 6,
+                    height: 6,
+                    margin: const EdgeInsets.symmetric(horizontal: 2),
+                    decoration: BoxDecoration(
+                      color: AppColors.leaf.withValues(alpha: opacity),
+                      shape: BoxShape.circle,
+                    ),
+                  );
+                }),
+              ),
+            ),
+            if (widget.queuedCount > 0) ...[
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  context.tr('saathiThinkingQueued', {
+                    'count': widget.queuedCount,
+                  }),
+                  style: Theme.of(context).textTheme.labelSmall
+                      ?.copyWith(color: AppColors.mutedInk),
+                ),
+              ),
+            ],
           ],
         ),
       ),

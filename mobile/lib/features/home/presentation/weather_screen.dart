@@ -11,79 +11,55 @@ import '../../../core/ui/app_ui.dart';
 import '../../shared/presentation/app_controller.dart';
 
 class WeatherScreen extends StatefulWidget {
-  const WeatherScreen({super.key, this.initialPlotId});
-
-  final String? initialPlotId;
+  const WeatherScreen({super.key});
 
   @override
   State<WeatherScreen> createState() => _WeatherScreenState();
 }
 
 class _WeatherScreenState extends State<WeatherScreen> {
-  String? _plotId;
-  bool _loading = false;
-  ApiException? _error;
-
   @override
   void initState() {
     super.initState();
-    _plotId = widget.initialPlotId;
-    WidgetsBinding.instance.addPostFrameCallback((_) => _initialLoad());
-  }
-
-  Future<void> _initialLoad() async {
-    final controller = context.read<AppController>();
-    _plotId ??= controller.farms.expand((farm) => farm.plots).firstOrNull?.id;
-    if (controller.weather == null && controller.locationEnabled) {
-      try {
-        await controller.refreshCurrentWeather(requestPermission: false);
-      } on ApiException {
-        // The phone card has its own recoverable state.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final controller = context.read<AppController>();
+      if (controller.weather == null && controller.locationEnabled) {
+        await _refresh(requestPermission: false);
       }
-    }
-    await _loadPlot();
+    });
   }
 
-  Future<void> _loadPlot() async {
-    final plotId = _plotId;
-    if (plotId == null) return;
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  Future<void> _refresh({bool requestPermission = true}) async {
     try {
-      await context.read<AppController>().loadPlotWeather(plotId);
+      await context.read<AppController>().refreshCurrentWeather(
+        requestPermission: requestPermission,
+      );
     } on ApiException catch (error) {
-      _error = error;
-    } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
-    final plots = controller.farms
-        .expand((farm) => farm.plots)
-        .toList(growable: false);
-    final selectedPlot = _plotId == null ? null : controller.plotById(_plotId!);
-    final plotWeather = _plotId == null
-        ? null
-        : controller.plotWeather[_plotId!];
-
+    final weather = controller.weather;
     return Scaffold(
-      appBar: AppBar(title: Text(context.tr('weather'))),
+      appBar: AppBar(
+        title: Text(context.tr('weather')),
+        actions: [
+          IconButton(
+            tooltip: 'Refresh current weather',
+            onPressed: controller.locationEnabled ? _refresh : null,
+            icon: const Icon(LucideIcons.refreshCw, size: 20),
+          ),
+        ],
+      ),
       body: SafeArea(
         top: false,
         child: RefreshIndicator(
-          onRefresh: () async {
-            if (controller.locationEnabled) {
-              await controller.refreshCurrentWeather();
-            }
-            await _loadPlot();
-          },
+          onRefresh: _refresh,
           child: AppContent(
-            maxWidth: 1040,
+            maxWidth: 760,
             child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.only(top: 12, bottom: 40),
@@ -92,131 +68,35 @@ class _WeatherScreenState extends State<WeatherScreen> {
                   'Weather for better field decisions',
                   style: Theme.of(context).textTheme.headlineMedium,
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 5),
                 Text(
-                  'Phone conditions use your current location. Plot forecasts use the confirmed map point saved with each plot.',
+                  'Live conditions from this phone’s current location.',
                   style: Theme.of(context).textTheme.bodyMedium
                       ?.copyWith(color: AppColors.mutedInk),
                 ),
-                const SizedBox(height: 22),
-                SectionHeader(
-                  title: 'Near you now',
-                  action: IconButton(
-                    tooltip: 'Refresh current weather',
-                    onPressed: controller.locationEnabled
-                        ? () async {
-                            try {
-                              await controller.refreshCurrentWeather();
-                            } on ApiException catch (error) {
-                              if (context.mounted) {
-                                showAppSnackBar(
-                                  context,
-                                  context.localizedError(error),
-                                );
-                              }
-                            }
-                          }
-                        : null,
-                    icon: const Icon(LucideIcons.refreshCw),
-                  ),
-                ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 20),
                 if (!controller.locationEnabled)
-                  AppStateView(
-                    kind: AppStateKind.empty,
-                    title: 'Location is turned off',
-                    message: 'Enable location in Privacy settings to see phone weather. Plot forecasts remain available.',
-                    actionLabel: 'Open privacy settings',
-                    onAction: () => context.push('/settings/privacy'),
-                    compact: true,
+                  _LocationRequired(
+                    onOpenSettings: () {
+                      context.push('/settings/privacy');
+                    },
                   )
-                else if (controller.weather case final weather?)
-                  _CurrentWeatherCard(weather: weather)
-                else
+                else if (weather != null) ...[
+                  _WeatherHero(weather: weather),
+                  const SizedBox(height: 22),
+                  _ConditionsGrid(weather: weather),
+                  const SizedBox(height: 18),
+                  _FieldNote(weather: weather),
+                ] else
                   AppStateView(
                     kind: AppStateKind.empty,
-                    title: 'Current weather is not loaded',
-                    message: 'Pull down or tap refresh to use the phone’s current location.',
+                    title: 'Weather is not loaded yet',
+                    message:
+                        'Load conditions using this phone’s current location.',
                     actionLabel: 'Load weather',
-                    onAction: () => controller.refreshCurrentWeather(),
+                    onAction: _refresh,
                     compact: true,
                   ),
-                const SizedBox(height: 28),
-                SectionHeader(
-                  title: 'Plot forecast',
-                  subtitle: 'Current conditions and the next seven days',
-                ),
-                const SizedBox(height: 12),
-                if (plots.isEmpty)
-                  AppStateView(
-                    kind: AppStateKind.empty,
-                    title: 'Add a plot for field forecasts',
-                    message: 'A confirmed plot location lets KrishiSathi show local conditions and forecasts.',
-                    actionLabel: context.tr('addFarm'),
-                    onAction: () => context.go('/farm'),
-                    compact: true,
-                  )
-                else ...[
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        for (final plot in plots) ...[
-                          ChoiceChip(
-                            avatar: const Icon(LucideIcons.mapPin, size: 16),
-                            label: Text(plot.name),
-                            selected: _plotId == plot.id,
-                            onSelected: (_) {
-                              setState(() => _plotId = plot.id);
-                              _loadPlot();
-                            },
-                          ),
-                          const SizedBox(width: 8),
-                        ],
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  if (selectedPlot != null)
-                    InlineNotice(
-                      title: selectedPlot.name,
-                      message:
-                          selectedPlot.locationLabel ??
-                          '${selectedPlot.latitude.toStringAsFixed(4)}, ${selectedPlot.longitude.toStringAsFixed(4)}',
-                      icon: LucideIcons.mapPinned,
-                    ),
-                  const SizedBox(height: 14),
-                  if (_loading && plotWeather == null)
-                    const AppStateView(
-                      kind: AppStateKind.loading,
-                      title: 'Loading plot forecast',
-                      message: 'Checking current and upcoming conditions.',
-                      compact: true,
-                    )
-                  else if (_error != null && plotWeather == null)
-                    AppStateView(
-                      kind: AppStateKind.error,
-                      title: 'Plot weather could not be loaded',
-                      message: _error!.message,
-                      actionLabel: context.tr('retry'),
-                      onAction: _loadPlot,
-                      compact: true,
-                    )
-                  else if (plotWeather != null) ...[
-                    if (plotWeather.isStale) ...[
-                      const InlineNotice(
-                        title: 'Saved weather shown',
-                        message: 'The live provider could not be reached. Check the updated time before making weather-sensitive decisions.',
-                        color: AppColors.amber,
-                        icon: LucideIcons.history,
-                      ),
-                      const SizedBox(height: 12),
-                    ],
-                    _CurrentWeatherCard(weather: plotWeather.current),
-                    const SizedBox(height: 18),
-                    _ForecastStrip(days: plotWeather.forecast),
-                  ],
-                ],
               ],
             ),
           ),
@@ -226,8 +106,8 @@ class _WeatherScreenState extends State<WeatherScreen> {
   }
 }
 
-class _CurrentWeatherCard extends StatelessWidget {
-  const _CurrentWeatherCard({required this.weather});
+class _WeatherHero extends StatelessWidget {
+  const _WeatherHero({required this.weather});
 
   final WeatherSnapshot weather;
 
@@ -235,185 +115,249 @@ class _CurrentWeatherCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final label =
         weather.conditionLabel ?? _conditionLabel(weather.conditionCode);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: const Color(0xFFE8F2F5),
-        borderRadius: BorderRadius.circular(AppRadius.medium),
-        border: Border.all(color: const Color(0xFFCDE0E6)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final wide = constraints.maxWidth >= 560;
-            final headline = Row(
-              children: [
-                Icon(
-                  _conditionIcon(weather.conditionCode),
-                  size: 38,
-                  color: AppColors.sky,
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        label,
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                      Text(
-                        weather.isStale
-                            ? context.tr('weatherStale')
-                            : context.tr('lastUpdated', {
-                                'time': context.strings.formatTime(
-                                  weather.fetchedAt.toLocal(),
-                                ),
-                              }),
-                        style: Theme.of(context).textTheme.bodySmall
-                            ?.copyWith(color: AppColors.mutedInk),
-                      ),
-                    ],
-                  ),
-                ),
-                Text(
-                  '${weather.temperature.round()}°',
-                  style: Theme.of(context).textTheme.displaySmall
-                      ?.copyWith(color: AppColors.forest),
-                ),
-              ],
-            );
-            final metrics = Row(
-              children: [
-                Expanded(
-                  child: MetricCell(
-                    icon: LucideIcons.cloudRain,
-                    value: weather.rainLastHourMm == null
-                        ? '${weather.rainChance}%'
-                        : '${weather.rainLastHourMm!.toStringAsFixed(1)} mm',
-                    label: weather.rainLastHourMm == null
-                        ? context.tr('rainChance')
-                        : 'Rain in last hour',
-                    color: AppColors.sky,
-                  ),
-                ),
-                Expanded(
-                  child: MetricCell(
-                    icon: LucideIcons.droplets,
-                    value: '${weather.humidity}%',
-                    label: context.tr('humidity'),
-                    color: AppColors.sky,
-                  ),
-                ),
-                Expanded(
-                  child: MetricCell(
-                    icon: LucideIcons.wind,
-                    value: '${weather.windKph.round()} km/h',
-                    label: context.tr('wind'),
-                    color: AppColors.soil,
-                  ),
-                ),
-              ],
-            );
-            if (!wide) {
-              return Column(
+    return Semantics(
+      label: '$label, ${weather.temperature.round()} degrees',
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xFF234837),
+          borderRadius: BorderRadius.circular(AppRadius.medium),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 18, 18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 children: [
-                  headline,
-                  const SizedBox(height: 18),
-                  const Divider(),
-                  const SizedBox(height: 12),
-                  metrics,
+                  Container(
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF1DCA8).withValues(alpha: 0.16),
+                      borderRadius: BorderRadius.circular(AppRadius.medium),
+                    ),
+                    child: Icon(
+                      _conditionIcon(weather.conditionCode),
+                      color: const Color(0xFFF1C85B),
+                      size: 28,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '${weather.temperature.round()}°',
+                    style: Theme.of(context).textTheme.displaySmall?.copyWith(
+                      color: const Color(0xFFF6F1E5),
+                      fontSize: 44,
+                    ),
+                  ),
                 ],
-              );
-            }
-            return Row(
-              children: [
-                Expanded(flex: 3, child: headline),
-                const SizedBox(width: 20),
-                Expanded(flex: 4, child: metrics),
-              ],
-            );
-          },
+              ),
+              const SizedBox(height: 24),
+              Text(
+                label,
+                style: Theme.of(context).textTheme.headlineMedium
+                    ?.copyWith(color: const Color(0xFFF6F1E5)),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                weather.isStale
+                    ? context.tr('weatherStale')
+                    : context.tr('lastUpdated', {
+                        'time': context.strings.formatTime(
+                          weather.fetchedAt.toLocal(),
+                        ),
+                      }),
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFFF6F1E5).withValues(alpha: 0.68),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _ForecastStrip extends StatelessWidget {
-  const _ForecastStrip({required this.days});
+class _ConditionsGrid extends StatelessWidget {
+  const _ConditionsGrid({required this.weather});
 
-  final List<ForecastDayModel> days;
+  final WeatherSnapshot weather;
 
   @override
   Widget build(BuildContext context) {
-    if (days.isEmpty) {
-      return const AppStateView(
-        kind: AppStateKind.empty,
-        title: 'No forecast available',
-        message: 'Current conditions are still available above.',
-        compact: true,
-      );
-    }
-    return SizedBox(
-      height: 184,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: days.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 10),
-        itemBuilder: (context, index) {
-          final day = days[index];
-          return SizedBox(
-            width: 132,
-            child: Card(
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final items = <_ConditionData>[
+      _ConditionData(
+        icon: LucideIcons.cloudRain,
+        value: weather.rainLastHourMm == null
+            ? '${weather.rainChance}%'
+            : '${weather.rainLastHourMm!.toStringAsFixed(1)} mm',
+        label: weather.rainLastHourMm == null
+            ? context.tr('rainChance')
+            : 'Rain in the last hour',
+      ),
+      _ConditionData(
+        icon: LucideIcons.droplets,
+        value: '${weather.humidity}%',
+        label: context.tr('humidity'),
+      ),
+      _ConditionData(
+        icon: LucideIcons.wind,
+        value: '${weather.windKph.round()} km/h',
+        label: context.tr('wind'),
+      ),
+    ];
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 560 ? 3 : 1;
+        return GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: items.length,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 10,
+            mainAxisExtent: 92,
+          ),
+          itemBuilder: (context, index) {
+            final item = items[index];
+            return DecoratedBox(
+              decoration: BoxDecoration(
+                color: dark ? const Color(0xFF26382E) : const Color(0xFFE3E8D8),
+                borderRadius: BorderRadius.circular(AppRadius.medium),
+              ),
               child: Padding(
                 padding: const EdgeInsets.all(14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: Row(
                   children: [
-                    Text(
-                      index == 0
-                          ? context.tr('date.today')
-                          : context.tr('weekday.short.${day.date.weekday}'),
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    Text(
-                      context.strings.formatShortDate(day.date),
-                      style: Theme.of(context).textTheme.bodySmall
-                          ?.copyWith(color: AppColors.mutedInk),
-                    ),
-                    const Spacer(),
                     Icon(
-                      _conditionIcon(day.conditionCode),
-                      color: AppColors.sky,
-                      size: 28,
+                      item.icon,
+                      color: dark ? AppColors.youngLeaf : AppColors.forest,
+                      size: 21,
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '${day.maximumTemperature.round()}° / ${day.minimumTemperature.round()}°',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        const Icon(
-                          LucideIcons.cloudRain,
-                          size: 14,
-                          color: AppColors.sky,
-                        ),
-                        const SizedBox(width: 4),
-                        Text('${day.rainChance}%'),
-                      ],
+                    const SizedBox(width: 11),
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            item.value,
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          Text(
+                            item.label,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  color: dark
+                                      ? Colors.white.withValues(alpha: 0.68)
+                                      : AppColors.mutedInk,
+                                ),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
               ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _FieldNote extends StatelessWidget {
+  const _FieldNote({required this.weather});
+
+  final WeatherSnapshot weather;
+
+  String get _message {
+    if (weather.isStale) {
+      return 'Refresh before making a weather-sensitive field decision.';
+    }
+    if ((weather.rainLastHourMm ?? 0) > 0 || weather.rainChance >= 60) {
+      return 'Rain is likely. Keep harvested produce covered and inspect drainage.';
+    }
+    if (weather.windKph >= 25) {
+      return 'Strong wind today. Secure light covers before starting field work.';
+    }
+    if (weather.temperature >= 35) {
+      return 'Hot conditions. Prefer early-morning crop inspection and carry water.';
+    }
+    return 'Conditions look suitable for a routine crop inspection.';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: dark ? const Color(0xFF3B321F) : const Color(0xFFF0E2BC),
+        borderRadius: BorderRadius.circular(AppRadius.medium),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              LucideIcons.wheat,
+              color: dark ? const Color(0xFFF1C85B) : const Color(0xFF76591B),
+              size: 21,
             ),
-          );
-        },
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Field note',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 3),
+                  Text(_message, style: Theme.of(context).textTheme.bodyMedium),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
+}
+
+class _LocationRequired extends StatelessWidget {
+  const _LocationRequired({required this.onOpenSettings});
+
+  final VoidCallback onOpenSettings;
+
+  @override
+  Widget build(BuildContext context) => AppStateView(
+    kind: AppStateKind.empty,
+    title: 'Turn on location for weather',
+    message: 'KrishiSathi uses this phone’s current location only when loading weather.',
+    actionLabel: 'Open privacy settings',
+    onAction: onOpenSettings,
+    compact: true,
+  );
+}
+
+class _ConditionData {
+  const _ConditionData({
+    required this.icon,
+    required this.value,
+    required this.label,
+  });
+
+  final IconData icon;
+  final String value;
+  final String label;
 }
 
 IconData _conditionIcon(String code) {

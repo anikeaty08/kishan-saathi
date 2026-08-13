@@ -127,6 +127,20 @@
   "plotScope": "Plot",
   "askHint": "Ask about your crop or field…",
   "send": "Send",
+  "voiceStart": "Speak",
+  "voiceStop": "Stop recording",
+  "voiceRecording": "Listening · {time}",
+  "@voiceRecording": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "voiceTranscribing": "Preparing your transcript…",
+  "voiceTranscriptReady": "Transcript ready. Review it, then tap Send.",
+  "voiceAiDisclosure": "Playing an AI-generated voice.",
+  "voiceUnavailable": "Voice is not available right now. You can still type your message.",
   "chatOffline": "Saathi needs an internet connection.",
   "chatQueued": "Queued",
   "chatProcessing": "Sending",
@@ -207,6 +221,18 @@
   "error.CROP_HAS_LINKED_DATA": "This crop still has linked history. Review it before deleting the crop.",
   "error.CHAT_NOT_FOUND": "This conversation is no longer available.",
   "error.CHAT_ARCHIVED": "Restore this conversation before sending another message.",
+  "error.VOICE_PERMISSION_DENIED": "Allow microphone access to record a message.",
+  "error.VOICE_REQUIRES_CONNECTION": "Sign in and connect to the internet to use voice.",
+  "error.VOICE_AUDIO_REQUIRED": "Record a message before requesting a transcript.",
+  "error.VOICE_RECORDING_FAILED": "The recording could not be prepared. Please try again.",
+  "error.VOICE_AUDIO_TOO_LARGE": "That recording is too large. Please record a shorter message.",
+  "error.VOICE_AUDIO_FORMAT_UNSUPPORTED": "That audio format is not supported. Please record again in the app.",
+  "error.VOICE_TRANSCRIPT_EMPTY": "We could not hear speech clearly. Please try again closer to the microphone.",
+  "error.VOICE_TRANSCRIPT_TOO_LONG": "That recording is too long. Please ask in a shorter message.",
+  "error.VOICE_TEMPORARILY_UNAVAILABLE": "Voice is temporarily unavailable. You can still type your message.",
+  "error.VOICE_PROVIDER_FAILED": "Voice could not be processed right now. Please try again.",
+  "error.VOICE_AUTHENTICATION_FAILED": "Voice is temporarily unavailable. You can still type your message.",
+  "error.VOICE_TEXT_TOO_LONG": "This response is too long to read aloud.",
   "error.LLM_NOT_CONFIGURED": "Saathi is not connected yet.",
   "error.LLM_TEMPORARILY_UNAVAILABLE": "Saathi is temporarily unavailable. Your message was not lost.",
   "error.LLM_UNSAFE_OUTPUT_BLOCKED": "Saathi withheld an answer that did not meet the safety rules.",

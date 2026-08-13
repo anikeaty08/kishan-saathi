@@ -16,6 +16,7 @@ import 'features/profile/data/memory_repository.dart';
 import 'features/profile/data/reminder_repository.dart';
 import 'features/saathi/data/chat_repository.dart';
 import 'features/saathi/data/chat_outbox_store.dart';
+import 'features/saathi/data/voice_repository.dart';
 import 'features/scan/data/diagnosis_repository.dart';
 import 'features/scan/data/scan_queue_repository.dart';
 import 'features/shared/presentation/app_controller.dart';
@@ -41,6 +42,7 @@ Future<void> main() async {
     locationRepository: LocationRepository(api),
     chatRepository: ChatRepository(api),
     chatOutboxStore: SecureChatOutboxStore(),
+    voiceRepository: VoiceRepository(api),
     diagnosisRepository: DiagnosisRepository(api),
     weatherRepository: WeatherRepository(api),
     reminderRepository: ReminderRepository(api),

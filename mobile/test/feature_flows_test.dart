@@ -139,11 +139,11 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Weather for better field decisions'), findsOneWidget);
-      if (find.text('Plot forecast').evaluate().isEmpty) {
-        await tester.drag(find.byType(ListView).first, const Offset(0, -430));
-        await tester.pumpAndSettle();
-      }
-      expect(find.text('Plot forecast'), findsOneWidget);
+      expect(
+        find.text('Live conditions from this phone’s current location.'),
+        findsOneWidget,
+      );
+      expect(find.text('Plot forecast'), findsNothing);
       expect(tester.takeException(), isNull);
     });
   }

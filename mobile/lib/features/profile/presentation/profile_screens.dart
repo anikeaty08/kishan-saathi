@@ -32,14 +32,10 @@ class ProfileScreen extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
                 child: Row(
                   children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(AppRadius.medium),
-                      child: Image.asset(
-                        'assets/images/farmer_portrait.jpg',
-                        width: 76,
-                        height: 76,
-                        fit: BoxFit.cover,
-                      ),
+                    InitialAvatar(
+                      name: controller.farmerName,
+                      size: 76,
+                      semanticLabel: controller.farmerName,
                     ),
                     const SizedBox(width: 16),
                     Expanded(
@@ -418,8 +414,17 @@ class LanguageSettingsScreen extends StatelessWidget {
                 trailing: isSelected
                     ? const Icon(LucideIcons.circleCheck, color: AppColors.leaf)
                     : null,
-                onTap: () =>
-                    context.read<AppController>().setLocale(language.code),
+                onTap: () async {
+                  try {
+                    await context.read<AppController>().setLocale(
+                      language.code,
+                    );
+                  } on ApiException catch (error) {
+                    if (context.mounted) {
+                      showAppSnackBar(context, context.localizedError(error));
+                    }
+                  }
+                },
               );
             },
           ),

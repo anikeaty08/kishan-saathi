@@ -78,6 +78,7 @@ GoRouter createAppRouter(AppController controller) {
                   key: ValueKey(state.uri.toString()),
                   initialPlotId: state.uri.queryParameters['plot'],
                   retakeCaseId: state.uri.queryParameters['retake'],
+                  initialImageSource: state.uri.queryParameters['source'],
                 ),
               ),
             ],
@@ -92,8 +93,7 @@ GoRouter createAppRouter(AppController controller) {
       GoRoute(
         path: '/weather',
         parentNavigatorKey: rootKey,
-        builder: (_, state) =>
-            WeatherScreen(initialPlotId: state.uri.queryParameters['plot']),
+        builder: (_, _) => const WeatherScreen(),
       ),
       GoRoute(
         path: '/profile',

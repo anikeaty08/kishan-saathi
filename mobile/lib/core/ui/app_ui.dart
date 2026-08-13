@@ -51,6 +51,68 @@ class BrandMark extends StatelessWidget {
   }
 }
 
+class InitialAvatar extends StatelessWidget {
+  const InitialAvatar({
+    super.key,
+    required this.name,
+    this.size = 44,
+    this.semanticLabel,
+  });
+
+  final String name;
+  final double size;
+  final String? semanticLabel;
+
+  String get _initials {
+    final words = name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((word) => word.isNotEmpty)
+        .toList();
+    if (words.isEmpty) return '?';
+    final first = words.first.characters.first;
+    if (words.length == 1) return first.toUpperCase();
+    return '$first${words.last.characters.first}'.toUpperCase();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = <(Color, Color)>[
+      (const Color(0xFFDCE8D5), AppColors.forest),
+      (const Color(0xFFF1DCA8), const Color(0xFF59431B)),
+      (const Color(0xFFD6E5EA), const Color(0xFF214E61)),
+      (const Color(0xFFE5D9CC), AppColors.soil),
+    ];
+    final index =
+        name.runes.fold<int>(0, (sum, rune) => sum + rune) % palette.length;
+    final colors = palette[index];
+    return Semantics(
+      image: true,
+      label: semanticLabel ?? name,
+      child: Container(
+        width: size,
+        height: size,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: colors.$1,
+          borderRadius: BorderRadius.circular(size * 0.28),
+          border: Border.all(color: colors.$2.withValues(alpha: 0.14)),
+        ),
+        child: Text(
+          _initials,
+          maxLines: 1,
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            color: colors.$2,
+            fontWeight: FontWeight.w800,
+            fontSize: size * 0.34,
+            letterSpacing: -0.3,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class AppContent extends StatelessWidget {
   const AppContent({
     super.key,

@@ -107,6 +107,13 @@ class KrishiApi {
   );
   Future<Object?> diagnosisAssessments(String id) =>
       client.get(ApiEndpoints.diagnosisAssessments(id));
+  Future<Object?> compareDiagnosisProgression(
+    String id, {
+    required String responseLanguage,
+  }) => client.post(
+    ApiEndpoints.diagnosisProgression(id),
+    body: {'response_language': responseLanguage},
+  );
   Future<Object?> diagnosisImages(String id) =>
       client.get(ApiEndpoints.diagnosisImages(id));
   Future<List<int>> diagnosisImage(String id, String imageId) =>
@@ -147,6 +154,20 @@ class KrishiApi {
       client.get(ApiEndpoints.chatTurn(chatId, turnId));
   Future<Object?> retryChatTurn(String chatId, String turnId) =>
       client.post(ApiEndpoints.chatTurnRetry(chatId, turnId));
+
+  Future<Object?> transcribeChatAudio(String chatId, String filePath) =>
+      client.multipart(
+        ApiEndpoints.voiceTranscription(chatId),
+        fields: const {},
+        filePaths: [filePath],
+        fileField: 'audio',
+      );
+
+  Future<List<int>> assistantSpeech(String chatId, String messageId) =>
+      client.postBytes(
+        ApiEndpoints.assistantSpeech(chatId, messageId),
+        headers: const {'Accept': 'audio/mpeg'},
+      );
 
   Future<Object?> connectChatMemory(String id, Map<String, Object?> body) =>
       client.post(ApiEndpoints.chatMemoryConnection(id), body: body);

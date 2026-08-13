@@ -16,83 +16,153 @@ class WelcomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          Image.asset(
-            'assets/images/hero_farm_bg.jpg',
-            fit: BoxFit.cover,
-            alignment: const Alignment(0.2, 0),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth >= 840) {
+            return Row(
+              children: [
+                const Expanded(flex: 6, child: _WelcomeHeroImage()),
+                Expanded(
+                  flex: 4,
+                  child: SafeArea(
+                    child: SingleChildScrollView(
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          minHeight:
+                              constraints.maxHeight -
+                              MediaQuery.paddingOf(context).vertical,
+                        ),
+                        child: const _WelcomeContent(),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          }
+
+          final textScale = MediaQuery.textScalerOf(context).scale(1);
+          final shortViewport = constraints.maxHeight < 650;
+          final heroHeight =
+              (constraints.maxHeight * (shortViewport ? 0.30 : 0.49))
+                  .clamp(
+                    shortViewport ? 160.0 : 280.0,
+                    textScale > 1.4 ? 380.0 : 460.0,
+                  )
+                  .toDouble();
+          return CustomScrollView(
+            slivers: [
+              SliverToBoxAdapter(
+                child: SizedBox(
+                  height: heroHeight,
+                  child: const _WelcomeHeroImage(),
+                ),
+              ),
+              SliverToBoxAdapter(
+                child: SafeArea(
+                  top: false,
+                  child: _WelcomeContent(compact: shortViewport),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _WelcomeHeroImage extends StatelessWidget {
+  const _WelcomeHeroImage();
+
+  @override
+  Widget build(BuildContext context) => Stack(
+    fit: StackFit.expand,
+    children: [
+      Image.asset(
+        'assets/images/welcome_field.webp',
+        fit: BoxFit.cover,
+        alignment: Alignment.bottomCenter,
+        semanticLabel: 'Farmer holding a young plant in a field',
+        errorBuilder: (_, _, _) => Image.asset(
+          'assets/images/hero_farm_bg.jpg',
+          fit: BoxFit.cover,
+          alignment: Alignment.center,
+        ),
+      ),
+      const DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0x08000000), Color(0x2E14231B)],
           ),
-          const DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Color(0x33000000),
-                  Color(0x52000000),
-                  Color(0xE8112018),
-                ],
-                stops: [0, 0.45, 1],
+        ),
+      ),
+    ],
+  );
+}
+
+class _WelcomeContent extends StatelessWidget {
+  const _WelcomeContent({this.compact = false});
+
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return ColoredBox(
+      color: dark ? const Color(0xFF101B15) : const Color(0xFFF3F0E6),
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(24, compact ? 18 : 26, 24, 24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            BrandMark(size: compact ? 36 : 42),
+            SizedBox(height: compact ? 18 : 28),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: Text(
+                context.tr('welcomeTitle'),
+                style: Theme.of(context).textTheme.displaySmall,
               ),
             ),
-          ),
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(24, 18, 24, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const BrandMark(dark: true),
-                  const Spacer(),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 520),
-                    child: Text(
-                      context.tr('welcomeTitle'),
-                      style: Theme.of(context).textTheme.displaySmall
-                          ?.copyWith(color: Colors.white),
-                    ),
+            if (!compact) ...[
+              const SizedBox(height: 12),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 500),
+                child: Text(
+                  context.tr('welcomeBody'),
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                    color: dark
+                        ? Colors.white.withValues(alpha: 0.72)
+                        : AppColors.mutedInk,
                   ),
-                  const SizedBox(height: 14),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 500),
-                    child: Text(
-                      context.tr('welcomeBody'),
-                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                        color: Colors.white.withValues(alpha: 0.88),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 26),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: AppColors.forest,
-                      ),
-                      onPressed: () => context.push('/auth'),
-                      child: Text(context.tr('getStarted')),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    width: double.infinity,
-                    child: TextButton(
-                      onPressed: () => context.push('/onboarding/language'),
-                      style: TextButton.styleFrom(
-                        foregroundColor: Colors.white,
-                        minimumSize: const Size.fromHeight(48),
-                      ),
-                      child: Text(context.tr('chooseLanguage')),
-                    ),
-                  ),
-                ],
+                ),
+              ),
+            ],
+            SizedBox(height: compact ? 18 : 26),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () => context.push('/auth'),
+                child: Text(context.tr('getStarted')),
               ),
             ),
-          ),
-        ],
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: TextButton(
+                onPressed: () => context.push('/onboarding/language'),
+                style: TextButton.styleFrom(
+                  minimumSize: const Size.fromHeight(48),
+                ),
+                child: Text(context.tr('chooseLanguage')),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -240,8 +310,31 @@ class _AuthScreenState extends State<AuthScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const BrandMark(size: 46),
-          const SizedBox(height: 28),
+          const BrandMark(size: 42),
+          const SizedBox(height: 22),
+          SizedBox(
+            width: double.infinity,
+            child: SegmentedButton<bool>(
+              showSelectedIcon: false,
+              segments: [
+                ButtonSegment<bool>(
+                  value: false,
+                  icon: const Icon(LucideIcons.logIn, size: 18),
+                  label: Text(context.tr('signIn')),
+                ),
+                ButtonSegment<bool>(
+                  value: true,
+                  icon: const Icon(LucideIcons.userPlus, size: 18),
+                  label: Text(context.tr('createAccount')),
+                ),
+              ],
+              selected: {_createAccount},
+              onSelectionChanged: (selection) {
+                setState(() => _createAccount = selection.single);
+              },
+            ),
+          ),
+          const SizedBox(height: 26),
           Text(
             _createAccount ? context.tr('createAccount') : context.tr('signIn'),
             style: Theme.of(context).textTheme.headlineLarge,
@@ -339,22 +432,11 @@ class _AuthScreenState extends State<AuthScreen> {
             ),
           ),
           const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton(
-              onPressed: () => context.go('/onboarding/profile?preview=true'),
-              child: Text(context.tr('usePreview')),
-            ),
-          ),
-          const SizedBox(height: 12),
           Center(
-            child: TextButton(
-              onPressed: () => setState(() => _createAccount = !_createAccount),
-              child: Text(
-                _createAccount
-                    ? 'Already have an account? Sign in'
-                    : 'New to KrishiSathi? Create account',
-              ),
+            child: TextButton.icon(
+              onPressed: () => context.go('/onboarding/profile?preview=true'),
+              icon: const Icon(LucideIcons.eye, size: 17),
+              label: Text(context.tr('usePreview')),
             ),
           ),
         ],
@@ -376,7 +458,7 @@ class _AuthHero extends StatelessWidget {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(AppRadius.medium),
         child: SizedBox(
-          height: expanded ? double.infinity : 156,
+          height: expanded ? double.infinity : 132,
           width: double.infinity,
           child: Image.asset(
             'assets/images/auth_field_hero.webp',
@@ -832,9 +914,20 @@ class LanguageSetupScreen extends StatelessWidget {
                                 color: AppColors.leaf,
                               )
                             : null,
-                        onTap: () => context.read<AppController>().setLocale(
-                          language.code,
-                        ),
+                        onTap: () async {
+                          try {
+                            await context.read<AppController>().setLocale(
+                              language.code,
+                            );
+                          } on ApiException catch (error) {
+                            if (context.mounted) {
+                              showAppSnackBar(
+                                context,
+                                context.localizedError(error),
+                              );
+                            }
+                          }
+                        },
                       ),
                     );
                   },

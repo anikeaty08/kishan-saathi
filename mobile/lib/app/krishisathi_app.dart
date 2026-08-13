@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../core/localization/app_strings.dart';
 import '../core/theme/app_theme.dart';
 import '../features/shared/presentation/app_controller.dart';
+import 'app_launch_reveal.dart';
 import 'app_router.dart';
 
 class KrishiSathiApp extends StatefulWidget {
@@ -69,7 +70,9 @@ class _KrishiSathiAppState extends State<KrishiSathiApp> {
                   textDirection: controller.selectedLanguage.rtl
                       ? TextDirection.rtl
                       : TextDirection.ltr,
-                  child: child ?? const SizedBox.shrink(),
+                  child: AppLaunchReveal(
+                    child: child ?? const SizedBox.shrink(),
+                  ),
                 ),
               );
             },

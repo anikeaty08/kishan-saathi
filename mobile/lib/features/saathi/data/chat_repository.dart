@@ -21,8 +21,10 @@ class ChatRepository {
 
   final KrishiApi _api;
 
-  Future<List<ChatThreadModel>> loadChats() async {
-    final payload = await _api.listChats();
+  Future<List<ChatThreadModel>> loadChats({bool includeArchived = true}) async {
+    final payload = await _api.listChats(
+      filters: {'include_archived': '$includeArchived', 'limit': '100'},
+    );
     return _list(
       payload,
       contract: 'chats',
@@ -52,6 +54,36 @@ class ChatRepository {
       _ => const <ChatMessageModel>[],
     };
     return _thread(row).copyWith(messages: messages);
+  }
+
+  Future<ChatMessagePageModel> loadMessagesPage(
+    String id, {
+    int limit = 50,
+    int? beforeSequence,
+  }) async {
+    final payload = await _api.listChatMessages(
+      id,
+      paging: {
+        'limit': '$limit',
+        if (beforeSequence != null) 'before_sequence': '$beforeSequence',
+      },
+    );
+    final row = _map(payload, contract: 'chat message page');
+    final items = switch (row['items']) {
+      final List<dynamic> values =>
+        values
+            .whereType<Map<String, dynamic>>()
+            .map(_message)
+            .toList(growable: false),
+      _ => throw const ApiException(
+        code: 'INVALID_RESPONSE',
+        message: 'The chat message page is missing items',
+      ),
+    };
+    return ChatMessagePageModel(
+      items: items,
+      nextBeforeSequence: (row['next_before_sequence'] as num?)?.toInt(),
+    );
   }
 
   Future<ChatTurnModel> enqueueMessage(
@@ -141,6 +173,7 @@ class ChatRepository {
         final Map<String, dynamic> value => _structuredReply(value),
         _ => null,
       },
+      sequence: (row['sequence'] as num?)?.toInt(),
     );
   }
 
@@ -165,6 +198,24 @@ class ChatRepository {
       queuePosition: (row['queue_position'] as num?)?.toInt(),
       errorCode: row['error_code'] as String?,
       messages: messages,
+      reminderProposal: result is Map<String, dynamic>
+          ? switch (result['reminder_proposal']) {
+              final Map<String, dynamic> value => _proposal(value),
+              _ => null,
+            }
+          : null,
+    );
+  }
+
+  ReminderProposalModel _proposal(Map<String, dynamic> row) {
+    return ReminderProposalModel(
+      id: _requiredString(row, 'id'),
+      title: _requiredString(row, 'title'),
+      dueAt: _requiredDateTime(row, 'due_at'),
+      status: _requiredString(row, 'status'),
+      chatId: row['chat_id'] as String?,
+      plotId: row['plot_id'] as String?,
+      recurrenceDays: (row['recurrence_days'] as num?)?.toInt(),
     );
   }
 

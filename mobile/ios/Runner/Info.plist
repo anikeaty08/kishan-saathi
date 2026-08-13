@@ -22,6 +22,8 @@
 		<string>KrishiSathi uses selected photos for leaf diagnosis and farm activity records.</string>
 		<key>NSLocationWhenInUseUsageDescription</key>
 		<string>KrishiSathi uses your location for local weather and to place farm plots on the map.</string>
+		<key>NSMicrophoneUsageDescription</key>
+		<string>KrishiSathi uses the microphone only when you choose to dictate a message to Saathi.</string>
 		<key>CFBundlePackageType</key>
 		<string>APPL</string>
 		<key>CFBundleShortVersionString</key>

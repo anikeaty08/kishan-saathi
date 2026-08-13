@@ -33,7 +33,7 @@ void main() {
     await tester.pumpWidget(KrishiSathiApp(controller: controller));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('Good morning'), findsOneWidget);
+    expect(find.text('Test Farmer'), findsOneWidget);
     expect(find.byType(NavigationBar), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -87,7 +87,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(NavigationRail), findsOneWidget);
-    expect(find.textContaining('Good morning'), findsOneWidget);
+    expect(find.text('Test Farmer'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -102,7 +102,7 @@ void main() {
     final materialApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
     expect(materialApp.themeMode, ThemeMode.dark);
     expect(
-      Theme.of(tester.element(find.textContaining('Good morning'))).brightness,
+      Theme.of(tester.element(find.text('Test Farmer'))).brightness,
       Brightness.dark,
     );
     final systemUi = tester.widget<AnnotatedRegion<SystemUiOverlayStyle>>(
@@ -159,11 +159,11 @@ void main() {
 
     await tester.tap(find.text('Home').last);
     await tester.pumpAndSettle();
-    expect(find.textContaining('Good morning'), findsOneWidget);
+    expect(find.text('Test Farmer'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('plot detail exposes linked records and weather on a phone', (
+  testWidgets('plot detail exposes linked records without weather clutter', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);
@@ -182,7 +182,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Plot records'), findsOneWidget);
-    expect(find.text('Full forecast'), findsOneWidget);
+    expect(find.text('Full forecast'), findsNothing);
     expect(find.text('Leaf checks'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -202,7 +202,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(NavigationBar), findsOneWidget);
-    expect(find.textContaining('Good morning'), findsOneWidget);
+    expect(find.text('Test Farmer'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

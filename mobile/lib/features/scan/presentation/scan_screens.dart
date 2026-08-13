@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -13,14 +14,22 @@ import '../../../core/models/app_models.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/ui/app_ui.dart';
+import '../data/diagnosis_repository.dart';
 import '../../shared/presentation/app_controller.dart';
+import 'leaf_camera_screen.dart';
 
 enum _ScanStep { capture, review, processing, unavailable, saved }
 
 class ScanScreen extends StatefulWidget {
-  const ScanScreen({super.key, this.initialPlotId, this.retakeCaseId});
+  const ScanScreen({
+    super.key,
+    this.initialPlotId,
+    this.retakeCaseId,
+    this.initialImageSource,
+  });
   final String? initialPlotId;
   final String? retakeCaseId;
+  final String? initialImageSource;
 
   @override
   State<ScanScreen> createState() => _ScanScreenState();
@@ -39,7 +48,7 @@ class _ScanScreenState extends State<ScanScreen> {
   void initState() {
     super.initState();
     _plotId = widget.initialPlotId;
-    _recoverLostData();
+    unawaited(_initializePicker());
   }
 
   @override
@@ -64,14 +73,26 @@ class _ScanScreenState extends State<ScanScreen> {
     }
   }
 
+  Future<void> _initializePicker() async {
+    await _recoverLostData();
+    if (!mounted || _images.isNotEmpty) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (widget.initialImageSource == 'camera') {
+        unawaited(_takePhoto());
+      } else if (widget.initialImageSource == 'gallery') {
+        unawaited(_choosePhotos());
+      }
+    });
+  }
+
   Future<void> _takePhoto() async {
     try {
-      final image = await _picker.pickImage(
-        source: ImageSource.camera,
-        imageQuality: 90,
-        maxWidth: 2048,
-        maxHeight: 2048,
-        preferredCameraDevice: CameraDevice.rear,
+      final image = await Navigator.of(context).push<XFile>(
+        MaterialPageRoute<XFile>(
+          fullscreenDialog: true,
+          builder: (_) => const LeafCameraScreen(),
+        ),
       );
       if (image == null || !mounted) return;
       setState(() {
@@ -270,54 +291,73 @@ class _CaptureStep extends StatelessWidget {
       key: const PageStorageKey('scan-capture'),
       padding: const EdgeInsets.only(top: 8, bottom: 110),
       children: [
+        Text('Check a leaf', style: Theme.of(context).textTheme.headlineMedium),
+        const SizedBox(height: 5),
         Text(
           context.tr('scanBody'),
           style: Theme.of(context).textTheme.bodyLarge
               ?.copyWith(color: AppColors.mutedInk),
         ),
-        const SizedBox(height: 20),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(AppRadius.medium),
-          child: AspectRatio(
-            aspectRatio: 4 / 3,
+        const SizedBox(height: 18),
+        AspectRatio(
+          aspectRatio: 4 / 3,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: const Color(0xFF1B3025),
+              borderRadius: BorderRadius.circular(AppRadius.medium),
+            ),
             child: Stack(
-              fit: StackFit.expand,
               children: [
-                Image.asset(
-                  'assets/images/leaf_healthy.jpg',
-                  fit: BoxFit.cover,
-                ),
-                const DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [Color(0x1A000000), Color(0xB8000000)],
+                Center(
+                  child: Container(
+                    width: 184,
+                    height: 184,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: const Color(0xFFDCE8D5).withValues(alpha: 0.7),
+                        width: 1.5,
+                      ),
+                      borderRadius: BorderRadius.circular(AppRadius.medium),
+                    ),
+                    child: const Icon(
+                      LucideIcons.scanSearch,
+                      color: Color(0xFFF1C85B),
+                      size: 46,
                     ),
                   ),
                 ),
-                Center(
+                PositionedDirectional(
+                  top: 16,
+                  start: 16,
                   child: Container(
-                    width: 190,
-                    height: 190,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
                     decoration: BoxDecoration(
-                      border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.85),
-                        width: 2,
+                      color: Colors.white.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(AppRadius.small),
+                    ),
+                    child: const Text(
+                      '1–12 leaf photos',
+                      style: TextStyle(
+                        color: Color(0xFFF6F1E5),
+                        fontWeight: FontWeight.w700,
                       ),
-                      borderRadius: BorderRadius.circular(AppRadius.medium),
                     ),
                   ),
                 ),
                 PositionedDirectional(
                   start: 20,
                   end: 20,
-                  bottom: 18,
+                  bottom: 16,
                   child: Text(
                     context.tr('photoGuide'),
                     textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodyMedium
-                        ?.copyWith(color: Colors.white),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFFF6F1E5).withValues(alpha: 0.8),
+                    ),
                   ),
                 ),
               ],
@@ -325,65 +365,89 @@ class _CaptureStep extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 14),
-        Row(
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final stack =
+                constraints.maxWidth < 390 ||
+                MediaQuery.textScalerOf(context).scale(1) > 1.25;
+            final camera = FilledButton.icon(
+              onPressed: onCamera,
+              icon: const Icon(LucideIcons.camera, size: 19),
+              label: Text(context.tr('takePhoto')),
+            );
+            final gallery = OutlinedButton.icon(
+              onPressed: onGallery,
+              icon: const Icon(LucideIcons.images, size: 19),
+              label: Text(context.tr('choosePhotos')),
+            );
+            if (stack) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [camera, const SizedBox(height: 9), gallery],
+              );
+            }
+            return Row(
+              children: [
+                Expanded(child: camera),
+                const SizedBox(width: 10),
+                Expanded(child: gallery),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 22),
+        ExpansionTile(
+          tilePadding: EdgeInsets.zero,
+          childrenPadding: const EdgeInsets.only(bottom: 8),
+          leading: const Icon(LucideIcons.history, color: AppColors.forest),
+          title: Text(context.tr('scanHistory')),
+          subtitle: Text(
+            diagnoses.isEmpty
+                ? 'No completed checks yet'
+                : '${diagnoses.length} saved ${diagnoses.length == 1 ? 'check' : 'checks'}',
+          ),
           children: [
-            Expanded(
-              child: FilledButton.icon(
-                onPressed: onCamera,
-                icon: const Icon(LucideIcons.camera, size: 19),
-                label: Text(context.tr('takePhoto')),
+            if (plots.isNotEmpty) ...[
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    ChoiceChip(
+                      label: const Text('All plots'),
+                      selected: selectedHistoryPlotId == null,
+                      onSelected: (_) => onHistoryPlotChanged(null),
+                    ),
+                    const SizedBox(width: 7),
+                    for (final plot in plots) ...[
+                      ChoiceChip(
+                        label: Text(plot.name),
+                        selected: selectedHistoryPlotId == plot.id,
+                        onSelected: (_) => onHistoryPlotChanged(plot.id),
+                      ),
+                      const SizedBox(width: 7),
+                    ],
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: onGallery,
-                icon: const Icon(LucideIcons.images, size: 19),
-                label: Text(context.tr('choosePhotos')),
+              const SizedBox(height: 10),
+            ],
+            if (diagnoses.isEmpty)
+              AppStateView(
+                kind: AppStateKind.empty,
+                title: selectedHistoryPlotId == null
+                    ? context.tr('emptyTitle')
+                    : 'No leaf checks for this plot',
+                message: selectedHistoryPlotId == null
+                    ? 'Completed leaf checks will appear here.'
+                    : 'Choose another plot or start a new check linked to this field.',
+                compact: true,
+              )
+            else
+              ...diagnoses.map(
+                (diagnosis) => _HistoryRow(diagnosis: diagnosis),
               ),
-            ),
           ],
         ),
-        const SizedBox(height: 30),
-        SectionHeader(title: context.tr('scanHistory')),
-        const SizedBox(height: 10),
-        if (plots.isNotEmpty) ...[
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                ChoiceChip(
-                  label: const Text('All plots'),
-                  selected: selectedHistoryPlotId == null,
-                  onSelected: (_) => onHistoryPlotChanged(null),
-                ),
-                const SizedBox(width: 7),
-                for (final plot in plots) ...[
-                  ChoiceChip(
-                    label: Text(plot.name),
-                    selected: selectedHistoryPlotId == plot.id,
-                    onSelected: (_) => onHistoryPlotChanged(plot.id),
-                  ),
-                  const SizedBox(width: 7),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(height: 10),
-        ],
-        if (diagnoses.isEmpty)
-          AppStateView(
-            kind: AppStateKind.empty,
-            title: selectedHistoryPlotId == null
-                ? context.tr('emptyTitle')
-                : 'No leaf checks for this plot',
-            message: selectedHistoryPlotId == null
-                ? 'Completed leaf checks will appear here.'
-                : 'Choose another plot or start a new check linked to this field.',
-            compact: true,
-          )
-        else
-          ...diagnoses.map((diagnosis) => _HistoryRow(diagnosis: diagnosis)),
       ],
     );
   }
@@ -474,44 +538,65 @@ class _ReviewStep extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 22),
-        TextField(
-          controller: cropController,
-          textCapitalization: TextCapitalization.words,
-          decoration: InputDecoration(
-            labelText: context.tr('optionalCrop'),
-            prefixIcon: const Icon(LucideIcons.sprout, size: 20),
-          ),
-        ),
-        const SizedBox(height: 14),
-        DropdownButtonFormField<String?>(
-          initialValue: selectedPlotId,
-          isExpanded: true,
-          decoration: InputDecoration(
-            labelText: context.tr('linkToPlot'),
-            prefixIcon: const Icon(LucideIcons.map, size: 20),
-          ),
-          items: [
-            const DropdownMenuItem<String?>(
-              value: null,
-              child: Text('No plot selected'),
+        ExpansionTile(
+          tilePadding: EdgeInsets.zero,
+          childrenPadding: const EdgeInsets.only(bottom: 8),
+          leading: const Icon(LucideIcons.listPlus, color: AppColors.forest),
+          title: const Text('Add crop or plot context'),
+          subtitle: const Text('Optional, but it can improve the result'),
+          children: [
+            TextField(
+              controller: cropController,
+              textCapitalization: TextCapitalization.words,
+              decoration: InputDecoration(
+                labelText: context.tr('optionalCrop'),
+                prefixIcon: const Icon(LucideIcons.sprout, size: 20),
+              ),
             ),
-            ...plots.map(
-              (plot) => DropdownMenuItem<String?>(
-                value: plot.id,
-                child: Text(plot.name),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String?>(
+              initialValue: selectedPlotId,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: context.tr('linkToPlot'),
+                prefixIcon: const Icon(LucideIcons.map, size: 20),
+              ),
+              items: [
+                const DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text('No plot selected'),
+                ),
+                ...plots.map(
+                  (plot) => DropdownMenuItem<String?>(
+                    value: plot.id,
+                    child: Text(plot.name),
+                  ),
+                ),
+              ],
+              onChanged: onPlotChanged,
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(
+              LucideIcons.circleCheck,
+              size: 18,
+              color: AppColors.leaf,
+            ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text(
+                context.tr('photoGuide'),
+                style: Theme.of(context).textTheme.bodySmall
+                    ?.copyWith(color: AppColors.mutedInk),
               ),
             ),
           ],
-          onChanged: onPlotChanged,
         ),
-        const SizedBox(height: 16),
-        InlineNotice(
-          title: 'Before you submit',
-          message: context.tr('photoGuide'),
-          icon: LucideIcons.scanSearch,
-          color: AppColors.leaf,
-        ),
-        const SizedBox(height: 22),
+        const SizedBox(height: 18),
         FilledButton.icon(
           onPressed: onAnalyse,
           icon: const Icon(LucideIcons.scanLine, size: 19),
@@ -839,6 +924,7 @@ class DiagnosisResultScreen extends StatefulWidget {
 class _DiagnosisResultScreenState extends State<DiagnosisResultScreen> {
   List<DiagnosisAssessmentModel> _history = const [];
   bool _loadingHistory = true;
+  bool _comparing = false;
 
   @override
   void initState() {
@@ -1075,6 +1161,29 @@ class _DiagnosisResultScreenState extends State<DiagnosisResultScreen> {
                         : null,
                   ),
                 ),
+              if (_history.length >= 2) ...[
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    key: const ValueKey('compare-leaf-progress'),
+                    onPressed: _comparing
+                        ? null
+                        : () => _compareProgression(context, diagnosis),
+                    icon: _comparing
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(LucideIcons.chartNoAxesCombined, size: 18),
+                    label: Text(
+                      _comparing
+                          ? 'Comparing visible change…'
+                          : 'Compare earlier and recent photos',
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 24),
               Row(
                 children: [
@@ -1135,6 +1244,38 @@ class _DiagnosisResultScreenState extends State<DiagnosisResultScreen> {
       showDragHandle: true,
       builder: (_) => _DiagnosisFeedbackSheet(diagnosis: diagnosis),
     );
+  }
+
+  Future<void> _compareProgression(
+    BuildContext context,
+    DiagnosisCaseModel diagnosis,
+  ) async {
+    setState(() => _comparing = true);
+    try {
+      final comparison = await context
+          .read<AppController>()
+          .compareDiagnosisProgression(
+            diagnosis.id,
+            responseLanguage: Localizations.localeOf(context).languageCode,
+          );
+      if (!context.mounted) return;
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        showDragHandle: true,
+        builder: (_) => _ProgressionComparisonSheet(
+          caseId: diagnosis.id,
+          comparison: comparison,
+        ),
+      );
+    } on ApiException catch (error) {
+      if (context.mounted) {
+        showAppSnackBar(context, context.localizedError(error));
+      }
+    } finally {
+      if (mounted) setState(() => _comparing = false);
+    }
   }
 
   void _showReportSheet(BuildContext context, DiagnosisCaseModel diagnosis) {
@@ -1307,6 +1448,250 @@ class _DiagnosisResultScreenState extends State<DiagnosisResultScreen> {
       }
     }
   }
+}
+
+class _ProgressionComparisonSheet extends StatelessWidget {
+  const _ProgressionComparisonSheet({
+    required this.caseId,
+    required this.comparison,
+  });
+
+  final String caseId;
+  final ProgressionComparisonModel comparison;
+
+  @override
+  Widget build(BuildContext context) {
+    final trendColor = switch (comparison.trend) {
+      'improving' => AppColors.leaf,
+      'worsening' => AppColors.amber,
+      _ => AppColors.sky,
+    };
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.88,
+      minChildSize: 0.55,
+      maxChildSize: 0.96,
+      builder: (context, scrollController) => ListView(
+        controller: scrollController,
+        padding: const EdgeInsets.fromLTRB(20, 4, 20, 32),
+        children: [
+          Text(
+            'Visible leaf change',
+            style: Theme.of(context).textTheme.headlineMedium,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'This compares the two photo groups. It does not replace or change the trained leaf-model diagnosis.',
+            style: Theme.of(context).textTheme.bodyMedium
+                ?.copyWith(color: AppColors.mutedInk),
+          ),
+          const SizedBox(height: 18),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final stack =
+                  constraints.maxWidth < 500 ||
+                  MediaQuery.textScalerOf(context).scale(1) > 1.3;
+              final earlier = _ProgressionTimepoint(
+                label: 'Earlier',
+                capturedAt: comparison.earlierCapturedAt,
+                caseId: caseId,
+                imageIds: comparison.earlierImageIds,
+              );
+              final later = _ProgressionTimepoint(
+                label: 'Recent',
+                capturedAt: comparison.laterCapturedAt,
+                caseId: caseId,
+                imageIds: comparison.laterImageIds,
+              );
+              if (stack) {
+                return Column(
+                  children: [earlier, const SizedBox(height: 12), later],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: earlier),
+                  const SizedBox(width: 12),
+                  Expanded(child: later),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 18),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: trendColor.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(AppRadius.medium),
+              border: Border.all(color: trendColor.withValues(alpha: 0.28)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(_trendIcon(comparison.trend), color: trendColor),
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: Text(
+                        _trendLabel(comparison.trend),
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+                    Text('${(comparison.confidence * 100).round()}%'),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          if (comparison.evidence.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            const SectionHeader(title: 'Visible evidence'),
+            const SizedBox(height: 8),
+            ...comparison.evidence.map(
+              (code) => _ComparisonBullet(_progressionCodeLabel(code)),
+            ),
+          ],
+          if (comparison.recommendations.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            const SectionHeader(title: 'What to observe next'),
+            const SizedBox(height: 8),
+            ...comparison.recommendations.map(
+              (code) => _ComparisonBullet(_progressionCodeLabel(code)),
+            ),
+          ],
+          if (comparison.limitations.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: EdgeInsets.zero,
+              title: const Text('Comparison limitations'),
+              children: comparison.limitations
+                  .map((code) => _ComparisonBullet(_progressionCodeLabel(code)))
+                  .toList(growable: false),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  static IconData _trendIcon(String trend) => switch (trend) {
+    'improving' => LucideIcons.trendingUp,
+    'worsening' => LucideIcons.trendingDown,
+    'unchanged' => LucideIcons.moveRight,
+    _ => LucideIcons.circleHelp,
+  };
+
+  static String _trendLabel(String trend) => switch (trend) {
+    'improving' => 'Visible symptoms look reduced',
+    'worsening' => 'Visible symptoms may be increasing',
+    'unchanged' => 'No clear visible change',
+    _ => 'Change is unclear',
+  };
+
+  static String _progressionCodeLabel(String code) => switch (code) {
+    'affected_area_reduced' => 'The visibly affected area appears smaller.',
+    'affected_area_increased' => 'The visibly affected area appears larger.',
+    'affected_area_similar' => 'The visibly affected area appears similar.',
+    'yellowing_reduced' => 'Visible yellowing appears reduced.',
+    'yellowing_increased' => 'Visible yellowing appears increased.',
+    'browning_reduced' => 'Visible browning appears reduced.',
+    'browning_increased' => 'Visible browning appears increased.',
+    'curling_reduced' => 'Visible leaf curling appears reduced.',
+    'curling_increased' => 'Visible leaf curling appears increased.',
+    'wilting_reduced' => 'Visible wilting appears reduced.',
+    'wilting_increased' => 'Visible wilting appears increased.',
+    'no_reliable_visible_difference' =>
+      'No reliable visible difference was found.',
+    'different_lighting' => 'Lighting differs between the photo groups.',
+    'different_viewpoint' => 'The viewing angle differs.',
+    'different_zoom' => 'The photo distance or zoom differs.',
+    'different_leaf' => 'The photos may show different leaves.',
+    'different_background' => 'The background differs.',
+    'earlier_image_quality' => 'The earlier photo quality limits comparison.',
+    'later_image_quality' => 'The recent photo quality limits comparison.',
+    'too_little_visible_evidence' =>
+      'There is too little visible evidence to compare.',
+    'monitor_same_leaf' => 'Keep monitoring the same leaf when possible.',
+    'retake_same_angle' => 'Retake from the same angle.',
+    'retake_same_lighting' => 'Retake in similar daylight.',
+    'retake_full_plant_and_close_leaf' =>
+      'Take one full-plant and one close leaf photo.',
+    'keep_foliage_dry' => 'Keep foliage dry while monitoring.',
+    'use_clean_hands_and_tools' =>
+      'Use clean hands and tools around affected leaves.',
+    'consult_local_expert_if_worsening' =>
+      'Consult a local expert if visible symptoms continue to increase.',
+    _ => code.replaceAll('_', ' '),
+  };
+}
+
+class _ProgressionTimepoint extends StatelessWidget {
+  const _ProgressionTimepoint({
+    required this.label,
+    required this.capturedAt,
+    required this.caseId,
+    required this.imageIds,
+  });
+
+  final String label;
+  final DateTime capturedAt;
+  final String caseId;
+  final List<String> imageIds;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(AppRadius.medium),
+          child: AspectRatio(
+            aspectRatio: 4 / 3,
+            child: imageIds.isEmpty
+                ? const ColoredBox(
+                    color: AppColors.divider,
+                    child: Icon(LucideIcons.imageOff),
+                  )
+                : _DiagnosisServerImage(
+                    caseId: caseId,
+                    imageId: imageIds.first,
+                  ),
+          ),
+        ),
+        const SizedBox(height: 7),
+        Text(label, style: Theme.of(context).textTheme.titleSmall),
+        Text(
+          context.strings.formatDateTime(capturedAt.toLocal()),
+          style: Theme.of(context).textTheme.bodySmall
+              ?.copyWith(color: AppColors.mutedInk),
+        ),
+      ],
+    );
+  }
+}
+
+class _ComparisonBullet extends StatelessWidget {
+  const _ComparisonBullet(this.text);
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.only(top: 6),
+          child: Icon(LucideIcons.dot, size: 14, color: AppColors.leaf),
+        ),
+        const SizedBox(width: 5),
+        Expanded(child: Text(text)),
+      ],
+    ),
+  );
 }
 
 class _ActionStep extends StatelessWidget {

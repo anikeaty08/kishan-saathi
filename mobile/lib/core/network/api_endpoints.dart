@@ -24,6 +24,8 @@ abstract final class ApiEndpoints {
   static String diagnosisRetakes(String id) => '${diagnosis(id)}/retakes';
   static String diagnosisAssessments(String id) =>
       '${diagnosis(id)}/assessments';
+  static String diagnosisProgression(String id) =>
+      '${diagnosis(id)}/progression';
   static String diagnosisImages(String id) => '${diagnosis(id)}/images';
   static String diagnosisImage(String id, String imageId) =>
       '${diagnosisImages(id)}/$imageId';
@@ -39,6 +41,10 @@ abstract final class ApiEndpoints {
       '${chatTurns(chatId)}/$turnId';
   static String chatTurnRetry(String chatId, String turnId) =>
       '${chatTurn(chatId, turnId)}/retry';
+  static String voiceTranscription(String chatId) =>
+      '/api/v1/voice/chats/$chatId/transcriptions';
+  static String assistantSpeech(String chatId, String messageId) =>
+      '/api/v1/voice/chats/$chatId/messages/$messageId/speech';
   static String farmMemories(String id) => '${farm(id)}/memories';
   static String plotMemories(String id) => '${plot(id)}/memories';
   static String memory(String id) => '/api/v1/memories/$id';

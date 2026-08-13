@@ -14,6 +14,30 @@ class DiagnosisReportShare {
   final DateTime expiresAt;
 }
 
+class ProgressionComparisonModel {
+  const ProgressionComparisonModel({
+    required this.trend,
+    required this.confidence,
+    required this.evidence,
+    required this.limitations,
+    required this.recommendations,
+    required this.earlierImageIds,
+    required this.laterImageIds,
+    required this.earlierCapturedAt,
+    required this.laterCapturedAt,
+  });
+
+  final String trend;
+  final double confidence;
+  final List<String> evidence;
+  final List<String> limitations;
+  final List<String> recommendations;
+  final List<String> earlierImageIds;
+  final List<String> laterImageIds;
+  final DateTime earlierCapturedAt;
+  final DateTime laterCapturedAt;
+}
+
 class DiagnosisRepository {
   const DiagnosisRepository(this._api);
 
@@ -85,6 +109,44 @@ class DiagnosisRepository {
     return _list(payload, contract: 'diagnosis history')
         .map((value) => _assessment(_map(value, contract: 'assessment')))
         .toList(growable: false);
+  }
+
+  Future<ProgressionComparisonModel> compareProgression({
+    required String caseId,
+    required String responseLanguage,
+  }) async {
+    final payload = await _api.compareDiagnosisProgression(
+      caseId,
+      responseLanguage: responseLanguage,
+    );
+    final row = _map(payload, contract: 'progression comparison');
+    final earlierCapturedAt = DateTime.tryParse(
+      row['earlier_captured_at'] as String? ?? '',
+    );
+    final laterCapturedAt = DateTime.tryParse(
+      row['later_captured_at'] as String? ?? '',
+    );
+    final confidence = row['confidence'];
+    if (earlierCapturedAt == null ||
+        laterCapturedAt == null ||
+        confidence is! num) {
+      throw const ApiException(
+        code: 'INVALID_RESPONSE',
+        message: 'The progression comparison response is incomplete',
+      );
+    }
+    return ProgressionComparisonModel(
+      trend: row['trend'] as String? ?? 'unclear',
+      confidence: confidence.toDouble(),
+      evidence: _strings(row['evidence']).toList(growable: false),
+      limitations: _strings(row['limitations']).toList(growable: false),
+      recommendations: _strings(row['recommendations']).toList(growable: false),
+      earlierImageIds: _strings(row['earlier_image_ids'])
+          .toList(growable: false),
+      laterImageIds: _strings(row['later_image_ids']).toList(growable: false),
+      earlierCapturedAt: earlierCapturedAt,
+      laterCapturedAt: laterCapturedAt,
+    );
   }
 
   Future<DiagnosisCaseModel> linkDiagnosis({

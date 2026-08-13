@@ -365,6 +365,7 @@ class ReminderProposalModel {
     required this.title,
     required this.dueAt,
     required this.status,
+    this.chatId,
     this.plotId,
     this.recurrenceDays,
   });
@@ -373,6 +374,7 @@ class ReminderProposalModel {
   final String title;
   final DateTime dueAt;
   final String status;
+  final String? chatId;
   final String? plotId;
   final int? recurrenceDays;
 }
@@ -537,6 +539,7 @@ class ChatMessageModel {
     this.turnId,
     this.idempotencyKey,
     this.structuredReply,
+    this.sequence,
   });
 
   final String id;
@@ -548,12 +551,14 @@ class ChatMessageModel {
   final String? turnId;
   final String? idempotencyKey;
   final ChatAssistantReplyModel? structuredReply;
+  final int? sequence;
 
   ChatMessageModel copyWith({
     ChatDelivery? delivery,
     bool? failed,
     String? turnId,
     String? idempotencyKey,
+    int? sequence,
   }) => ChatMessageModel(
     id: id,
     author: author,
@@ -564,7 +569,18 @@ class ChatMessageModel {
     turnId: turnId ?? this.turnId,
     idempotencyKey: idempotencyKey ?? this.idempotencyKey,
     structuredReply: structuredReply,
+    sequence: sequence ?? this.sequence,
   );
+}
+
+class ChatMessagePageModel {
+  const ChatMessagePageModel({
+    required this.items,
+    required this.nextBeforeSequence,
+  });
+
+  final List<ChatMessageModel> items;
+  final int? nextBeforeSequence;
 }
 
 class ChatTurnModel {
@@ -578,6 +594,7 @@ class ChatTurnModel {
     required this.queuePosition,
     this.errorCode,
     this.messages = const [],
+    this.reminderProposal,
   });
 
   final String id;
@@ -589,6 +606,7 @@ class ChatTurnModel {
   final int? queuePosition;
   final String? errorCode;
   final List<ChatMessageModel> messages;
+  final ReminderProposalModel? reminderProposal;
 }
 
 class ChatThreadModel {

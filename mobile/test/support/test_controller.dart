@@ -12,6 +12,7 @@ import 'package:krishisathi/features/profile/data/memory_repository.dart';
 import 'package:krishisathi/features/profile/data/reminder_repository.dart';
 import 'package:krishisathi/features/saathi/data/chat_repository.dart';
 import 'package:krishisathi/features/saathi/data/chat_outbox_store.dart';
+import 'package:krishisathi/features/saathi/data/voice_repository.dart';
 import 'package:krishisathi/features/scan/data/diagnosis_repository.dart';
 import 'package:krishisathi/features/scan/data/scan_queue_repository.dart';
 import 'package:krishisathi/features/shared/presentation/app_controller.dart';
@@ -20,10 +21,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 Future<AppController> createTestController({
   String locale = 'en',
   bool onboardingComplete = true,
+  bool live = false,
+  ChatRepository? chatRepository,
+  ChatOutboxStore? chatOutboxStore,
 }) async {
   SharedPreferences.setMockInitialValues({
     'onboarding_complete': onboardingComplete,
-    'preview_mode': true,
+    'preview_mode': !live,
     'preferred_language': locale,
     'farmer_name': 'Test Farmer',
   });
@@ -31,8 +35,8 @@ Future<AppController> createTestController({
   final config = AppConfig(
     apiBaseUri: Uri.parse('http://localhost:8000'),
     awsRegion: 'ap-south-1',
-    cognitoUserPoolId: '',
-    cognitoAppClientId: '',
+    cognitoUserPoolId: live ? 'ap-south-1_test' : '',
+    cognitoAppClientId: live ? 'test-client' : '',
     environment: 'test',
   );
   final tokenStore = SecureTokenStore();
@@ -49,8 +53,9 @@ Future<AppController> createTestController({
           apiClient: apiClient,
           farmRepository: FarmRepository(api),
           locationRepository: LocationRepository(api),
-          chatRepository: ChatRepository(api),
-          chatOutboxStore: InMemoryChatOutboxStore(),
+          chatRepository: chatRepository ?? ChatRepository(api),
+          chatOutboxStore: chatOutboxStore ?? InMemoryChatOutboxStore(),
+          voiceRepository: VoiceRepository(api),
           diagnosisRepository: DiagnosisRepository(api),
           weatherRepository: WeatherRepository(api),
           reminderRepository: ReminderRepository(api),
@@ -60,7 +65,8 @@ Future<AppController> createTestController({
         )
         ..initialized = true
         ..onboardingComplete = onboardingComplete
-        ..previewMode = true
+        ..previewMode = !live
+        ..isAuthenticated = live
         ..farmerName = 'Test Farmer'
         ..locale = Locale(locale);
   await AppStrings.load(controller.locale);

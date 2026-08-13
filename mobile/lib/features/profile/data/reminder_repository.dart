@@ -88,6 +88,7 @@ ReminderProposalModel _proposal(Map<String, dynamic> row) =>
       dueAt:
           DateTime.tryParse(row['due_at'] as String? ?? '') ?? DateTime.now(),
       status: row['status'] as String? ?? 'pending',
+      chatId: row['chat_id'] as String?,
       plotId: row['plot_id'] as String?,
       recurrenceDays: (row['recurrence_days'] as num?)?.toInt(),
     );

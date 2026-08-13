@@ -33,4 +33,5 @@ def get_memory_service(
         farms=FarmRepository(session),
         provider=memory_provider,
         llm=LLMRouter(llm_provider, settings),
+        max_capture_attempts=settings.memory_capture_max_attempts,
     )

@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     openai_primary_model: str = "gpt-5"
     openai_light_model: str = "gpt-5-mini"
     mem0_api_key: str = ""
+    memory_capture_interval_seconds: float = Field(default=30.0, ge=1, le=3600)
+    memory_capture_batch_size: int = Field(default=20, ge=1, le=100)
+    memory_capture_max_attempts: int = Field(default=10, ge=1, le=100)
 
     openweather_api_key: str = ""
     openweather_base_url: str = "https://api.openweathermap.org/data/2.5"

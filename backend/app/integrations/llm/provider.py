@@ -101,6 +101,13 @@ class GeneratedTitle(BaseModel):
     title: str = Field(min_length=1, max_length=150)
 
 
+class ChatRiskClassification(BaseModel):
+    """Typed classification used only to choose an approved model policy."""
+
+    requires_primary_model: bool
+    reason_code: str = Field(min_length=1, max_length=80)
+
+
 @dataclass(frozen=True, slots=True)
 class LLMTool:
     """A narrowly scoped backend function the provider may let the model request."""
@@ -145,6 +152,10 @@ class LLMProvider(Protocol):
         self, *, content: str, language: str, farmer_id: UUID, model: str
     ) -> GeneratedTitle: ...
 
+    async def classify_chat_risk(
+        self, *, content: str, farmer_id: UUID, model: str
+    ) -> ChatRiskClassification: ...
+
     async def close(self) -> None: ...
 
 
@@ -163,6 +174,12 @@ class UnavailableLLMProvider:
         self, *, content: str, language: str, farmer_id: UUID, model: str
     ) -> GeneratedTitle:
         del content, language, farmer_id, model
+        raise ApplicationError(code="LLM_NOT_CONFIGURED", status_code=503)
+
+    async def classify_chat_risk(
+        self, *, content: str, farmer_id: UUID, model: str
+    ) -> ChatRiskClassification:
+        del content, farmer_id, model
         raise ApplicationError(code="LLM_NOT_CONFIGURED", status_code=503)
 
     async def close(self) -> None:

@@ -126,6 +126,14 @@ class DiagnosisPrediction(Base):
         CheckConstraint("confidence BETWEEN 0 AND 1", name="ck_predictions_confidence"),
         CheckConstraint("rank >= 1", name="ck_predictions_rank"),
         CheckConstraint("scope IN ('combined', 'image')", name="ck_predictions_scope"),
+        Index(
+            "uq_diagnosis_predictions_image_rank",
+            "image_id",
+            "rank",
+            unique=True,
+            postgresql_where=text("scope = 'image'"),
+            sqlite_where=text("scope = 'image'"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)

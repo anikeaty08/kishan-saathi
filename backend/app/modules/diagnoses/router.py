@@ -15,6 +15,8 @@ from app.modules.diagnoses.schemas import (
     DiagnosisCaseResponse,
     DiagnosisFeedbackResponse,
     DiagnosisFeedbackUpsert,
+    DiagnosisImagePredictionResponse,
+    DiagnosisImageResponse,
     DiagnosisLink,
     IncomingImage,
 )
@@ -68,8 +70,18 @@ async def list_diagnoses(
     service: Service,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
+    farm_id: Annotated[UUID | None, Query()] = None,
+    plot_id: Annotated[UUID | None, Query()] = None,
+    crop_id: Annotated[UUID | None, Query()] = None,
 ) -> list[DiagnosisCaseResponse]:
-    return await service.list_cases(farmer_id, limit=limit, offset=offset)
+    return await service.list_cases(
+        farmer_id,
+        limit=limit,
+        offset=offset,
+        farm_id=farm_id,
+        plot_id=plot_id,
+        crop_id=crop_id,
+    )
 
 
 @router.get("/{case_id}", response_model=DiagnosisCaseResponse)
@@ -86,8 +98,35 @@ async def diagnosis_assessment_history(
     case_id: UUID,
     farmer_id: FarmerId,
     service: Service,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[AssessmentHistoryResponse]:
-    return await service.assessment_history(farmer_id, case_id)
+    return await service.assessment_history(farmer_id, case_id, limit=limit, offset=offset)
+
+
+@router.get("/{case_id}/images", response_model=list[DiagnosisImageResponse])
+async def diagnosis_images(
+    case_id: UUID,
+    farmer_id: FarmerId,
+    service: Service,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[DiagnosisImageResponse]:
+    return await service.image_page(farmer_id, case_id, limit=limit, offset=offset)
+
+
+@router.get(
+    "/{case_id}/image-predictions",
+    response_model=list[DiagnosisImagePredictionResponse],
+)
+async def diagnosis_image_predictions(
+    case_id: UUID,
+    farmer_id: FarmerId,
+    service: Service,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[DiagnosisImagePredictionResponse]:
+    return await service.image_prediction_page(farmer_id, case_id, limit=limit, offset=offset)
 
 
 @router.get("/{case_id}/images/{image_id}")

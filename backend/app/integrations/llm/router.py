@@ -5,6 +5,7 @@ from uuid import UUID
 
 from app.core.config import Settings
 from app.integrations.llm.provider import (
+    ChatRiskClassification,
     GeneratedTitle,
     LLMProvider,
     LLMRequest,
@@ -38,9 +39,7 @@ class LLMRouter:
     async def respond(self, request: LLMRequest) -> LLMResult:
         return await self._provider.respond(request, model=self._policies[request.task].model)
 
-    async def extract_memories(
-        self, request: MemoryExtractionRequest
-    ) -> MemoryExtraction:
+    async def extract_memories(self, request: MemoryExtractionRequest) -> MemoryExtraction:
         return await self._provider.extract_memories(
             request, model=self._policies[LLMTask.EXTRACTION].model
         )
@@ -53,4 +52,11 @@ class LLMRouter:
             language=language,
             farmer_id=farmer_id,
             model=self._policies[LLMTask.TITLE].model,
+        )
+
+    async def classify_chat_risk(self, *, content: str, farmer_id: UUID) -> ChatRiskClassification:
+        return await self._provider.classify_chat_risk(
+            content=content,
+            farmer_id=farmer_id,
+            model=self._policies[LLMTask.ROUTING].model,
         )

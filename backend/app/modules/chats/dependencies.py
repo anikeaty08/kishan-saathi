@@ -25,6 +25,7 @@ from app.modules.chats.service import ChatService
 from app.modules.diagnoses.repository import DiagnosisRepository
 from app.modules.farms.repository import FarmRepository
 from app.modules.memories.repository import MemoryRepository
+from app.modules.memories.service import MemoryService
 from app.modules.reminders.repository import ReminderRepository
 from app.modules.weather.tool import DatabasePlotWeatherTool
 
@@ -56,4 +57,12 @@ def get_chat_service(
         ),
         reminders=ReminderRepository(session),
         canonical_memory=MemoryRepository(session),
+        memory_writer=MemoryService(
+            repository=MemoryRepository(session),
+            chats=ChatRepository(session),
+            farms=FarmRepository(session),
+            provider=memory_provider,
+            llm=LLMRouter(llm_provider, settings),
+            max_capture_attempts=settings.memory_capture_max_attempts,
+        ),
     )

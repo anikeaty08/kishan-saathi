@@ -20,7 +20,11 @@ from app.integrations.inference.provider import (
     Prediction,
 )
 from app.integrations.storage.local import LocalObjectStorage
-from app.modules.diagnoses.models import DiagnosisAssessment, DiagnosisCase
+from app.modules.diagnoses.models import (
+    DiagnosisAssessment,
+    DiagnosisCase,
+    DiagnosisPrediction,
+)
 from app.modules.diagnoses.repository import DiagnosisRepository
 from app.modules.diagnoses.schemas import (
     DiagnosisFeedbackUpsert,
@@ -77,6 +81,14 @@ class FailingInference(LeafInferenceProvider):
         return None
 
 
+class RecordingContextCleaner:
+    def __init__(self) -> None:
+        self.deleted: list[tuple[UUID, UUID]] = []
+
+    async def delete_scan_context(self, farmer_id: UUID, case_id: UUID) -> None:
+        self.deleted.append((farmer_id, case_id))
+
+
 @pytest.mark.asyncio
 async def test_case_retakes_feedback_owner_isolation_and_deletion(tmp_path: Path) -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -85,6 +97,7 @@ async def test_case_retakes_feedback_owner_isolation_and_deletion(tmp_path: Path
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     storage = LocalObjectStorage(tmp_path)
     inference = SequencedInference([0.45, 0.82, 0.60])
+    context_cleaner = RecordingContextCleaner()
     settings = Settings(_env_file=None)
 
     try:
@@ -99,6 +112,7 @@ async def test_case_retakes_feedback_owner_isolation_and_deletion(tmp_path: Path
                 cleanup=ObjectCleanupService(session, storage),
                 storage=storage,
                 inference=inference,
+                context_cleaner=context_cleaner,
             )
             initial = await service.create_case(
                 FARMER,
@@ -125,6 +139,11 @@ async def test_case_retakes_feedback_owner_isolation_and_deletion(tmp_path: Path
                 .order_by(DiagnosisAssessment.created_at)
             )
             assessment_rows = list(assessments)
+            image_prediction_count = await session.scalar(
+                select(func.count())
+                .select_from(DiagnosisPrediction)
+                .where(DiagnosisPrediction.scope == "image")
+            )
             image_paths = list(tmp_path.rglob("*.jpg"))
             await service.delete_case(FARMER, initial.id)
             remaining = await session.scalar(select(func.count()).select_from(DiagnosisCase))
@@ -136,18 +155,20 @@ async def test_case_retakes_feedback_owner_isolation_and_deletion(tmp_path: Path
     assert initial.retake_recommended is True
     assert len(initial.images) == 2
     assert stronger.active_assessment is not None
-    assert stronger.active_assessment.confidence_label == "high"
+    assert stronger.active_assessment.confidence_label == "medium"
     assert len(stronger.images) == 3
     assert weaker.active_assessment is not None
-    assert weaker.active_assessment.id == stronger.active_assessment.id
+    assert weaker.active_assessment.id != stronger.active_assessment.id
     assert len(weaker.images) == 4
-    assert [row.is_active for row in assessment_rows] == [False, True, False]
+    assert [row.is_active for row in assessment_rows] == [False, False, True]
+    assert image_prediction_count == 4
     assert feedback.corrected_disease == "Septoria leaf spot"
     assert hidden.value.code == "DIAGNOSIS_CASE_NOT_FOUND"
     assert inference.plant_names == ["Tomato", "Tomato", "Tomato"]
     assert len(image_paths) == 4
     assert not list(tmp_path.rglob("*.jpg"))
     assert remaining == 0
+    assert context_cleaner.deleted == [(FARMER, initial.id)]
 
 
 @pytest.mark.asyncio
@@ -169,6 +190,7 @@ async def test_failed_inference_removes_stored_objects_and_database_rows(tmp_pat
                 cleanup=ObjectCleanupService(session, LocalObjectStorage(tmp_path)),
                 storage=LocalObjectStorage(tmp_path),
                 inference=FailingInference(),
+                context_cleaner=RecordingContextCleaner(),
             )
             with pytest.raises(ApplicationError) as raised:
                 await service.create_case(
@@ -187,7 +209,9 @@ async def test_failed_inference_removes_stored_objects_and_database_rows(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_retake_count_is_bounded_across_the_whole_case(tmp_path: Path) -> None:
+async def test_retake_processes_only_new_batch_and_keeps_unbounded_case_history(
+    tmp_path: Path,
+) -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
@@ -198,6 +222,7 @@ async def test_retake_count_is_bounded_across_the_whole_case(tmp_path: Path) -> 
             session.add(_farmer(FARMER, "bounded"))
             await session.commit()
             storage = LocalObjectStorage(tmp_path)
+            inference = SequencedInference([0.60] * 22)
             service = DiagnosisService(
                 settings=Settings(_env_file=None, max_diagnosis_images=2),
                 repository=DiagnosisRepository(session),
@@ -205,7 +230,8 @@ async def test_retake_count_is_bounded_across_the_whole_case(tmp_path: Path) -> 
                 report_repository=ReportRepository(session),
                 cleanup=ObjectCleanupService(session, storage),
                 storage=storage,
-                inference=SequencedInference([0.8]),
+                inference=inference,
+                context_cleaner=RecordingContextCleaner(),
             )
             case = await service.create_case(
                 FARMER,
@@ -214,12 +240,27 @@ async def test_retake_count_is_bounded_across_the_whole_case(tmp_path: Path) -> 
                 link=DiagnosisLink(),
             )
 
-            with pytest.raises(ApplicationError) as raised:
-                await service.add_retakes(FARMER, case.id, [_incoming(2)])
+            updated = case
+            for image_index in range(2, 23):
+                updated = await service.add_retakes(
+                    FARMER, case.id, [_incoming(image_index)]
+                )
+            first_page = await service.image_page(FARMER, case.id, limit=12, offset=0)
+            second_page = await service.image_page(FARMER, case.id, limit=12, offset=12)
+            stored_prediction_count = await session.scalar(
+                select(func.count())
+                .select_from(DiagnosisPrediction)
+                .where(DiagnosisPrediction.scope == "image")
+            )
     finally:
         await engine.dispose()
 
-    assert raised.value.code == "SCAN_TOO_MANY_IMAGES"
+    assert updated.image_count == 23
+    assert len(updated.images) == 20
+    assert len(first_page) == 12
+    assert len(second_page) == 11
+    assert stored_prediction_count == 23
+    assert len(inference.plant_names) == 22
 
 
 def _farmer(farmer_id: UUID, suffix: str) -> FarmerProfile:

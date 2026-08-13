@@ -28,6 +28,7 @@ from app.integrations.llm.provider import LLMProvider
 from app.integrations.memory.provider import MemoryProvider
 from app.integrations.storage.provider import ObjectStorageProvider
 from app.integrations.weather.provider import CurrentWeatherProvider, ForecastWeatherProvider
+from app.modules.memories.worker import MemoryCaptureWorker
 from app.modules.storage_cleanup.worker import ObjectCleanupWorker
 
 
@@ -67,15 +68,23 @@ def create_app(
         database=resolved_database,
         storage=resolved_object_storage,
     )
+    memory_capture_worker = MemoryCaptureWorker(
+        settings=resolved_settings,
+        database=resolved_database,
+        llm_provider=resolved_llm_provider,
+        memory_provider=resolved_memory_provider,
+    )
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         logger = structlog.get_logger("lifecycle")
         logger.info("application.started", environment=resolved_settings.app_env)
         await cleanup_worker.start()
+        await memory_capture_worker.start()
         try:
             yield
         finally:
+            await memory_capture_worker.stop()
             await cleanup_worker.stop()
             await application.state.geocoding_provider.close()
             await application.state.forecast_weather_provider.close()

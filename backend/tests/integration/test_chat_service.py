@@ -4,13 +4,14 @@ from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import Settings
 from app.core.errors import ApplicationError
 from app.database.base import Base
 from app.integrations.llm.provider import (
     AssistantReply,
+    ChatRiskClassification,
     GeneratedTitle,
     LLMProvider,
     LLMRequest,
@@ -27,13 +28,17 @@ from app.integrations.weather.provider import (
     ForecastDay,
     PlotForecast,
 )
+from app.modules.chats.models import ChatMessage
 from app.modules.chats.repository import ChatRepository
 from app.modules.chats.schemas import ChatCreate, ChatMessageCreate, ChatScope, ChatUpdate
 from app.modules.chats.service import ChatService
+from app.modules.diagnoses.models import DiagnosisAssessment, DiagnosisCase
 from app.modules.diagnoses.repository import DiagnosisRepository
 from app.modules.farms.models import Crop, Farm, Plot
 from app.modules.farms.repository import FarmRepository
+from app.modules.memories.models import ChatMemoryConnection, MemoryCaptureJob
 from app.modules.memories.repository import MemoryRepository
+from app.modules.memories.writer import ScopedMemoryWriter
 from app.modules.reminders.repository import ReminderRepository
 from app.modules.users.models import FarmerProfile
 from app.modules.weather.schemas import CurrentWeatherResponse, PlotForecastResponse
@@ -71,6 +76,18 @@ class CapturingLLM(LLMProvider):
         del content, language, farmer_id
         self.requests.append((LLMRequest(LLMTask.TITLE, "title", "title", FARMER), model))
         return GeneratedTitle(title="Leaf inspection guidance")
+
+    async def classify_chat_risk(
+        self, *, content: str, farmer_id: UUID, model: str
+    ) -> ChatRiskClassification:
+        del farmer_id
+        self.requests.append((LLMRequest(LLMTask.ROUTING, "route", content, FARMER), model))
+        return ChatRiskClassification(
+            requires_primary_model=(
+                '"has_plot_context": true' in content.casefold() or "next" in content.casefold()
+            ),
+            reason_code="test",
+        )
 
 
 class ScopedMemory(MemoryProvider):
@@ -158,6 +175,29 @@ class StubPlotWeatherTool:
         )
 
 
+class RecordingMemoryWriter(ScopedMemoryWriter):
+    def __init__(self) -> None:
+        self.captures: list[tuple[UUID, UUID, UUID | None, UUID | None, str]] = []
+
+    def schedule_scoped_message(
+        self,
+        farmer_id: UUID,
+        chat_id: UUID,
+        message: ChatMessage,
+        *,
+        farm_id: UUID | None,
+        plot_id: UUID | None,
+    ) -> MemoryCaptureJob:
+        self.captures.append((farmer_id, chat_id, farm_id, plot_id, message.content))
+        return MemoryCaptureJob(
+            farmer_id=farmer_id,
+            chat_id=chat_id,
+            source_message_id=message.id,
+            farm_id=farm_id,
+            plot_id=plot_id,
+        )
+
+
 @pytest.mark.asyncio
 async def test_general_and_plot_chats_use_distinct_context_and_models() -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -166,6 +206,7 @@ async def test_general_and_plot_chats_use_distinct_context_and_models() -> None:
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     llm = CapturingLLM()
     memory = ScopedMemory()
+    memory_writer = RecordingMemoryWriter()
 
     try:
         async with sessions() as session:
@@ -182,7 +223,30 @@ async def test_general_and_plot_chats_use_distinct_context_and_models() -> None:
             )
             session.add(plot)
             await session.flush()
-            session.add(Crop(farmer_id=FARMER, plot_id=plot.id, name="Tomato", stage="fruiting"))
+            crop = Crop(farmer_id=FARMER, plot_id=plot.id, name="Tomato", stage="fruiting")
+            diagnosis_case = DiagnosisCase(
+                farmer_id=FARMER,
+                farm_id=farm.id,
+                plot_id=plot.id,
+                plant_name="Tomato",
+                title="Tomato leaf diagnosis",
+                status="completed",
+            )
+            session.add_all([crop, diagnosis_case])
+            await session.flush()
+            session.add(
+                DiagnosisAssessment(
+                    farmer_id=FARMER,
+                    case_id=diagnosis_case.id,
+                    predicted_crop="tomato",
+                    primary_disease="tomato early blight",
+                    confidence=0.81,
+                    confidence_label="high",
+                    model_name="test-ensemble",
+                    model_version="1",
+                    is_active=True,
+                )
+            )
             await session.commit()
 
             service = ChatService(
@@ -194,6 +258,7 @@ async def test_general_and_plot_chats_use_distinct_context_and_models() -> None:
                 plot_weather=StubPlotWeatherTool(),
                 reminders=ReminderRepository(session),
                 canonical_memory=MemoryRepository(session),
+                memory_writer=memory_writer,
             )
             general = await service.create_chat(FARMER, ChatCreate())
             plot_chat = await service.create_chat(
@@ -242,14 +307,18 @@ async def test_general_and_plot_chats_use_distinct_context_and_models() -> None:
     finally:
         await engine.dispose()
 
-    guidance_requests = [item for item in llm.requests if item[0].task is not LLMTask.TITLE]
+    guidance_requests = [
+        item for item in llm.requests if item[0].task not in {LLMTask.TITLE, LLMTask.ROUTING}
+    ]
     general_request, general_model = guidance_requests[0]
     plot_request, plot_model = guidance_requests[1]
-    assert general_model == "gpt-5"
+    assert general_model == "gpt-5-mini"
     assert plot_model == "gpt-5"
     assert "No farm, plot, scan" in general_request.input_text
     assert "Tomato Plot" not in general_request.input_text
     assert "Tomato Plot" in plot_request.input_text
+    assert "Recent plot diagnosis: tomato / tomato early blight" in plot_request.input_text
+    assert "Current and forecast plot weather" in plot_request.input_text
     assert "Irrigation was completed yesterday" not in plot_request.input_text
     assert memory.searches == [(FARMER, plot.id, "What should I do next?")]
     assert general_request.tools == ()
@@ -260,6 +329,9 @@ async def test_general_and_plot_chats_use_distinct_context_and_models() -> None:
     assert len(guidance_requests) == 2
     assert hidden.value.code == "CHAT_NOT_FOUND"
     assert archived.value.code == "CHAT_ARCHIVED"
+    assert memory_writer.captures == [
+        (FARMER, plot_chat.id, None, plot.id, "What should I do next?")
+    ]
 
 
 @pytest.mark.asyncio
@@ -290,6 +362,7 @@ async def test_typed_agent_reminder_is_persisted_with_chat_scope() -> None:
                 plot_weather=StubPlotWeatherTool(),
                 reminders=reminders,
                 canonical_memory=MemoryRepository(session),
+                memory_writer=RecordingMemoryWriter(),
             )
             chat = await service.create_chat(FARMER, ChatCreate())
             reply = await service.send_message(
@@ -308,6 +381,147 @@ async def test_typed_agent_reminder_is_persisted_with_chat_scope() -> None:
     assert stored.chat_id == chat.id
     assert stored.status == "pending"
     assert reply.follow_up_questions == ["Did the spots spread?"]
+
+
+@pytest.mark.asyncio
+async def test_chat_detail_and_message_pages_are_bounded() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+    try:
+        async with sessions() as session:
+            session.add(_farmer(FARMER, "bounded"))
+            await session.commit()
+            service = _chat_service(session)
+            chat = await service.create_chat(FARMER, ChatCreate())
+            session.add_all(
+                [
+                    ChatMessage(
+                        farmer_id=FARMER,
+                        chat_id=chat.id,
+                        sequence=sequence,
+                        role="user" if sequence % 2 else "assistant",
+                        content=f"message-{sequence}",
+                    )
+                    for sequence in range(1, 61)
+                ]
+            )
+            await session.commit()
+
+            detail = await service.get_chat(FARMER, chat.id)
+            newest_page = await service.message_page(
+                FARMER, chat.id, limit=20, before_sequence=None
+            )
+            older_page = await service.message_page(
+                FARMER,
+                chat.id,
+                limit=20,
+                before_sequence=newest_page.next_before_sequence,
+            )
+    finally:
+        await engine.dispose()
+
+    assert [item.sequence for item in detail.messages] == list(range(11, 61))
+    assert [item.sequence for item in newest_page.items] == list(range(41, 61))
+    assert newest_page.next_before_sequence == 41
+    assert [item.sequence for item in older_page.items] == list(range(21, 41))
+    assert older_page.next_before_sequence == 21
+
+
+@pytest.mark.asyncio
+async def test_chat_filters_resolve_connections_and_current_diagnosis_scope() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+    try:
+        async with sessions() as session:
+            session.add(_farmer(FARMER, "scope"))
+            old_farm = Farm(farmer_id=FARMER, name="Old Farm")
+            new_farm = Farm(farmer_id=FARMER, name="New Farm")
+            session.add_all([old_farm, new_farm])
+            await session.flush()
+            old_plot = Plot(
+                farmer_id=FARMER,
+                farm_id=old_farm.id,
+                name="Old Plot",
+                latitude=20,
+                longitude=75,
+            )
+            new_plot = Plot(
+                farmer_id=FARMER,
+                farm_id=new_farm.id,
+                name="New Plot",
+                latitude=21,
+                longitude=76,
+            )
+            session.add_all([old_plot, new_plot])
+            await session.flush()
+            diagnosis = DiagnosisCase(
+                farmer_id=FARMER,
+                farm_id=old_farm.id,
+                plot_id=old_plot.id,
+                title="Leaf case",
+                status="completed",
+            )
+            session.add(diagnosis)
+            await session.commit()
+
+            service = _chat_service(session)
+            general = await service.create_chat(FARMER, ChatCreate())
+            scan = await service.create_chat(
+                FARMER,
+                ChatCreate(scope_type=ChatScope.SCAN, diagnosis_case_id=diagnosis.id),
+            )
+            session.add(
+                ChatMemoryConnection(
+                    farmer_id=FARMER,
+                    chat_id=general.id,
+                    plot_id=new_plot.id,
+                )
+            )
+            diagnosis.farm_id = new_farm.id
+            diagnosis.plot_id = new_plot.id
+            await session.commit()
+
+            new_plot_chats = await service.list_chats(
+                FARMER,
+                include_archived=False,
+                plot_id=new_plot.id,
+            )
+            new_farm_chats = await service.list_chats(
+                FARMER,
+                include_archived=False,
+                farm_id=new_farm.id,
+            )
+            old_plot_chats = await service.list_chats(
+                FARMER,
+                include_archived=False,
+                plot_id=old_plot.id,
+            )
+    finally:
+        await engine.dispose()
+
+    assert {item.id for item in new_plot_chats} == {general.id, scan.id}
+    assert {item.id for item in new_farm_chats} == {general.id, scan.id}
+    assert old_plot_chats == []
+
+
+def _chat_service(session: AsyncSession) -> ChatService:
+    return ChatService(
+        repository=ChatRepository(session),
+        farms=FarmRepository(session),
+        diagnoses=DiagnosisRepository(session),
+        memory=ScopedMemory(),
+        llm=LLMRouter(CapturingLLM(), Settings(_env_file=None)),
+        plot_weather=StubPlotWeatherTool(),
+        reminders=ReminderRepository(session),
+        canonical_memory=MemoryRepository(session),
+        memory_writer=RecordingMemoryWriter(),
+    )
 
 
 def _farmer(farmer_id: UUID, suffix: str) -> FarmerProfile:

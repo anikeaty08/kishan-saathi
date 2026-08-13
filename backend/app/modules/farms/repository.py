@@ -97,13 +97,21 @@ class FarmRepository:
         return list(result)
 
     async def list_activities(
-        self, farmer_id: UUID, plot_id: UUID, *, limit: int = 10
+        self,
+        farmer_id: UUID,
+        plot_id: UUID,
+        *,
+        crop_id: UUID | None = None,
+        limit: int = 10,
+        offset: int = 0,
     ) -> list[Activity]:
+        statement = select(Activity).where(
+            Activity.farmer_id == farmer_id, Activity.plot_id == plot_id
+        )
+        if crop_id is not None:
+            statement = statement.where(Activity.crop_id == crop_id)
         result = await self.session.scalars(
-            select(Activity)
-            .where(Activity.farmer_id == farmer_id, Activity.plot_id == plot_id)
-            .order_by(Activity.occurred_at.desc())
-            .limit(limit)
+            statement.order_by(Activity.occurred_at.desc()).limit(limit).offset(offset)
         )
         return list(result)
 

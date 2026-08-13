@@ -70,7 +70,12 @@ class AssessmentResponse(BaseModel):
 
 
 class AssessmentHistoryResponse(AssessmentResponse):
-    image_predictions: dict[UUID, list[PredictionResponse]] = Field(default_factory=dict)
+    image_ids: list[UUID] = Field(default_factory=list)
+
+
+class DiagnosisImagePredictionResponse(BaseModel):
+    image_id: UUID
+    predictions: list[PredictionResponse]
 
 
 class DiagnosisCaseResponse(BaseModel):
@@ -81,6 +86,7 @@ class DiagnosisCaseResponse(BaseModel):
     farm_id: UUID | None
     plot_id: UUID | None
     crop_id: UUID | None
+    image_count: int
     images: list[DiagnosisImageResponse]
     active_assessment: AssessmentResponse | None
     retake_recommended: bool

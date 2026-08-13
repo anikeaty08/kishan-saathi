@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.diagnoses.models import (
@@ -32,18 +32,37 @@ class DiagnosisRepository:
         result = await self.session.execute(statement)
         return result.scalar_one_or_none()
 
-    async def list_cases(self, farmer_id: UUID, *, limit: int, offset: int) -> list[DiagnosisCase]:
+    async def list_cases(
+        self,
+        farmer_id: UUID,
+        *,
+        limit: int,
+        offset: int,
+        farm_id: UUID | None = None,
+        plot_id: UUID | None = None,
+        crop_id: UUID | None = None,
+    ) -> list[DiagnosisCase]:
+        statement = select(DiagnosisCase).where(DiagnosisCase.farmer_id == farmer_id)
+        if farm_id is not None:
+            statement = statement.where(DiagnosisCase.farm_id == farm_id)
+        if plot_id is not None:
+            statement = statement.where(DiagnosisCase.plot_id == plot_id)
+        if crop_id is not None:
+            statement = statement.where(DiagnosisCase.crop_id == crop_id)
         result = await self.session.scalars(
-            select(DiagnosisCase)
-            .where(DiagnosisCase.farmer_id == farmer_id)
-            .order_by(DiagnosisCase.created_at.desc())
-            .limit(limit)
-            .offset(offset)
+            statement.order_by(DiagnosisCase.created_at.desc()).limit(limit).offset(offset)
         )
         return list(result)
 
-    async def list_images(self, farmer_id: UUID, case_id: UUID) -> list[DiagnosisImage]:
-        result = await self.session.scalars(
+    async def list_images(
+        self,
+        farmer_id: UUID,
+        case_id: UUID,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[DiagnosisImage]:
+        statement = (
             select(DiagnosisImage)
             .where(
                 DiagnosisImage.farmer_id == farmer_id,
@@ -51,7 +70,38 @@ class DiagnosisRepository:
             )
             .order_by(DiagnosisImage.captured_or_uploaded_at, DiagnosisImage.created_at)
         )
+        if limit is not None:
+            statement = statement.limit(limit).offset(offset)
+        result = await self.session.scalars(statement)
         return list(result)
+
+    async def image_count(self, farmer_id: UUID, case_id: UUID) -> int:
+        value = await self.session.scalar(
+            select(func.count())
+            .select_from(DiagnosisImage)
+            .where(
+                DiagnosisImage.farmer_id == farmer_id,
+                DiagnosisImage.case_id == case_id,
+            )
+        )
+        return int(value or 0)
+
+    async def recent_images(
+        self, farmer_id: UUID, case_id: UUID, *, limit: int
+    ) -> list[DiagnosisImage]:
+        result = await self.session.scalars(
+            select(DiagnosisImage)
+            .where(
+                DiagnosisImage.farmer_id == farmer_id,
+                DiagnosisImage.case_id == case_id,
+            )
+            .order_by(
+                DiagnosisImage.captured_or_uploaded_at.desc(),
+                DiagnosisImage.created_at.desc(),
+            )
+            .limit(limit)
+        )
+        return list(reversed(list(result)))
 
     async def get_image(
         self, farmer_id: UUID, case_id: UUID, image_id: UUID
@@ -78,7 +128,7 @@ class DiagnosisRepository:
         return result.scalar_one_or_none()
 
     async def list_assessments(
-        self, farmer_id: UUID, case_id: UUID, *, limit: int = 5
+        self, farmer_id: UUID, case_id: UUID, *, limit: int = 5, offset: int = 0
     ) -> list[DiagnosisAssessment]:
         result = await self.session.scalars(
             select(DiagnosisAssessment)
@@ -88,6 +138,7 @@ class DiagnosisRepository:
             )
             .order_by(DiagnosisAssessment.created_at.desc())
             .limit(limit)
+            .offset(offset)
         )
         return list(result)
 
@@ -111,6 +162,47 @@ class DiagnosisRepository:
                 DiagnosisPrediction.image_id,
                 DiagnosisPrediction.rank,
             )
+        )
+        return list(result)
+
+    async def image_predictions(
+        self, farmer_id: UUID, case_id: UUID, *, limit: int, offset: int
+    ) -> list[DiagnosisPrediction]:
+        image_ids = (
+            select(DiagnosisImage.id)
+            .where(
+                DiagnosisImage.farmer_id == farmer_id,
+                DiagnosisImage.case_id == case_id,
+            )
+            .order_by(DiagnosisImage.captured_or_uploaded_at, DiagnosisImage.created_at)
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self.session.scalars(
+            select(DiagnosisPrediction)
+            .where(
+                DiagnosisPrediction.scope == "image",
+                DiagnosisPrediction.image_id.in_(image_ids),
+            )
+            .order_by(DiagnosisPrediction.image_id, DiagnosisPrediction.rank)
+        )
+        return list(result)
+
+    async def case_image_predictions(
+        self, farmer_id: UUID, case_id: UUID
+    ) -> list[DiagnosisPrediction]:
+        result = await self.session.scalars(
+            select(DiagnosisPrediction)
+            .join(
+                DiagnosisAssessment,
+                DiagnosisAssessment.id == DiagnosisPrediction.assessment_id,
+            )
+            .where(
+                DiagnosisAssessment.farmer_id == farmer_id,
+                DiagnosisAssessment.case_id == case_id,
+                DiagnosisPrediction.scope == "image",
+            )
+            .order_by(DiagnosisPrediction.image_id, DiagnosisPrediction.rank)
         )
         return list(result)
 

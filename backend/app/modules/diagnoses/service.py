@@ -8,6 +8,7 @@ from app.core.config import Settings
 from app.core.errors import ApplicationError
 from app.integrations.inference.provider import CaseInference, LeafInferenceProvider, Prediction
 from app.integrations.storage.provider import ObjectStorageProvider, StoredObject
+from app.modules.diagnoses.context import DiagnosisContextCleaner
 from app.modules.diagnoses.images import ImagePreprocessor, PreparedImage
 from app.modules.diagnoses.models import (
     DiagnosisAssessment,
@@ -24,6 +25,7 @@ from app.modules.diagnoses.schemas import (
     DiagnosisCaseResponse,
     DiagnosisFeedbackResponse,
     DiagnosisFeedbackUpsert,
+    DiagnosisImagePredictionResponse,
     DiagnosisImageResponse,
     DiagnosisLink,
     IncomingImage,
@@ -47,6 +49,7 @@ class DiagnosisService:
         cleanup: ObjectCleanupService,
         storage: ObjectStorageProvider,
         inference: LeafInferenceProvider,
+        context_cleaner: DiagnosisContextCleaner,
     ) -> None:
         self._settings = settings
         self._repository = repository
@@ -55,6 +58,7 @@ class DiagnosisService:
         self._cleanup = cleanup
         self._storage = storage
         self._inference = inference
+        self._context_cleaner = context_cleaner
         self._preprocessor = ImagePreprocessor(settings)
 
     async def create_case(
@@ -84,8 +88,6 @@ class DiagnosisService:
             farmer_id,
             case=case,
             incoming=images,
-            existing_images=[],
-            existing_assessment=None,
             is_new_case=True,
         )
 
@@ -97,42 +99,63 @@ class DiagnosisService:
     ) -> DiagnosisCaseResponse:
         if not images:
             raise ApplicationError(code="SCAN_IMAGES_REQUIRED", status_code=422)
-        case = await self._case(farmer_id, case_id, for_update=True)
-        existing_images = await self._repository.list_images(farmer_id, case_id)
-        if len(existing_images) + len(images) > self._settings.max_diagnosis_images:
+        if len(images) > self._settings.max_diagnosis_images:
             raise ApplicationError(code="SCAN_TOO_MANY_IMAGES", status_code=413)
-        existing_assessment = await self._repository.get_active_assessment(farmer_id, case_id)
+        case = await self._case(farmer_id, case_id, for_update=True)
         return await self._process(
             farmer_id,
             case=case,
             incoming=images,
-            existing_images=existing_images,
-            existing_assessment=existing_assessment,
             is_new_case=False,
         )
 
     async def list_cases(
-        self, farmer_id: UUID, *, limit: int, offset: int
+        self,
+        farmer_id: UUID,
+        *,
+        limit: int,
+        offset: int,
+        farm_id: UUID | None = None,
+        plot_id: UUID | None = None,
+        crop_id: UUID | None = None,
     ) -> list[DiagnosisCaseResponse]:
-        cases = await self._repository.list_cases(farmer_id, limit=limit, offset=offset)
+        if farm_id is not None and await self._farms.get_farm(farmer_id, farm_id) is None:
+            raise ApplicationError(code="FARM_NOT_FOUND", status_code=404)
+        if plot_id is not None and await self._farms.get_plot(farmer_id, plot_id) is None:
+            raise ApplicationError(code="PLOT_NOT_FOUND", status_code=404)
+        if crop_id is not None and await self._farms.get_crop(farmer_id, crop_id) is None:
+            raise ApplicationError(code="CROP_NOT_FOUND", status_code=404)
+        cases = await self._repository.list_cases(
+            farmer_id,
+            limit=limit,
+            offset=offset,
+            farm_id=farm_id,
+            plot_id=plot_id,
+            crop_id=crop_id,
+        )
         return [await self._response(farmer_id, case) for case in cases]
 
     async def get_case(self, farmer_id: UUID, case_id: UUID) -> DiagnosisCaseResponse:
         return await self._response(farmer_id, await self._case(farmer_id, case_id))
 
+    async def image_page(
+        self, farmer_id: UUID, case_id: UUID, *, limit: int, offset: int
+    ) -> list[DiagnosisImageResponse]:
+        await self._case(farmer_id, case_id)
+        values = await self._repository.list_images(farmer_id, case_id, limit=limit, offset=offset)
+        return [DiagnosisImageResponse.model_validate(item) for item in values]
+
     async def assessment_history(
-        self, farmer_id: UUID, case_id: UUID
+        self, farmer_id: UUID, case_id: UUID, *, limit: int = 50, offset: int = 0
     ) -> list[AssessmentHistoryResponse]:
         await self._case(farmer_id, case_id)
-        assessments = await self._repository.list_assessments(farmer_id, case_id, limit=100)
+        assessments = await self._repository.list_assessments(
+            farmer_id, case_id, limit=limit, offset=offset
+        )
         responses: list[AssessmentHistoryResponse] = []
         for assessment in reversed(assessments):
             predictions = await self._repository.assessment_predictions(assessment.id)
             combined = [item for item in predictions if item.scope == "combined"]
-            per_image: dict[UUID, list[PredictionResponse]] = {}
-            for item in predictions:
-                if item.scope == "image" and item.image_id is not None:
-                    per_image.setdefault(item.image_id, []).append(self._prediction_response(item))
             responses.append(
                 AssessmentHistoryResponse(
                     id=assessment.id,
@@ -140,7 +163,13 @@ class DiagnosisService:
                     primary_disease=assessment.primary_disease,
                     confidence_label=ConfidenceLabel(assessment.confidence_label),
                     alternatives=[self._prediction_response(item) for item in combined[1:]],
-                    image_predictions=per_image,
+                    image_ids=list(
+                        dict.fromkeys(
+                            item.image_id
+                            for item in predictions
+                            if item.scope == "image" and item.image_id is not None
+                        )
+                    ),
                     is_active=assessment.is_active,
                     model_name=assessment.model_name,
                     model_version=assessment.model_version,
@@ -148,6 +177,22 @@ class DiagnosisService:
                 )
             )
         return responses
+
+    async def image_prediction_page(
+        self, farmer_id: UUID, case_id: UUID, *, limit: int, offset: int
+    ) -> list[DiagnosisImagePredictionResponse]:
+        await self._case(farmer_id, case_id)
+        values = await self._repository.image_predictions(
+            farmer_id, case_id, limit=limit, offset=offset
+        )
+        grouped: dict[UUID, list[PredictionResponse]] = {}
+        for item in values:
+            if item.image_id is not None:
+                grouped.setdefault(item.image_id, []).append(self._prediction_response(item))
+        return [
+            DiagnosisImagePredictionResponse(image_id=image_id, predictions=predictions)
+            for image_id, predictions in grouped.items()
+        ]
 
     async def read_image(self, farmer_id: UUID, case_id: UUID, image_id: UUID) -> bytes:
         await self._case(farmer_id, case_id)
@@ -202,6 +247,7 @@ class DiagnosisService:
 
     async def delete_case(self, farmer_id: UUID, case_id: UUID) -> None:
         case = await self._case(farmer_id, case_id)
+        await self._context_cleaner.delete_scan_context(farmer_id, case_id)
         images = await self._repository.list_images(farmer_id, case_id)
         report_images = await self._reports.list_images_for_case(farmer_id, case_id)
         jobs = [
@@ -221,8 +267,6 @@ class DiagnosisService:
         *,
         case: DiagnosisCase,
         incoming: list[IncomingImage],
-        existing_images: list[DiagnosisImage],
-        existing_assessment: DiagnosisAssessment | None,
         is_new_case: bool,
     ) -> DiagnosisCaseResponse:
         prepared = [await self._preprocessor.prepare(item.content) for item in incoming]
@@ -236,15 +280,11 @@ class DiagnosisService:
                         content=image.content,
                     )
                 )
-            previous_content = [
-                await self._storage.read_private(owner_id=farmer_id, key=image.object_key)
-                for image in existing_images
-            ]
             inference = await self._inference.diagnose(
-                images=tuple(previous_content + [image.content for image in prepared]),
+                images=tuple(image.content for image in prepared),
                 plant_name=case.plant_name,
             )
-            self._validate_inference(inference, len(existing_images) + len(prepared))
+            self._validate_inference(inference, len(prepared))
             new_models = self._new_image_models(
                 farmer_id,
                 case.id,
@@ -252,15 +292,20 @@ class DiagnosisService:
                 prepared,
                 stored,
             )
-            all_models = existing_images + new_models
-            self._apply_image_quality(all_models, inference)
+            self._apply_image_quality(new_models, inference)
+            previous_image_predictions = await self._repository.case_image_predictions(
+                farmer_id, case.id
+            )
+            combined_predictions = self._aggregate_case_predictions(
+                previous=previous_image_predictions,
+                current=inference,
+            )
             assessment = await self._persist_result(
                 farmer_id,
                 case,
-                all_models,
                 new_models,
                 inference,
-                existing_assessment,
+                combined_predictions,
                 is_new_case,
             )
         except Exception:
@@ -284,10 +329,9 @@ class DiagnosisService:
         self,
         farmer_id: UUID,
         case: DiagnosisCase,
-        all_images: list[DiagnosisImage],
         new_images: list[DiagnosisImage],
         inference: CaseInference,
-        existing_assessment: DiagnosisAssessment | None,
+        combined_predictions: list[Prediction],
         is_new_case: bool,
     ) -> DiagnosisAssessment:
         if not is_new_case:
@@ -295,8 +339,8 @@ class DiagnosisService:
             if locked_case is None:
                 raise ApplicationError(code="DIAGNOSIS_CASE_NOT_FOUND", status_code=404)
             case = locked_case
-            existing_assessment = await self._repository.get_active_assessment(farmer_id, case.id)
-        primary = inference.combined_predictions[0]
+        existing_assessment = await self._repository.get_active_assessment(farmer_id, case.id)
+        primary = combined_predictions[0]
         should_activate = (
             existing_assessment is None or primary.confidence > existing_assessment.confidence
         )
@@ -319,11 +363,11 @@ class DiagnosisService:
             is_active=should_activate,
         )
         self._repository.add(assessment)
-        for rank, prediction in enumerate(inference.combined_predictions, start=1):
+        for rank, prediction in enumerate(combined_predictions, start=1):
             self._repository.add(
                 self._prediction_model(assessment.id, None, "combined", rank, prediction)
             )
-        for image, image_result in zip(all_images, inference.images, strict=True):
+        for image, image_result in zip(new_images, inference.images, strict=True):
             for rank, prediction in enumerate(image_result.predictions, start=1):
                 self._repository.add(
                     self._prediction_model(
@@ -337,6 +381,30 @@ class DiagnosisService:
         case.status = "completed"
         await self._repository.commit()
         return assessment
+
+    @staticmethod
+    def _aggregate_case_predictions(
+        *,
+        previous: list[DiagnosisPrediction],
+        current: CaseInference,
+    ) -> list[Prediction]:
+        """Average ranked evidence across every immutable image in the case."""
+
+        totals: dict[tuple[str, str], float] = {}
+        previous_image_ids = {item.image_id for item in previous if item.image_id is not None}
+        image_count = len(previous_image_ids) + len(current.images)
+        for stored_item in previous:
+            key = (stored_item.crop_name, stored_item.disease_name)
+            totals[key] = totals.get(key, 0.0) + stored_item.confidence
+        for image_result in current.images:
+            for current_item in image_result.predictions:
+                key = (current_item.crop_name, current_item.disease_name)
+                totals[key] = totals.get(key, 0.0) + current_item.confidence
+        ranked = sorted(totals.items(), key=lambda item: item[1], reverse=True)
+        return [
+            Prediction(crop_name, disease_name, total / image_count)
+            for (crop_name, disease_name), total in ranked[:5]
+        ]
 
     def _new_image_models(
         self,
@@ -396,7 +464,8 @@ class DiagnosisService:
         )
 
     async def _response(self, farmer_id: UUID, case: DiagnosisCase) -> DiagnosisCaseResponse:
-        images = await self._repository.list_images(farmer_id, case.id)
+        image_count = await self._repository.image_count(farmer_id, case.id)
+        images = await self._repository.recent_images(farmer_id, case.id, limit=20)
         assessment = await self._repository.get_active_assessment(farmer_id, case.id)
         assessment_response: AssessmentResponse | None = None
         if assessment is not None:
@@ -434,6 +503,7 @@ class DiagnosisService:
             farm_id=case.farm_id,
             plot_id=case.plot_id,
             crop_id=case.crop_id,
+            image_count=image_count,
             images=[DiagnosisImageResponse.model_validate(item) for item in images],
             active_assessment=assessment_response,
             retake_recommended=retake,
@@ -481,13 +551,17 @@ class DiagnosisService:
 
     @staticmethod
     def _validate_inference(result: CaseInference, expected_images: int) -> None:
-        if len(result.images) != expected_images or not result.combined_predictions:
+        if (
+            len(result.images) != expected_images
+            or not result.combined_predictions
+            or len(result.combined_predictions) > 5
+        ):
             raise ApplicationError(code="LEAF_MODEL_INVALID_RESPONSE", status_code=502)
         all_prediction_sets = [
             result.combined_predictions,
             *(item.predictions for item in result.images),
         ]
-        if any(not predictions for predictions in all_prediction_sets):
+        if any(not predictions or len(predictions) > 5 for predictions in all_prediction_sets):
             raise ApplicationError(code="LEAF_MODEL_INVALID_RESPONSE", status_code=502)
         for predictions in all_prediction_sets:
             for prediction in predictions:

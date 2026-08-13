@@ -24,6 +24,7 @@ from app.modules.chats.schemas import (
     ChatCreate,
     ChatDetailResponse,
     ChatMessageCreate,
+    ChatMessagePage,
     ChatMessageResponse,
     ChatResponse,
     ChatUpdate,
@@ -32,6 +33,7 @@ from app.modules.chats.schemas import (
 from app.modules.diagnoses.repository import DiagnosisRepository
 from app.modules.farms.repository import FarmRepository
 from app.modules.memories.repository import MemoryRepository
+from app.modules.memories.writer import ScopedMemoryWriter
 from app.modules.reminders.models import ReminderProposal
 from app.modules.reminders.repository import ReminderRepository
 from app.modules.reminders.schemas import ProposalResponse
@@ -53,6 +55,7 @@ class ChatService:
         plot_weather: PlotWeatherTool,
         reminders: ReminderRepository,
         canonical_memory: MemoryRepository,
+        memory_writer: ScopedMemoryWriter,
     ) -> None:
         self._repository = repository
         self._farms = farms
@@ -62,6 +65,7 @@ class ChatService:
         self._plot_weather = plot_weather
         self._reminders = reminders
         self._canonical_memory = canonical_memory
+        self._memory_writer = memory_writer
 
     async def create_chat(self, farmer_id: UUID, data: ChatCreate) -> ChatResponse:
         farm_id, plot_id, case_id = await self._validate_scope(farmer_id, data)
@@ -78,16 +82,56 @@ class ChatService:
         await self._repository.refresh(chat)
         return ChatResponse.model_validate(chat)
 
-    async def list_chats(self, farmer_id: UUID, *, include_archived: bool) -> list[ChatResponse]:
-        chats = await self._repository.list_chats(farmer_id, include_archived=include_archived)
+    async def list_chats(
+        self,
+        farmer_id: UUID,
+        *,
+        include_archived: bool,
+        scope_type: str | None = None,
+        farm_id: UUID | None = None,
+        plot_id: UUID | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[ChatResponse]:
+        chats = await self._repository.list_chats(
+            farmer_id,
+            include_archived=include_archived,
+            scope_type=scope_type,
+            farm_id=farm_id,
+            plot_id=plot_id,
+            limit=limit,
+            offset=offset,
+        )
         return [ChatResponse.model_validate(chat) for chat in chats]
 
     async def get_chat(self, farmer_id: UUID, chat_id: UUID) -> ChatDetailResponse:
         chat = await self._chat(farmer_id, chat_id)
-        messages = await self._repository.recent_messages(farmer_id, chat_id, limit=100)
+        messages = await self._repository.recent_messages(farmer_id, chat_id, limit=50)
         return ChatDetailResponse(
             **ChatResponse.model_validate(chat).model_dump(),
             messages=[ChatMessageResponse.model_validate(item) for item in messages],
+        )
+
+    async def message_page(
+        self,
+        farmer_id: UUID,
+        chat_id: UUID,
+        *,
+        limit: int,
+        before_sequence: int | None,
+    ) -> ChatMessagePage:
+        await self._chat(farmer_id, chat_id)
+        values = await self._repository.messages_page(
+            farmer_id,
+            chat_id,
+            limit=limit + 1,
+            before_sequence=before_sequence,
+        )
+        has_more = len(values) > limit
+        page = values[-limit:] if has_more else values
+        return ChatMessagePage(
+            items=[ChatMessageResponse.model_validate(item) for item in page],
+            next_before_sequence=page[0].sequence if has_more and page else None,
         )
 
     async def update_chat(self, farmer_id: UUID, chat_id: UUID, data: ChatUpdate) -> ChatResponse:
@@ -132,7 +176,13 @@ class ChatService:
             plot_id=plot_id,
         )
         tools = self._tools(farmer_id, plot_id)
-        task = LLMTask.AGRICULTURAL_GUIDANCE
+        task = await self._task_for_message(
+            farmer_id,
+            chat,
+            data.content,
+            farm_id=farm_id,
+            plot_id=plot_id,
+        )
         sequence = await self._repository.next_sequence(farmer_id, chat_id)
         user_message = ChatMessage(
             farmer_id=farmer_id,
@@ -206,11 +256,53 @@ class ChatService:
                     response=response.model_dump(mode="json"),
                 )
             )
+            if farm_id is not None or plot_id is not None:
+                self._memory_writer.schedule_scoped_message(
+                    farmer_id,
+                    chat.id,
+                    user_message,
+                    farm_id=farm_id if plot_id is None else None,
+                    plot_id=plot_id,
+                )
             await self._repository.commit()
         except Exception:
             await self._repository.rollback()
             raise
         return response
+
+    async def _task_for_message(
+        self,
+        farmer_id: UUID,
+        chat: ChatSession,
+        content: str,
+        *,
+        farm_id: UUID | None,
+        plot_id: UUID | None,
+    ) -> LLMTask:
+        """Route explicit scan context and uncertain classification to the primary model."""
+
+        if chat.diagnosis_case_id is not None:
+            return LLMTask.AGRICULTURAL_GUIDANCE
+        routing_input = json.dumps(
+            {
+                "effective_scope": chat.scope_type,
+                "has_farm_context": farm_id is not None,
+                "has_plot_context": plot_id is not None,
+                "farmer_message": content,
+            },
+            ensure_ascii=False,
+        )
+        try:
+            classification = await self._llm.classify_chat_risk(
+                content=routing_input, farmer_id=farmer_id
+            )
+        except ApplicationError:
+            return LLMTask.AGRICULTURAL_GUIDANCE
+        return (
+            LLMTask.AGRICULTURAL_GUIDANCE
+            if classification.requires_primary_model
+            else LLMTask.ROUTINE_CHAT
+        )
 
     @staticmethod
     def _pending_reminder(
@@ -295,6 +387,30 @@ class ChatService:
                 f"Pending task: {reminder.title} due {reminder.due_at.isoformat()}"
                 for reminder in reminders
             )
+            recent_cases = await self._diagnoses.list_cases(
+                farmer_id,
+                plot_id=plot.id,
+                limit=5,
+                offset=0,
+            )
+            for recent_case in recent_cases:
+                recent_assessment = await self._diagnoses.get_active_assessment(
+                    farmer_id, recent_case.id
+                )
+                if recent_assessment is None:
+                    continue
+                context.append(
+                    "Recent plot diagnosis: "
+                    f"{recent_assessment.predicted_crop} / "
+                    f"{recent_assessment.primary_disease}; "
+                    f"confidence={recent_assessment.confidence_label}; "
+                    f"assessed_at={recent_assessment.created_at.isoformat()}"
+                )
+            try:
+                weather = await self._plot_weather.get(farmer_id, plot.id)
+                context.append(f"Current and forecast plot weather: {weather.model_dump_json()}")
+            except ApplicationError as exc:
+                context.append(f"Plot weather unavailable: {exc.code}")
             canonical = await self._canonical_memory.list_plot(farmer_id, plot.id, limit=5)
             context.extend(f"Relevant plot memory: {fact.text}" for fact in canonical)
             await self._verified_indexed_context(farmer_id, plot.id, query, context)
@@ -326,10 +442,12 @@ class ChatService:
                     f"{item.disease_name} ({item.confidence:.1%})"
                     for item in predictions[:3]
                 )
-            images = await self._diagnoses.list_images(farmer_id, case.id)
+            image_count = await self._diagnoses.image_count(farmer_id, case.id)
+            images = await self._diagnoses.list_images(farmer_id, case.id, limit=100)
             flags = sorted({flag for image in images for flag in image.quality_flags})
             context.append(
-                f"Diagnosis images: {len(images)}; quality flags: {', '.join(flags) or 'none'}"
+                f"Diagnosis images: {image_count}; recent quality flags: "
+                f"{', '.join(flags) or 'none'}"
             )
             assessments = await self._diagnoses.list_assessments(farmer_id, case.id, limit=5)
             context.extend(

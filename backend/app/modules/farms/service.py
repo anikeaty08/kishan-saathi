@@ -51,6 +51,9 @@ class FarmService:
         farms = await self.repository.list_farms(farmer_id)
         return [FarmResponse.model_validate(item) for item in farms]
 
+    async def get_farm(self, farmer_id: UUID, farm_id: UUID) -> FarmResponse:
+        return FarmResponse.model_validate(await self._farm(farmer_id, farm_id))
+
     async def update_farm(self, farmer_id: UUID, farm_id: UUID, data: FarmUpdate) -> FarmResponse:
         farm = await self._farm(farmer_id, farm_id)
         farm.name = data.name
@@ -254,6 +257,32 @@ class FarmService:
         await self.repository.commit()
         await self.repository.refresh(activity)
         return ActivityResponse.model_validate(activity)
+
+    async def list_activities(
+        self,
+        farmer_id: UUID,
+        plot_id: UUID,
+        *,
+        crop_id: UUID | None,
+        limit: int,
+        offset: int,
+    ) -> list[ActivityResponse]:
+        await self._plot(farmer_id, plot_id)
+        if crop_id is not None:
+            crop = await self._crop(farmer_id, crop_id)
+            if crop.plot_id != plot_id:
+                raise ApplicationError(code="CROP_NOT_IN_PLOT", status_code=409)
+        values = await self.repository.list_activities(
+            farmer_id,
+            plot_id,
+            crop_id=crop_id,
+            limit=limit,
+            offset=offset,
+        )
+        return [ActivityResponse.model_validate(value) for value in values]
+
+    async def get_activity(self, farmer_id: UUID, activity_id: UUID) -> ActivityResponse:
+        return ActivityResponse.model_validate(await self._activity(farmer_id, activity_id))
 
     async def update_activity(
         self, farmer_id: UUID, activity_id: UUID, data: ActivityUpdate

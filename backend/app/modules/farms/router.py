@@ -49,6 +49,11 @@ async def list_farms(farmer_id: FarmerId, service: Service) -> list[FarmResponse
     return await service.list_farms(farmer_id)
 
 
+@router.get("/farms/{farm_id}", response_model=FarmResponse)
+async def get_farm(farm_id: UUID, farmer_id: FarmerId, service: Service) -> FarmResponse:
+    return await service.get_farm(farmer_id, farm_id)
+
+
 @router.put("/farms/{farm_id}", response_model=FarmResponse)
 async def update_farm(
     farm_id: UUID, data: FarmUpdate, farmer_id: FarmerId, service: Service
@@ -167,6 +172,33 @@ async def create_activity(
     plot_id: UUID, data: ActivityCreate, farmer_id: FarmerId, service: Service
 ) -> ActivityResponse:
     return await service.create_activity(farmer_id, plot_id, data)
+
+
+@router.get("/plots/{plot_id}/activities", response_model=list[ActivityResponse])
+async def list_activities(
+    plot_id: UUID,
+    farmer_id: FarmerId,
+    service: Service,
+    crop_id: Annotated[UUID | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[ActivityResponse]:
+    return await service.list_activities(
+        farmer_id,
+        plot_id,
+        crop_id=crop_id,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/activities/{activity_id}", response_model=ActivityResponse)
+async def get_activity(
+    activity_id: UUID,
+    farmer_id: FarmerId,
+    service: Service,
+) -> ActivityResponse:
+    return await service.get_activity(farmer_id, activity_id)
 
 
 @router.patch("/activities/{activity_id}", response_model=ActivityResponse)

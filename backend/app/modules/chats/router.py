@@ -12,7 +12,9 @@ from app.modules.chats.schemas import (
     ChatCreate,
     ChatDetailResponse,
     ChatMessageCreate,
+    ChatMessagePage,
     ChatResponse,
+    ChatScope,
     ChatUpdate,
     SendMessageResponse,
 )
@@ -36,13 +38,42 @@ async def list_chats(
     farmer_id: FarmerId,
     service: Service,
     include_archived: Annotated[bool, Query()] = False,
+    scope_type: Annotated[ChatScope | None, Query()] = None,
+    farm_id: Annotated[UUID | None, Query()] = None,
+    plot_id: Annotated[UUID | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[ChatResponse]:
-    return await service.list_chats(farmer_id, include_archived=include_archived)
+    return await service.list_chats(
+        farmer_id,
+        include_archived=include_archived,
+        scope_type=scope_type.value if scope_type else None,
+        farm_id=farm_id,
+        plot_id=plot_id,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/{chat_id}", response_model=ChatDetailResponse)
 async def get_chat(chat_id: UUID, farmer_id: FarmerId, service: Service) -> ChatDetailResponse:
     return await service.get_chat(farmer_id, chat_id)
+
+
+@router.get("/{chat_id}/messages", response_model=ChatMessagePage)
+async def list_chat_messages(
+    chat_id: UUID,
+    farmer_id: FarmerId,
+    service: Service,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    before_sequence: Annotated[int | None, Query(ge=1)] = None,
+) -> ChatMessagePage:
+    return await service.message_page(
+        farmer_id,
+        chat_id,
+        limit=limit,
+        before_sequence=before_sequence,
+    )
 
 
 @router.patch("/{chat_id}", response_model=ChatResponse)

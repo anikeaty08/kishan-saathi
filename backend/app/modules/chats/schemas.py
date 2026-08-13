@@ -29,9 +29,7 @@ class ChatCreate(BaseModel):
         if self.scope_type is ChatScope.GENERAL:
             valid = not any((self.farm_id, self.plot_id, self.diagnosis_case_id))
         elif self.scope_type is ChatScope.FARM:
-            valid = self.farm_id is not None and not any(
-                (self.plot_id, self.diagnosis_case_id)
-            )
+            valid = self.farm_id is not None and not any((self.plot_id, self.diagnosis_case_id))
         elif self.scope_type is ChatScope.PLOT:
             valid = self.plot_id is not None and self.diagnosis_case_id is None
         else:
@@ -43,9 +41,10 @@ class ChatCreate(BaseModel):
 
 class ChatUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    title: Annotated[
-        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=150)
-    ] | None = None
+    title: (
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=150)]
+        | None
+    ) = None
     archived: bool | None = None
 
     @model_validator(mode="after")
@@ -59,9 +58,7 @@ class ChatUpdate(BaseModel):
 
 class ChatMessageCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    content: Annotated[
-        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=6000)
-    ]
+    content: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=6000)]
 
 
 class ChatMessageResponse(BaseModel):
@@ -88,6 +85,11 @@ class ChatResponse(BaseModel):
 
 class ChatDetailResponse(ChatResponse):
     messages: list[ChatMessageResponse] = Field(default_factory=list)
+
+
+class ChatMessagePage(BaseModel):
+    items: list[ChatMessageResponse]
+    next_before_sequence: int | None
 
 
 class SendMessageResponse(BaseModel):

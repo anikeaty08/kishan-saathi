@@ -10,13 +10,17 @@ from app.core.dependencies import (
     get_app_settings,
     get_db_session,
     get_leaf_inference_provider,
+    get_memory_provider,
     get_object_storage,
 )
 from app.integrations.inference.provider import LeafInferenceProvider
+from app.integrations.memory.provider import MemoryProvider
 from app.integrations.storage.provider import ObjectStorageProvider
 from app.modules.diagnoses.repository import DiagnosisRepository
 from app.modules.diagnoses.service import DiagnosisService
 from app.modules.farms.repository import FarmRepository
+from app.modules.memories.cleaner import MemoryDiagnosisContextCleaner
+from app.modules.memories.repository import MemoryRepository
 from app.modules.reports.repository import ReportRepository
 from app.modules.storage_cleanup.service import ObjectCleanupService
 
@@ -26,6 +30,7 @@ def get_diagnosis_service(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     storage: Annotated[ObjectStorageProvider, Depends(get_object_storage)],
     inference: Annotated[LeafInferenceProvider, Depends(get_leaf_inference_provider)],
+    memory: Annotated[MemoryProvider, Depends(get_memory_provider)],
 ) -> DiagnosisService:
     return DiagnosisService(
         settings=settings,
@@ -40,4 +45,5 @@ def get_diagnosis_service(
         ),
         storage=storage,
         inference=inference,
+        context_cleaner=MemoryDiagnosisContextCleaner(MemoryRepository(session), memory),
     )

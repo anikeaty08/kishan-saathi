@@ -7,6 +7,7 @@ import pytest
 from app.core.config import Settings
 from app.integrations.llm.provider import (
     AssistantReply,
+    ChatRiskClassification,
     GeneratedTitle,
     LLMProvider,
     LLMRequest,
@@ -43,6 +44,13 @@ class RecordingProvider(LLMProvider):
         self.models.append(model)
         return GeneratedTitle(title="Generated title")
 
+    async def classify_chat_risk(
+        self, *, content: str, farmer_id: UUID, model: str
+    ) -> ChatRiskClassification:
+        del content, farmer_id
+        self.models.append(model)
+        return ChatRiskClassification(requires_primary_model=False, reason_code="routine")
+
 
 @pytest.mark.asyncio
 async def test_router_uses_mini_for_titles_and_primary_for_guidance() -> None:
@@ -51,15 +59,13 @@ async def test_router_uses_mini_for_titles_and_primary_for_guidance() -> None:
     farmer_id = UUID("00000000-0000-0000-0000-000000000001")
 
     await router.respond(LLMRequest(LLMTask.TITLE, "test", "test", farmer_id))
-    await router.respond(
-        LLMRequest(LLMTask.AGRICULTURAL_GUIDANCE, "test", "test", farmer_id)
-    )
-    title = await router.generate_title(
-        content="tomato spots", language="hi", farmer_id=farmer_id
-    )
+    await router.respond(LLMRequest(LLMTask.AGRICULTURAL_GUIDANCE, "test", "test", farmer_id))
+    title = await router.generate_title(content="tomato spots", language="hi", farmer_id=farmer_id)
+    classification = await router.classify_chat_risk(content="hello", farmer_id=farmer_id)
 
-    assert provider.models == ["gpt-5-mini", "gpt-5", "gpt-5-mini"]
+    assert provider.models == ["gpt-5-mini", "gpt-5", "gpt-5-mini", "gpt-5-mini"]
     assert title.title == "Generated title"
+    assert classification.requires_primary_model is False
 
 
 @pytest.mark.asyncio

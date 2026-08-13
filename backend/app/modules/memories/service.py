@@ -1,8 +1,11 @@
 """Farmer-controlled memory linking, review, reconciliation, and deletion."""
 
 from collections.abc import Iterable
-from uuid import UUID
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from uuid import UUID, uuid4
 
+import structlog
 from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import ApplicationError
@@ -12,7 +15,7 @@ from app.integrations.memory.provider import MemoryProvider, MemoryScope, Memory
 from app.modules.chats.models import ChatMessage
 from app.modules.chats.repository import ChatRepository
 from app.modules.farms.repository import FarmRepository
-from app.modules.memories.models import ChatMemoryConnection, ScopedMemoryFact
+from app.modules.memories.models import ChatMemoryConnection, MemoryCaptureJob, ScopedMemoryFact
 from app.modules.memories.repository import MemoryRepository
 from app.modules.memories.schemas import (
     ChatMemoryConnectionCreate,
@@ -20,6 +23,12 @@ from app.modules.memories.schemas import (
     MemoryConnectionTarget,
     MemoryFactResponse,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryCaptureClaim:
+    job_id: UUID
+    lease_token: UUID
 
 
 class MemoryService:
@@ -35,12 +44,15 @@ class MemoryService:
         farms: FarmRepository,
         provider: MemoryProvider,
         llm: LLMRouter,
+        max_capture_attempts: int = 10,
     ) -> None:
         self._repository = repository
         self._chats = chats
         self._farms = farms
         self._provider = provider
         self._llm = llm
+        self._max_capture_attempts = max_capture_attempts
+        self._logger = structlog.get_logger(__name__)
 
     async def connect_chat(
         self, farmer_id: UUID, chat_id: UUID, data: ChatMemoryConnectionCreate
@@ -57,32 +69,17 @@ class MemoryService:
         scope, target_name, farm_id, plot_id = await self._target(farmer_id, data)
         messages = await self._chats.all_messages(farmer_id, chat_id)
         candidates = await self._extract(farmer_id, messages, scope, target_name)
-        existing = await self._repository.existing_normalized(
-            farmer_id, farm_id=farm_id, plot_id=plot_id
-        )
         connection = ChatMemoryConnection(
             farmer_id=farmer_id, chat_id=chat_id, farm_id=farm_id, plot_id=plot_id
         )
         self._repository.add(connection)
-        stored: list[ScopedMemoryFact] = []
-        for candidate in candidates:
-            normalized = self._normalize(candidate.text)
-            if normalized in existing:
-                continue
-            existing.add(normalized)
-            fact = ScopedMemoryFact(
-                farmer_id=farmer_id,
-                farm_id=farm_id,
-                plot_id=plot_id,
-                source_chat_id=chat_id,
-                source_message_id=candidate.source_message_id,
-                evidence_quote=candidate.evidence_quote,
-                text=candidate.text,
-                normalized_text=normalized,
-                index_status="pending",
-            )
-            self._repository.add(fact)
-            stored.append(fact)
+        stored = await self._stage_candidates(
+            farmer_id,
+            chat_id,
+            candidates,
+            farm_id=farm_id,
+            plot_id=plot_id,
+        )
         try:
             await self._repository.commit()
         except IntegrityError as exc:
@@ -97,31 +94,239 @@ class MemoryService:
         await self._reconcile(scope, stored)
         return await self._connection_response(farmer_id, connection)
 
+    def schedule_scoped_message(
+        self,
+        farmer_id: UUID,
+        chat_id: UUID,
+        message: ChatMessage,
+        *,
+        farm_id: UUID | None,
+        plot_id: UUID | None,
+    ) -> MemoryCaptureJob:
+        if (farm_id is None) == (plot_id is None):
+            raise ApplicationError(code="MEMORY_SCOPE_INVALID", status_code=422)
+        job = MemoryCaptureJob(
+            farmer_id=farmer_id,
+            chat_id=chat_id,
+            source_message_id=message.id,
+            farm_id=farm_id,
+            plot_id=plot_id,
+        )
+        self._repository.add(job)
+        return job
+
+    async def process_capture_jobs(self, claims: list[MemoryCaptureClaim]) -> None:
+        """Process owned leases; failures retry and eventually become dead letters."""
+
+        for claim in claims:
+            job = await self._repository.get_capture_job(
+                claim.job_id,
+                lease_token=claim.lease_token,
+                for_update=True,
+            )
+            if job is None:
+                continue
+            job.lease_expires_at = datetime.now(tz=UTC) + timedelta(minutes=5)
+            await self._repository.commit()
+            try:
+                await self._capture_job(job)
+            except Exception as exc:
+                await self._repository.rollback()
+                job = await self._repository.get_capture_job(
+                    claim.job_id,
+                    lease_token=claim.lease_token,
+                    for_update=True,
+                )
+                if job is None:
+                    continue
+                job.attempts += 1
+                job.last_error_type = type(exc).__name__
+                job.lease_expires_at = None
+                job.lease_token = None
+                if job.attempts >= self._max_capture_attempts:
+                    job.status = "dead"
+                    job.dead_at = datetime.now(tz=UTC)
+                    self._logger.error(
+                        "memory_capture.dead_lettered",
+                        job_id=str(job.id),
+                        attempts=job.attempts,
+                        error_type=job.last_error_type,
+                    )
+                else:
+                    job.status = "pending"
+                    job.next_attempt_at = datetime.now(tz=UTC) + timedelta(
+                        seconds=min(60 * (2 ** min(job.attempts - 1, 10)), 21600)
+                    )
+                await self._repository.commit()
+            else:
+                job = await self._repository.get_capture_job(
+                    claim.job_id,
+                    lease_token=claim.lease_token,
+                    for_update=True,
+                )
+                if job is None:
+                    continue
+                await self._repository.delete_capture_job(job)
+                await self._repository.commit()
+
+    async def process_due_capture_jobs(self, *, limit: int) -> int:
+        now = datetime.now(tz=UTC)
+        jobs = await self._repository.due_capture_jobs(now=now, limit=limit)
+        claims: list[MemoryCaptureClaim] = []
+        if jobs:
+            lease_until = now + timedelta(minutes=5)
+            for job in jobs:
+                token = uuid4()
+                job.status = "processing"
+                job.next_attempt_at = lease_until
+                job.lease_expires_at = lease_until
+                job.lease_token = token
+                claims.append(MemoryCaptureClaim(job.id, token))
+            await self._repository.commit()
+        await self.process_capture_jobs(claims)
+        return len(claims)
+
+    async def _capture_job(self, job: MemoryCaptureJob) -> None:
+        message = await self._chats.message(job.farmer_id, job.chat_id, job.source_message_id)
+        if message is None:
+            raise ApplicationError(code="MEMORY_SOURCE_MESSAGE_NOT_FOUND", status_code=404)
+        farmer_id, chat_id = job.farmer_id, job.chat_id
+        farm_id, plot_id = job.farm_id, job.plot_id
+        if farm_id is not None:
+            farm = await self._farms.get_farm(farmer_id, farm_id)
+            if farm is None:
+                raise ApplicationError(code="FARM_NOT_FOUND", status_code=404)
+            scope = MemoryScope(farmer_id, MemoryScopeType.FARM, farm_id)
+            target_name = farm.name
+        else:
+            assert plot_id is not None
+            plot = await self._farms.get_plot(farmer_id, plot_id)
+            if plot is None:
+                raise ApplicationError(code="PLOT_NOT_FOUND", status_code=404)
+            scope = MemoryScope(farmer_id, MemoryScopeType.PLOT, plot_id)
+            target_name = plot.name
+        candidates = await self._extract(farmer_id, [message], scope, target_name)
+        stored = await self._stage_candidates(
+            farmer_id,
+            chat_id,
+            candidates,
+            farm_id=farm_id,
+            plot_id=plot_id,
+        )
+        try:
+            await self._repository.commit()
+        except IntegrityError:
+            await self._repository.rollback()
+            stored = await self._candidate_facts(
+                farmer_id,
+                candidates,
+                farm_id=farm_id,
+                plot_id=plot_id,
+            )
+        for fact in stored:
+            await self._repository.refresh(fact)
+        if not await self._reconcile(scope, stored):
+            raise ApplicationError(code="MEMORY_INDEX_RETRY_PENDING", status_code=503)
+
+    async def _stage_candidates(
+        self,
+        farmer_id: UUID,
+        chat_id: UUID,
+        candidates: tuple[MemoryCandidate, ...],
+        *,
+        farm_id: UUID | None,
+        plot_id: UUID | None,
+    ) -> list[ScopedMemoryFact]:
+        normalized_candidates = {self._normalize(candidate.text) for candidate in candidates}
+        existing = await self._repository.facts_by_normalized(
+            farmer_id,
+            farm_id=farm_id,
+            plot_id=plot_id,
+            normalized=normalized_candidates,
+        )
+        stored: list[ScopedMemoryFact] = []
+        included: set[str] = set()
+        for candidate in candidates:
+            normalized = self._normalize(candidate.text)
+            if normalized in included:
+                continue
+            included.add(normalized)
+            if normalized in existing:
+                stored.append(existing[normalized])
+                continue
+            fact = ScopedMemoryFact(
+                farmer_id=farmer_id,
+                farm_id=farm_id,
+                plot_id=plot_id,
+                source_chat_id=chat_id,
+                source_message_id=candidate.source_message_id,
+                evidence_quote=candidate.evidence_quote,
+                text=candidate.text,
+                normalized_text=normalized,
+                index_status="pending",
+            )
+            self._repository.add(fact)
+            existing[normalized] = fact
+            stored.append(fact)
+        return stored
+
+    async def _candidate_facts(
+        self,
+        farmer_id: UUID,
+        candidates: tuple[MemoryCandidate, ...],
+        *,
+        farm_id: UUID | None,
+        plot_id: UUID | None,
+    ) -> list[ScopedMemoryFact]:
+        values = await self._repository.facts_by_normalized(
+            farmer_id,
+            farm_id=farm_id,
+            plot_id=plot_id,
+            normalized={self._normalize(candidate.text) for candidate in candidates},
+        )
+        return list(values.values())
+
     async def list_farm(
-        self, farmer_id: UUID, farm_id: UUID
+        self,
+        farmer_id: UUID,
+        farm_id: UUID,
+        *,
+        limit: int = 100,
+        offset: int = 0,
     ) -> list[MemoryFactResponse]:
         if await self._farms.get_farm(farmer_id, farm_id) is None:
             raise ApplicationError(code="FARM_NOT_FOUND", status_code=404)
         return [
             MemoryFactResponse.model_validate(value)
-            for value in await self._repository.list_farm(farmer_id, farm_id)
+            for value in await self._repository.list_farm(
+                farmer_id, farm_id, limit=limit, offset=offset
+            )
         ]
 
     async def list_plot(
-        self, farmer_id: UUID, plot_id: UUID
+        self,
+        farmer_id: UUID,
+        plot_id: UUID,
+        *,
+        limit: int = 100,
+        offset: int = 0,
     ) -> list[MemoryFactResponse]:
         if await self._farms.get_plot(farmer_id, plot_id) is None:
             raise ApplicationError(code="PLOT_NOT_FOUND", status_code=404)
         return [
             MemoryFactResponse.model_validate(value)
-            for value in await self._repository.list_plot(farmer_id, plot_id)
+            for value in await self._repository.list_plot(
+                farmer_id, plot_id, limit=limit, offset=offset
+            )
         ]
 
     async def retry_fact(self, farmer_id: UUID, fact_id: UUID) -> MemoryFactResponse:
         fact = await self._fact(farmer_id, fact_id, for_update=True)
         if fact.index_status not in {"pending", "failed"}:
             raise ApplicationError(code="MEMORY_FACT_NOT_RETRYABLE", status_code=409)
-        await self._reconcile(self._scope(farmer_id, fact.farm_id, fact.plot_id), [fact])
+        indexed = await self._reconcile(self._scope(farmer_id, fact.farm_id, fact.plot_id), [fact])
+        if not indexed:
+            raise ApplicationError(code="MEMORY_INDEX_RETRY_PENDING", status_code=503)
         await self._repository.refresh(fact)
         return MemoryFactResponse.model_validate(fact)
 
@@ -152,9 +357,7 @@ class MemoryService:
     async def _fact(
         self, farmer_id: UUID, fact_id: UUID, *, for_update: bool = False
     ) -> ScopedMemoryFact:
-        fact = await self._repository.get_fact(
-            farmer_id, fact_id, for_update=for_update
-        )
+        fact = await self._repository.get_fact(farmer_id, fact_id, for_update=for_update)
         if fact is None:
             raise ApplicationError(code="MEMORY_FACT_NOT_FOUND", status_code=404)
         return fact
@@ -202,14 +405,14 @@ class MemoryService:
             )
         return tuple(accepted)
 
-    async def _reconcile(
-        self, scope: MemoryScope, facts: list[ScopedMemoryFact]
-    ) -> None:
+    async def _reconcile(self, scope: MemoryScope, facts: list[ScopedMemoryFact]) -> bool:
+        all_indexed = True
         for fact in facts:
-            locked = await self._repository.get_fact(
-                fact.farmer_id, fact.id, for_update=True
-            )
-            if locked is None or locked.index_status not in {"pending", "failed"}:
+            locked = await self._repository.get_fact(fact.farmer_id, fact.id, for_update=True)
+            if locked is None or locked.index_status == "indexed":
+                continue
+            if locked.index_status not in {"pending", "failed"}:
+                all_indexed = False
                 continue
             try:
                 indexed = await self._provider.index_fact(
@@ -219,6 +422,7 @@ class MemoryService:
                 locked.index_status = "indexed"
             except ApplicationError:
                 locked.index_status = "failed"
+                all_indexed = False
             try:
                 await self._repository.commit()
             except Exception as exc:
@@ -226,6 +430,7 @@ class MemoryService:
                 raise ApplicationError(
                     code="MEMORY_INDEX_PERSISTENCE_FAILED", status_code=503
                 ) from exc
+        return all_indexed
 
     async def _resume_connection(
         self, farmer_id: UUID, connection: ChatMemoryConnection
@@ -252,9 +457,7 @@ class MemoryService:
         )
 
     @staticmethod
-    def _has_exact_evidence(
-        candidate: MemoryCandidate, user_messages: dict[UUID, str]
-    ) -> bool:
+    def _has_exact_evidence(candidate: MemoryCandidate, user_messages: dict[UUID, str]) -> bool:
         source = user_messages.get(candidate.source_message_id)
         if source is None:
             return False
@@ -264,9 +467,7 @@ class MemoryService:
         return len(quote) >= 4 and quote == fact and quote in content
 
     @staticmethod
-    def _scope(
-        farmer_id: UUID, farm_id: UUID | None, plot_id: UUID | None
-    ) -> MemoryScope:
+    def _scope(farmer_id: UUID, farm_id: UUID | None, plot_id: UUID | None) -> MemoryScope:
         if farm_id is not None:
             return MemoryScope(farmer_id, MemoryScopeType.FARM, farm_id)
         if plot_id is not None:

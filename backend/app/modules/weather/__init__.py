@@ -1,0 +1,1 @@
+"""Cached weather application module."""

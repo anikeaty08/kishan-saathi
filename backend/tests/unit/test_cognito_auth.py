@@ -102,6 +102,7 @@ async def test_get_identity_reads_email_from_cognito_get_user() -> None:
                     {"Name": "sub", "Value": "farmer-sub"},
                     {"Name": "email", "Value": "farmer@example.com"},
                     {"Name": "email_verified", "Value": "true"},
+                    {"Name": "name", "Value": "Nikhil Kumar"},
                 ],
             },
         )
@@ -113,6 +114,7 @@ async def test_get_identity_reads_email_from_cognito_get_user() -> None:
     assert identity.subject == "farmer-sub"
     assert identity.email == "farmer@example.com"
     assert identity.email_verified is True
+    assert identity.name == "Nikhil Kumar"
 
 
 @pytest.mark.asyncio

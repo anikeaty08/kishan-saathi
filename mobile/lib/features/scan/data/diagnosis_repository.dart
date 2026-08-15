@@ -16,6 +16,7 @@ class DiagnosisReportShare {
 
 class ProgressionComparisonModel {
   const ProgressionComparisonModel({
+    required this.id,
     required this.trend,
     required this.confidence,
     required this.evidence,
@@ -25,8 +26,10 @@ class ProgressionComparisonModel {
     required this.laterImageIds,
     required this.earlierCapturedAt,
     required this.laterCapturedAt,
+    required this.generatedAt,
   });
 
+  final String id;
   final String trend;
   final double confidence;
   final List<String> evidence;
@@ -36,6 +39,7 @@ class ProgressionComparisonModel {
   final List<String> laterImageIds;
   final DateTime earlierCapturedAt;
   final DateTime laterCapturedAt;
+  final DateTime generatedAt;
 }
 
 class DiagnosisRepository {
@@ -119,7 +123,28 @@ class DiagnosisRepository {
       caseId,
       responseLanguage: responseLanguage,
     );
-    final row = _map(payload, contract: 'progression comparison');
+    return _progression(_map(payload, contract: 'progression comparison'));
+  }
+
+  Future<List<ProgressionComparisonModel>> loadProgressionHistory(
+    String caseId, {
+    int limit = 20,
+    int offset = 0,
+  }) async {
+    final payload = await _api.diagnosisProgressionHistory(
+      caseId,
+      limit: limit,
+      offset: offset,
+    );
+    return _list(payload, contract: 'progression history')
+        .map(
+          (value) =>
+              _progression(_map(value, contract: 'progression comparison')),
+        )
+        .toList(growable: false);
+  }
+
+  ProgressionComparisonModel _progression(Map<String, dynamic> row) {
     final earlierCapturedAt = DateTime.tryParse(
       row['earlier_captured_at'] as String? ?? '',
     );
@@ -127,8 +152,12 @@ class DiagnosisRepository {
       row['later_captured_at'] as String? ?? '',
     );
     final confidence = row['confidence'];
-    if (earlierCapturedAt == null ||
+    final id = row['comparison_id'] as String?;
+    final generatedAt = DateTime.tryParse(row['generated_at'] as String? ?? '');
+    if (id == null ||
+        earlierCapturedAt == null ||
         laterCapturedAt == null ||
+        generatedAt == null ||
         confidence is! num) {
       throw const ApiException(
         code: 'INVALID_RESPONSE',
@@ -136,6 +165,7 @@ class DiagnosisRepository {
       );
     }
     return ProgressionComparisonModel(
+      id: id,
       trend: row['trend'] as String? ?? 'unclear',
       confidence: confidence.toDouble(),
       evidence: _strings(row['evidence']).toList(growable: false),
@@ -146,6 +176,7 @@ class DiagnosisRepository {
       laterImageIds: _strings(row['later_image_ids']).toList(growable: false),
       earlierCapturedAt: earlierCapturedAt,
       laterCapturedAt: laterCapturedAt,
+      generatedAt: generatedAt,
     );
   }
 
@@ -267,7 +298,14 @@ DiagnosisReportModel _report(Map<String, dynamic> row) {
 DiagnosisAssessmentModel _assessment(Map<String, dynamic> row) {
   final id = row['id'] as String?;
   final createdAt = DateTime.tryParse(row['created_at'] as String? ?? '');
-  if (id == null || createdAt == null) {
+  final cropName = _text(row['predicted_crop'] as String?);
+  final diseaseName = _text(row['primary_disease'] as String?);
+  final confidence = _text(row['confidence_label'] as String?);
+  if (id == null ||
+      createdAt == null ||
+      cropName == null ||
+      diseaseName == null ||
+      confidence == null) {
     throw const ApiException(
       code: 'INVALID_RESPONSE',
       message: 'A diagnosis history entry is incomplete',
@@ -275,9 +313,9 @@ DiagnosisAssessmentModel _assessment(Map<String, dynamic> row) {
   }
   return DiagnosisAssessmentModel(
     id: id,
-    cropName: row['predicted_crop'] as String? ?? 'Unknown crop',
-    diseaseName: row['primary_disease'] as String? ?? 'No clear match',
-    confidenceLabel: row['confidence_label'] as String? ?? 'low',
+    cropName: cropName,
+    diseaseName: diseaseName,
+    confidenceLabel: confidence,
     createdAt: createdAt,
     isActive: row['is_active'] as bool? ?? false,
     imageIds: _strings(row['image_ids']).toList(growable: false),
@@ -301,9 +339,20 @@ DiagnosisCaseModel _diagnosis(
       : null;
   final predictedCrop = assessment?['predicted_crop'] as String?;
   final primaryDisease = assessment?['primary_disease'] as String?;
-  final alternatives = _maps(assessment?['alternatives']);
-  final images = _maps(row['images']);
+  final alternatives = _maps(
+    assessment?['alternatives'],
+    contract: 'diagnosis alternatives',
+    allowNull: assessment == null,
+  );
+  final images = _maps(row['images'], contract: 'diagnosis images');
   final confidence = assessment?['confidence_label'] as String? ?? 'low';
+  final createdAt = DateTime.tryParse(row['created_at'] as String? ?? '');
+  if (createdAt == null) {
+    throw const ApiException(
+      code: 'INVALID_RESPONSE',
+      message: 'The diagnosis response has an invalid created_at value',
+    );
+  }
   final predictions = <DiagnosisPrediction>[
     if (primaryDisease != null)
       DiagnosisPrediction(
@@ -313,10 +362,14 @@ DiagnosisCaseModel _diagnosis(
         summary: 'Possible match based on all submitted leaf images.',
       ),
     ...alternatives.map((alternative) {
-      final disease =
-          alternative['disease_name'] as String? ?? 'Unknown possibility';
-      final crop =
-          alternative['crop_name'] as String? ?? predictedCrop ?? 'Crop';
+      final disease = _text(alternative['disease_name'] as String?);
+      final crop = _text(alternative['crop_name'] as String?) ?? predictedCrop;
+      if (disease == null || crop == null) {
+        throw const ApiException(
+          code: 'INVALID_RESPONSE',
+          message: 'A diagnosis alternative is incomplete',
+        );
+      }
       return DiagnosisPrediction(
         code: _code(disease),
         name: disease,
@@ -327,13 +380,15 @@ DiagnosisCaseModel _diagnosis(
   ];
   return DiagnosisCaseModel(
     id: id,
-    cropName: predictedCrop ?? row['plant_name'] as String? ?? 'Unknown crop',
+    cropName:
+        _text(predictedCrop) ??
+        _text(row['plant_name'] as String?) ??
+        'Plant not identified',
     plotName: plotName,
     farmId: row['farm_id'] as String?,
     plotId: row['plot_id'] as String?,
     cropId: row['crop_id'] as String?,
-    createdAt:
-        DateTime.tryParse(row['created_at'] as String? ?? '') ?? DateTime.now(),
+    createdAt: createdAt,
     imageAsset: 'assets/images/leaf_healthy.jpg',
     imagePath: imagePath,
     imageIds: images
@@ -367,10 +422,21 @@ List<dynamic> _list(Object? value, {required String contract}) {
   );
 }
 
-Iterable<Map<String, dynamic>> _maps(Object? value) => switch (value) {
-  final List<dynamic> values => values.whereType<Map<String, dynamic>>(),
-  _ => const Iterable<Map<String, dynamic>>.empty(),
-};
+List<Map<String, dynamic>> _maps(
+  Object? value, {
+  required String contract,
+  bool allowNull = false,
+}) {
+  if (allowNull && value == null) return const [];
+  if (value is! List<dynamic> ||
+      value.any((item) => item is! Map<String, dynamic>)) {
+    throw ApiException(
+      code: 'INVALID_RESPONSE',
+      message: 'The $contract response could not be read',
+    );
+  }
+  return value.cast<Map<String, dynamic>>();
+}
 
 Iterable<String> _strings(Object? value) => switch (value) {
   final List<dynamic> values => values.whereType<String>(),

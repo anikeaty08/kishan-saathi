@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from typing import Protocol
+from uuid import UUID
 
 from app.core.errors import ApplicationError
 
@@ -40,6 +41,7 @@ class LeafInferenceProvider(Protocol):
     async def diagnose(
         self,
         *,
+        farmer_id: UUID,
         images: tuple[bytes, ...],
         plant_name: str | None,
     ) -> CaseInference: ...
@@ -53,10 +55,11 @@ class UnavailableLeafInferenceProvider:
     async def diagnose(
         self,
         *,
+        farmer_id: UUID,
         images: tuple[bytes, ...],
         plant_name: str | None,
     ) -> CaseInference:
-        del images, plant_name
+        del farmer_id, images, plant_name
         raise ApplicationError(code="LEAF_MODEL_NOT_CONFIGURED", status_code=503)
 
     async def close(self) -> None:

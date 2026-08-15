@@ -1,19 +1,26 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:image/image.dart' as image_codec;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../core/models/app_models.dart';
 import '../../../core/network/api_exception.dart';
+import '../../../core/storage/private_local_store.dart';
+import 'queued_scan_cipher.dart';
 
 class ScanQueueRepository {
-  ScanQueueRepository(this._preferences);
+  ScanQueueRepository(
+    this._preferences, {
+    required PrivateLocalStore privateLocalStore,
+  }) : _cipher = QueuedScanCipher(privateLocalStore);
 
   static const _key = 'durable_scan_queue_v1';
 
   final SharedPreferences _preferences;
+  final QueuedScanCipher _cipher;
   final _uuid = const Uuid();
 
   Future<List<QueuedScanModel>> load() async {
@@ -26,7 +33,9 @@ class ScanQueueRepository {
           .whereType<Map<String, dynamic>>()
           .map(_decode)
           .where(
-            (scan) => scan.imagePaths.every((path) => File(path).existsSync()),
+            (scan) => scan.imagePaths.every(
+              (path) => path.endsWith('.ksq') && File(path).existsSync(),
+            ),
           )
           .toList(growable: false);
       await _persist(scans);
@@ -68,9 +77,37 @@ class ScanQueueRepository {
           );
         }
         final target = File(
-          '${folder.path}${Platform.pathSeparator}leaf_${index + 1}.jpg',
+          '${folder.path}${Platform.pathSeparator}leaf_${index + 1}.ksq',
         );
-        await source.copy(target.path);
+        final sourceLength = await source.length();
+        if (sourceLength > 25 * 1024 * 1024) {
+          throw const ApiException(
+            code: 'SCAN_IMAGE_TOO_LARGE',
+            message: 'One selected photo is too large',
+          );
+        }
+        final decoded = image_codec.decodeImage(await source.readAsBytes());
+        if (decoded == null) {
+          throw const ApiException(
+            code: 'SCAN_IMAGE_INVALID',
+            message: 'One selected file is not a readable image',
+          );
+        }
+        var sanitized = image_codec.bakeOrientation(decoded);
+        if (sanitized.width > 2048 || sanitized.height > 2048) {
+          sanitized = image_codec.copyResize(
+            sanitized,
+            width: sanitized.width >= sanitized.height ? 2048 : null,
+            height: sanitized.height > sanitized.width ? 2048 : null,
+            interpolation: image_codec.Interpolation.average,
+          );
+        }
+        // Re-encoding removes EXIF/GPS and normalizes the queued file.
+        final sanitizedBytes = image_codec.encodeJpg(sanitized, quality: 90);
+        await target.writeAsBytes(
+          await _cipher.encrypt(sanitizedBytes),
+          flush: true,
+        );
         saved.add(target.path);
       }
       final scan = QueuedScanModel(
@@ -113,6 +150,81 @@ class ScanQueueRepository {
       );
     }
     await _persist(current.where((scan) => scan.id != id).toList());
+  }
+
+  Future<PreparedQueuedScanImages> prepareForUpload(
+    QueuedScanModel scan,
+  ) async {
+    final temporaryRoot = await getTemporaryDirectory();
+    final folder = Directory(
+      '${temporaryRoot.path}${Platform.pathSeparator}krishisathi_upload_${scan.id}',
+    );
+    await folder.create(recursive: true);
+    final paths = <String>[];
+    try {
+      for (var index = 0; index < scan.imagePaths.length; index++) {
+        final encryptedFile = File(scan.imagePaths[index]);
+        if (!await encryptedFile.exists()) {
+          throw const ApiException(
+            code: 'SCAN_IMAGE_MISSING',
+            message: 'One saved image is no longer available',
+          );
+        }
+        final clearBytes = await _cipher.decrypt(
+          await encryptedFile.readAsBytes(),
+        );
+        final target = File(
+          '${folder.path}${Platform.pathSeparator}leaf_${index + 1}.jpg',
+        );
+        await target.writeAsBytes(clearBytes, flush: true);
+        paths.add(target.path);
+      }
+      return PreparedQueuedScanImages(
+        paths: paths,
+        temporaryDirectory: folder.path,
+      );
+    } on ApiException {
+      if (await folder.exists()) await folder.delete(recursive: true);
+      rethrow;
+    } on FileSystemException {
+      if (await folder.exists()) await folder.delete(recursive: true);
+      throw const ApiException(
+        code: 'SCAN_QUEUE_READ_FAILED',
+        message: 'A saved scan could not be opened from this phone',
+      );
+    }
+  }
+
+  Future<void> disposePrepared(PreparedQueuedScanImages prepared) async {
+    final folder = Directory(prepared.temporaryDirectory);
+    if (await folder.exists()) await folder.delete(recursive: true);
+  }
+
+  /// Deletes every queued scan and its copied images.
+  ///
+  /// Sign-out calls this before another farmer can use the device, preventing
+  /// account A's private images from being submitted under account B.
+  Future<void> clearAll() async {
+    Object? deletionFailure;
+    try {
+      final root = await getApplicationSupportDirectory();
+      final folder = Directory(
+        '${root.path}${Platform.pathSeparator}queued_scans',
+      );
+      if (await folder.exists()) await folder.delete(recursive: true);
+    } on FileSystemException catch (error) {
+      deletionFailure = error;
+    } finally {
+      // Even if the OS temporarily refuses file deletion, remove queue
+      // metadata so no later account can discover or upload those files.
+      await _preferences.remove(_key);
+    }
+    if (deletionFailure != null) {
+      throw const ApiException(
+        code: 'SCAN_QUEUE_DELETE_FAILED',
+        message: 'Saved scans could not be removed from this phone',
+      );
+    }
   }
 
   Future<void> _persist(List<QueuedScanModel> scans) =>

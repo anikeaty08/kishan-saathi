@@ -5,6 +5,7 @@ from uuid import UUID
 
 import pytest
 
+from app.core.errors import ApplicationError
 from app.integrations.storage.local import LocalObjectStorage
 
 OWNER = UUID("00000000-0000-0000-0000-000000000001")
@@ -21,9 +22,11 @@ async def test_local_storage_round_trip_and_owner_isolation(tmp_path: Path) -> N
     )
 
     assert await storage.read_private(owner_id=OWNER, key=stored.key) == b"private image"
-    with pytest.raises(ValueError):
+    with pytest.raises(ApplicationError) as hidden:
         await storage.read_private(owner_id=OTHER, key=stored.key)
+    assert hidden.value.code == "STORAGE_OBJECT_NOT_FOUND"
 
     await storage.delete_private(owner_id=OWNER, key=stored.key)
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(ApplicationError) as missing:
         await storage.read_private(owner_id=OWNER, key=stored.key)
+    assert missing.value.code == "STORAGE_OBJECT_NOT_FOUND"

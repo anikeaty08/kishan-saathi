@@ -199,7 +199,8 @@ class MemoryService:
             scope = MemoryScope(farmer_id, MemoryScopeType.FARM, farm_id)
             target_name = farm.name
         else:
-            assert plot_id is not None
+            if plot_id is None:
+                raise ApplicationError(code="MEMORY_TARGET_REQUIRED", status_code=422)
             plot = await self._farms.get_plot(farmer_id, plot_id)
             if plot is None:
                 raise ApplicationError(code="PLOT_NOT_FOUND", status_code=404)
@@ -341,16 +342,36 @@ class MemoryService:
 
     async def delete_fact(self, farmer_id: UUID, fact_id: UUID) -> None:
         fact = await self._fact(farmer_id, fact_id, for_update=True)
-        if fact.index_status == "deleting":
+        now = datetime.now(tz=UTC)
+        if fact.index_status == "indexing":
+            raise ApplicationError(code="MEMORY_FACT_INDEX_IN_PROGRESS", status_code=409)
+        if fact.index_status == "deleting" and not self._lease_expired(
+            fact.operation_lease_expires_at, now
+        ):
             raise ApplicationError(code="MEMORY_FACT_DELETE_IN_PROGRESS", status_code=409)
+        token = uuid4()
+        provider_memory_id = fact.provider_memory_id
         fact.index_status = "deleting"
-        if fact.provider_memory_id is not None:
+        fact.operation_lease_token = token
+        fact.operation_lease_expires_at = now + timedelta(minutes=5)
+        await self._repository.commit()
+        if provider_memory_id is not None:
             try:
-                await self._provider.delete_fact(memory_id=fact.provider_memory_id)
+                await self._provider.delete_fact(memory_id=provider_memory_id)
             except ApplicationError:
+                fact = await self._fact(farmer_id, fact_id, for_update=True)
+                if fact.operation_lease_token != token:
+                    raise ApplicationError(
+                        code="MEMORY_FACT_OPERATION_SUPERSEDED", status_code=409
+                    ) from None
                 fact.index_status = "delete_failed"
+                fact.operation_lease_token = None
+                fact.operation_lease_expires_at = None
                 await self._repository.commit()
                 raise
+        fact = await self._fact(farmer_id, fact_id, for_update=True)
+        if fact.operation_lease_token != token:
+            raise ApplicationError(code="MEMORY_FACT_OPERATION_SUPERSEDED", status_code=409)
         await self._repository.delete(fact)
         await self._repository.commit()
 
@@ -366,12 +387,14 @@ class MemoryService:
         self, farmer_id: UUID, data: ChatMemoryConnectionCreate
     ) -> tuple[MemoryScope, str, UUID | None, UUID | None]:
         if data.target_type is MemoryConnectionTarget.FARM:
-            assert data.farm_id is not None
+            if data.farm_id is None:
+                raise ApplicationError(code="MEMORY_FARM_REQUIRED", status_code=422)
             farm = await self._farms.get_farm(farmer_id, data.farm_id)
             if farm is None:
                 raise ApplicationError(code="FARM_NOT_FOUND", status_code=404)
             return MemoryScope(farmer_id, MemoryScopeType.FARM, farm.id), farm.name, farm.id, None
-        assert data.plot_id is not None
+        if data.plot_id is None:
+            raise ApplicationError(code="MEMORY_PLOT_REQUIRED", status_code=422)
         plot = await self._farms.get_plot(farmer_id, data.plot_id)
         if plot is None:
             raise ApplicationError(code="PLOT_NOT_FOUND", status_code=404)
@@ -411,18 +434,51 @@ class MemoryService:
             locked = await self._repository.get_fact(fact.farmer_id, fact.id, for_update=True)
             if locked is None or locked.index_status == "indexed":
                 continue
-            if locked.index_status not in {"pending", "failed"}:
+            now = datetime.now(tz=UTC)
+            if locked.index_status == "indexing" and not self._lease_expired(
+                locked.operation_lease_expires_at, now
+            ):
                 all_indexed = False
+                await self._repository.rollback()
                 continue
+            if locked.index_status not in {"pending", "failed", "indexing"}:
+                all_indexed = False
+                await self._repository.rollback()
+                continue
+            token = uuid4()
+            text = locked.text
+            locked.index_status = "indexing"
+            locked.operation_lease_token = token
+            locked.operation_lease_expires_at = now + timedelta(minutes=5)
+            await self._repository.commit()
             try:
                 indexed = await self._provider.index_fact(
-                    scope=scope, canonical_fact_id=locked.id, text=locked.text
+                    scope=scope, canonical_fact_id=fact.id, text=text
                 )
+            except ApplicationError:
+                locked = await self._repository.get_fact(
+                    fact.farmer_id, fact.id, for_update=True
+                )
+                if locked is None or locked.operation_lease_token != token:
+                    all_indexed = False
+                    await self._repository.rollback()
+                    continue
+                locked.index_status = "failed"
+                locked.operation_lease_token = None
+                locked.operation_lease_expires_at = None
+                all_indexed = False
+            else:
+                locked = await self._repository.get_fact(
+                    fact.farmer_id, fact.id, for_update=True
+                )
+                if locked is None or locked.operation_lease_token != token:
+                    all_indexed = False
+                    await self._repository.rollback()
+                    continue
                 locked.provider_memory_id = indexed.id
                 locked.index_status = "indexed"
-            except ApplicationError:
-                locked.index_status = "failed"
-                all_indexed = False
+                locked.operation_lease_token = None
+                locked.operation_lease_expires_at = None
             try:
                 await self._repository.commit()
             except Exception as exc:
@@ -431,6 +487,13 @@ class MemoryService:
                     code="MEMORY_INDEX_PERSISTENCE_FAILED", status_code=503
                 ) from exc
         return all_indexed
+
+    @staticmethod
+    def _lease_expired(value: datetime | None, now: datetime) -> bool:
+        if value is None:
+            return True
+        aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+        return aware <= now
 
     async def _resume_connection(
         self, farmer_id: UUID, connection: ChatMemoryConnection

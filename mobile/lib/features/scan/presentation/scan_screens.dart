@@ -15,6 +15,8 @@ import '../../../core/network/api_exception.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/ui/app_ui.dart';
 import '../data/diagnosis_repository.dart';
+import '../data/scan_image_policy.dart';
+import '../data/scan_state_policy.dart';
 import '../../shared/presentation/app_controller.dart';
 import 'leaf_camera_screen.dart';
 
@@ -63,10 +65,14 @@ class _ScanScreenState extends State<ScanScreen> {
       if (response.isEmpty || !mounted) return;
       final files = response.files;
       if (files != null) {
+        final accepted = ScanImagePolicy.acceptRecovered(files, _images.length);
         setState(() {
-          _images.addAll(files);
-          _step = _ScanStep.review;
+          _images.addAll(accepted);
+          if (_images.isNotEmpty) _step = _ScanStep.review;
         });
+        if (files.length > accepted.length && mounted) {
+          _showImageLimit();
+        }
       }
     } on PlatformException catch (error) {
       if (mounted) _showPickerError(error);
@@ -87,6 +93,23 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   Future<void> _takePhoto() async {
+    if (ScanImagePolicy.remaining(_images.length) == 0) {
+      _showImageLimit();
+      return;
+    }
+    final controller = context.read<AppController>();
+    if (!controller.cameraEnabled) {
+      final status = await controller.setCameraEnabled(true);
+      if (!mounted || !status.isAllowed) {
+        if (mounted) {
+          showAppSnackBar(
+            context,
+            'Camera permission is required to take a leaf photo.',
+          );
+        }
+        return;
+      }
+    }
     try {
       final image = await Navigator.of(context).push<XFile>(
         MaterialPageRoute<XFile>(
@@ -105,11 +128,17 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   Future<void> _choosePhotos() async {
+    final remaining = ScanImagePolicy.remaining(_images.length);
+    if (remaining <= 0) {
+      _showImageLimit();
+      return;
+    }
     try {
       final images = await _picker.pickMultiImage(
         imageQuality: 90,
         maxWidth: 2048,
         maxHeight: 2048,
+        limit: remaining,
       );
       if (images.isEmpty || !mounted) return;
       setState(() {
@@ -119,6 +148,13 @@ class _ScanScreenState extends State<ScanScreen> {
     } on PlatformException catch (error) {
       if (mounted) _showPickerError(error);
     }
+  }
+
+  void _showImageLimit() {
+    showAppSnackBar(
+      context,
+      'You can add up to ${ScanImagePolicy.maxImagesPerCase} leaf photos to one scan.',
+    );
   }
 
   void _showPickerError(PlatformException error) {
@@ -131,7 +167,7 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   Future<void> _analyse() async {
-    if (_images.isEmpty) return;
+    if (_images.isEmpty || _step == _ScanStep.processing) return;
     setState(() {
       _step = _ScanStep.processing;
       _error = null;
@@ -156,6 +192,23 @@ class _ScanScreenState extends State<ScanScreen> {
       if (!mounted) return;
       setState(() {
         _error = error;
+        _step = _ScanStep.unavailable;
+      });
+    } catch (error, stackTrace) {
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          library: 'scan',
+          context: ErrorDescription('while submitting a leaf diagnosis'),
+        ),
+      );
+      if (!mounted) return;
+      setState(() {
+        _error = const ApiException(
+          code: 'SCAN_FAILED',
+          message: 'Leaf analysis could not be completed',
+        );
         _step = _ScanStep.unavailable;
       });
     }
@@ -190,77 +243,95 @@ class _ScanScreenState extends State<ScanScreen> {
         : controller.diagnoses
               .where((diagnosis) => diagnosis.plotId == _historyPlotId)
               .toList(growable: false);
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(context.tr('scanTitle')),
-        actions: [
-          if (controller.queuedScans.isNotEmpty)
-            IconButton(
-              tooltip: 'Saved leaf checks',
-              onPressed: () => context.push('/scan/queue'),
-              icon: Badge(
-                label: Text('${controller.queuedScans.length}'),
-                child: const Icon(LucideIcons.cloudUpload, size: 22),
-              ),
-            ),
-        ],
-      ),
-      body: SafeArea(
-        top: false,
-        bottom: false,
-        child: AppContent(
-          maxWidth: 900,
-          child: AnimatedSwitcher(
-            duration: MediaQuery.disableAnimationsOf(context)
-                ? Duration.zero
-                : const Duration(milliseconds: 260),
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInCubic,
-            child: switch (_step) {
-              _ScanStep.capture => _CaptureStep(
-                key: const ValueKey('capture'),
-                onCamera: _takePhoto,
-                onGallery: _choosePhotos,
-                diagnoses: visibleDiagnoses,
-                plots: plots,
-                selectedHistoryPlotId: _historyPlotId,
-                onHistoryPlotChanged: (value) =>
-                    setState(() => _historyPlotId = value),
-              ),
-              _ScanStep.review => _ReviewStep(
-                key: const ValueKey('review'),
-                images: _images,
-                cropController: _cropController,
-                plots: plots,
-                selectedPlotId: _plotId,
-                onPlotChanged: (value) => setState(() => _plotId = value),
-                onCamera: _takePhoto,
-                onGallery: _choosePhotos,
-                onRemove: (index) {
-                  setState(() {
-                    _images.removeAt(index);
-                    if (_images.isEmpty) _step = _ScanStep.capture;
-                  });
-                },
-                onAnalyse: _analyse,
-              ),
-              _ScanStep.processing => const _ProcessingStep(
-                key: ValueKey('processing'),
-              ),
-              _ScanStep.unavailable => _UnavailableStep(
-                key: const ValueKey('unavailable'),
-                error: _error,
-                onRetry: _analyse,
-                onQueue: _queue,
-                onSample: () => context.push(
-                  '/scan/result/${controller.diagnoses.first.id}',
+    final isProcessing = _step == _ScanStep.processing;
+    return PopScope<void>(
+      canPop: !isProcessing,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && isProcessing) {
+          showAppSnackBar(
+            context,
+            'Leaf analysis is still running. Please keep this screen open.',
+          );
+        }
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(context.tr('scanTitle')),
+          actions: [
+            if (!isProcessing && controller.queuedScans.isNotEmpty)
+              IconButton(
+                tooltip: 'Saved leaf checks',
+                onPressed: () => context.push('/scan/queue'),
+                icon: Badge(
+                  label: Text('${controller.queuedScans.length}'),
+                  child: const Icon(LucideIcons.cloudUpload, size: 22),
                 ),
               ),
-              _ScanStep.saved => _SavedStep(
-                key: const ValueKey('saved'),
-                onDone: () => setState(_reset),
-              ),
-            },
+          ],
+        ),
+        body: SafeArea(
+          top: false,
+          bottom: false,
+          child: AppContent(
+            maxWidth: 900,
+            child: AnimatedSwitcher(
+              duration: MediaQuery.disableAnimationsOf(context)
+                  ? Duration.zero
+                  : const Duration(milliseconds: 260),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              child: switch (_step) {
+                _ScanStep.capture => _CaptureStep(
+                  key: const ValueKey('capture'),
+                  onCamera: _takePhoto,
+                  onGallery: _choosePhotos,
+                  diagnoses: visibleDiagnoses,
+                  plots: plots,
+                  selectedHistoryPlotId: _historyPlotId,
+                  onHistoryPlotChanged: (value) =>
+                      setState(() => _historyPlotId = value),
+                ),
+                _ScanStep.review => _ReviewStep(
+                  key: const ValueKey('review'),
+                  images: _images,
+                  cropController: _cropController,
+                  plots: plots,
+                  selectedPlotId: _plotId,
+                  onPlotChanged: (value) => setState(() => _plotId = value),
+                  onCamera: _takePhoto,
+                  onGallery: _choosePhotos,
+                  onRemove: (index) {
+                    setState(() {
+                      _images.removeAt(index);
+                      if (_images.isEmpty) _step = _ScanStep.capture;
+                    });
+                  },
+                  onAnalyse: _analyse,
+                ),
+                _ScanStep.processing => const _ProcessingStep(
+                  key: ValueKey('processing'),
+                ),
+                _ScanStep.unavailable => _UnavailableStep(
+                  key: const ValueKey('unavailable'),
+                  error: _error,
+                  onRetry: _analyse,
+                  onQueue: _queue,
+                  onSample:
+                      ScanStatePolicy.previousDiagnosisId(
+                            controller.diagnoses,
+                          ) ==
+                          null
+                      ? null
+                      : () => context.push(
+                          '/scan/result/${ScanStatePolicy.previousDiagnosisId(controller.diagnoses)}',
+                        ),
+                ),
+                _ScanStep.saved => _SavedStep(
+                  key: const ValueKey('saved'),
+                  onDone: () => setState(_reset),
+                ),
+              },
+            ),
           ),
         ),
       ),
@@ -299,101 +370,12 @@ class _CaptureStep extends StatelessWidget {
               ?.copyWith(color: AppColors.mutedInk),
         ),
         const SizedBox(height: 18),
-        AspectRatio(
-          aspectRatio: 4 / 3,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: const Color(0xFF1B3025),
-              borderRadius: BorderRadius.circular(AppRadius.medium),
-            ),
-            child: Stack(
-              children: [
-                Center(
-                  child: Container(
-                    width: 184,
-                    height: 184,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      border: Border.all(
-                        color: const Color(0xFFDCE8D5).withValues(alpha: 0.7),
-                        width: 1.5,
-                      ),
-                      borderRadius: BorderRadius.circular(AppRadius.medium),
-                    ),
-                    child: const Icon(
-                      LucideIcons.scanSearch,
-                      color: Color(0xFFF1C85B),
-                      size: 46,
-                    ),
-                  ),
-                ),
-                PositionedDirectional(
-                  top: 16,
-                  start: 16,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(AppRadius.small),
-                    ),
-                    child: const Text(
-                      '1–12 leaf photos',
-                      style: TextStyle(
-                        color: Color(0xFFF6F1E5),
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ),
-                PositionedDirectional(
-                  start: 20,
-                  end: 20,
-                  bottom: 16,
-                  child: Text(
-                    context.tr('photoGuide'),
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: const Color(0xFFF6F1E5).withValues(alpha: 0.8),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 14),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final stack =
-                constraints.maxWidth < 390 ||
-                MediaQuery.textScalerOf(context).scale(1) > 1.25;
-            final camera = FilledButton.icon(
-              onPressed: onCamera,
-              icon: const Icon(LucideIcons.camera, size: 19),
-              label: Text(context.tr('takePhoto')),
-            );
-            final gallery = OutlinedButton.icon(
-              onPressed: onGallery,
-              icon: const Icon(LucideIcons.images, size: 19),
-              label: Text(context.tr('choosePhotos')),
-            );
-            if (stack) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [camera, const SizedBox(height: 9), gallery],
-              );
-            }
-            return Row(
-              children: [
-                Expanded(child: camera),
-                const SizedBox(width: 10),
-                Expanded(child: gallery),
-              ],
-            );
-          },
+        _PulsingScanCard(
+          onCamera: onCamera,
+          onGallery: onGallery,
+          photoGuide: context.tr('photoGuide'),
+          takePhoto: context.tr('takePhoto'),
+          choosePhotos: context.tr('choosePhotos'),
         ),
         const SizedBox(height: 22),
         ExpansionTile(
@@ -607,51 +589,199 @@ class _ReviewStep extends StatelessWidget {
   }
 }
 
-class _ProcessingStep extends StatelessWidget {
+class _ProcessingStep extends StatefulWidget {
   const _ProcessingStep({super.key});
 
   @override
+  State<_ProcessingStep> createState() => _ProcessingStepState();
+}
+
+class _ProcessingStepState extends State<_ProcessingStep>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _fillController;
+  int _tipIndex = 0;
+  Timer? _tipTimer;
+  bool? _reduceMotion;
+
+  static const _tips = [
+    'Checking image quality and leaf visibility…',
+    'Reviewing compatible PlantWild classes…',
+    'Combining evidence from the submitted leaf photos…',
+    'Preparing possible matches and retake guidance…',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _fillController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    if (_reduceMotion == reduceMotion) return;
+    _reduceMotion = reduceMotion;
+    _tipTimer?.cancel();
+    if (reduceMotion) {
+      _fillController
+        ..stop()
+        ..value = 0.55;
+      return;
+    }
+    _fillController.repeat(reverse: true);
+    _tipTimer = Timer.periodic(const Duration(seconds: 6), (_) {
+      if (mounted) {
+        setState(() => _tipIndex = (_tipIndex + 1) % _tips.length);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _fillController.dispose();
+    _tipTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return Center(
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 60),
+        padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TweenAnimationBuilder<double>(
-              tween: Tween(begin: 0.92, end: 1),
-              duration: MediaQuery.disableAnimationsOf(context)
-                  ? Duration.zero
-                  : const Duration(milliseconds: 700),
-              curve: Curves.easeOutCubic,
-              builder: (context, value, child) =>
-                  Transform.scale(scale: value, child: child),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(AppRadius.medium),
-                child: Image.asset(
-                  'assets/branding/app_icon.png',
-                  width: 96,
-                  height: 96,
-                  fit: BoxFit.cover,
+            // Leaf fill loader
+            Semantics(
+              label: 'Leaf analysis in progress',
+              child: RepaintBoundary(
+                child: SizedBox(
+                  width: 88,
+                  height: 88,
+                  child: AnimatedBuilder(
+                    animation: _fillController,
+                    builder: (context, _) => CustomPaint(
+                      painter: _LeafFillPainter(
+                        progress: _fillController.value,
+                        dark: dark,
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
-            const SizedBox(height: 28),
-            const SizedBox.square(
-              dimension: 32,
-              child: CircularProgressIndicator(strokeWidth: 3),
-            ),
-            const SizedBox(height: 22),
+            const SizedBox(height: 32),
             Text(
               context.tr('processingScan'),
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 12),
+            AnimatedSwitcher(
+              duration: _reduceMotion == true
+                  ? Duration.zero
+                  : const Duration(milliseconds: 400),
+              child: Text(
+                _tips[_tipIndex],
+                key: ValueKey(_tipIndex),
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium
+                    ?.copyWith(color: AppColors.mutedInk, height: 1.5),
+              ),
+            ),
+            const SizedBox(height: 18),
+            Text(
+              'This usually takes about 20–30 seconds. Keep this screen open.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: AppColors.mutedInk, height: 1.45),
             ),
           ],
         ),
       ),
     );
   }
+}
+
+class _LeafFillPainter extends CustomPainter {
+  const _LeafFillPainter({required this.progress, required this.dark});
+  final double progress;
+  final bool dark;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cx = size.width / 2;
+    final cy = size.height / 2;
+    final r = size.width * 0.42;
+
+    // Leaf outline path
+    final leaf = Path()
+      ..moveTo(cx, cy - r)
+      ..cubicTo(
+        cx + r * 0.9,
+        cy - r * 0.5,
+        cx + r * 0.9,
+        cy + r * 0.5,
+        cx,
+        cy + r,
+      )
+      ..cubicTo(
+        cx - r * 0.9,
+        cy + r * 0.5,
+        cx - r * 0.9,
+        cy - r * 0.5,
+        cx,
+        cy - r,
+      );
+
+    // Background leaf
+    canvas.drawPath(
+      leaf,
+      Paint()
+        ..color = dark
+            ? AppColors.leaf.withValues(alpha: 0.12)
+            : AppColors.divider,
+    );
+
+    // Fill clip from bottom
+    final fillHeight = size.height * progress;
+    canvas.save();
+    canvas.clipRect(
+      Rect.fromLTWH(0, size.height - fillHeight, size.width, fillHeight),
+    );
+    canvas.drawPath(
+      leaf,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: [AppColors.forest, AppColors.leaf, AppColors.youngLeaf],
+        ).createShader(Rect.fromLTWH(0, 0, size.width, size.height)),
+    );
+    canvas.restore();
+
+    // Leaf vein
+    final vein = Path()
+      ..moveTo(cx, cy + r * 0.9)
+      ..lineTo(cx, cy - r * 0.9);
+    canvas.drawPath(
+      vein,
+      Paint()
+        ..color = Colors.white.withValues(alpha: 0.25)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5
+        ..strokeCap = StrokeCap.round,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_LeafFillPainter old) =>
+      old.progress != progress || old.dark != dark;
 }
 
 class _UnavailableStep extends StatelessWidget {
@@ -665,7 +795,7 @@ class _UnavailableStep extends StatelessWidget {
   final ApiException? error;
   final VoidCallback onRetry;
   final VoidCallback onQueue;
-  final VoidCallback onSample;
+  final VoidCallback? onSample;
 
   @override
   Widget build(BuildContext context) {
@@ -693,11 +823,13 @@ class _UnavailableStep extends StatelessWidget {
           icon: const Icon(LucideIcons.refreshCw, size: 19),
           label: Text(context.tr('retry')),
         ),
-        const SizedBox(height: 10),
-        TextButton(
-          onPressed: onSample,
-          child: Text(context.tr('sampleResult')),
-        ),
+        if (onSample != null) ...[
+          const SizedBox(height: 10),
+          TextButton(
+            onPressed: onSample,
+            child: const Text('Open previous result'),
+          ),
+        ],
       ],
     );
   }
@@ -722,6 +854,210 @@ class _SavedStep extends StatelessWidget {
   }
 }
 
+class _PulsingScanCard extends StatefulWidget {
+  const _PulsingScanCard({
+    required this.onCamera,
+    required this.onGallery,
+    required this.photoGuide,
+    required this.takePhoto,
+    required this.choosePhotos,
+  });
+  final VoidCallback onCamera;
+  final VoidCallback onGallery;
+  final String photoGuide;
+  final String takePhoto;
+  final String choosePhotos;
+
+  @override
+  State<_PulsingScanCard> createState() => _PulsingScanCardState();
+}
+
+class _PulsingScanCardState extends State<_PulsingScanCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse;
+  late final Animation<double> _pulseScale;
+  late final Animation<double> _pulseOpacity;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1600),
+    )..repeat(reverse: true);
+    _pulseScale = Tween<double>(
+      begin: 1.0,
+      end: 1.18,
+    ).animate(CurvedAnimation(parent: _pulse, curve: Curves.easeInOut));
+    _pulseOpacity = Tween<double>(
+      begin: 0.25,
+      end: 0.0,
+    ).animate(CurvedAnimation(parent: _pulse, curve: Curves.easeIn));
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AspectRatio(
+      aspectRatio: 4 / 3,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF1E3828), Color(0xFF0F2018)],
+          ),
+          borderRadius: BorderRadius.circular(AppRadius.large),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.forest.withValues(alpha: 0.3),
+              blurRadius: 24,
+              offset: const Offset(0, 12),
+            ),
+          ],
+        ),
+        child: Stack(
+          children: [
+            // Soft glow top right
+            PositionedDirectional(
+              top: -30,
+              end: -30,
+              child: Container(
+                width: 130,
+                height: 130,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [
+                      AppColors.youngLeaf.withValues(alpha: 0.18),
+                      AppColors.youngLeaf.withValues(alpha: 0),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            // Center pulsing icon
+            Center(
+              child: AnimatedBuilder(
+                animation: _pulse,
+                builder: (context, child) => Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    // Pulse ring
+                    Opacity(
+                      opacity: _pulseOpacity.value,
+                      child: Transform.scale(
+                        scale: _pulseScale.value,
+                        child: Container(
+                          width: 90,
+                          height: 90,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: const Color(0xFFE1A82B),
+                              width: 2,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    // Inner icon circle
+                    Container(
+                      width: 72,
+                      height: 72,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white.withValues(alpha: 0.08),
+                        border: Border.all(
+                          color: const Color(0xFFDCE8D5).withValues(alpha: 0.5),
+                          width: 1.5,
+                        ),
+                      ),
+                      child: const Icon(
+                        LucideIcons.scanSearch,
+                        color: Color(0xFFF1C85B),
+                        size: 32,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            // Badge top left
+            PositionedDirectional(
+              top: 14,
+              start: 14,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(AppRadius.small),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.15),
+                  ),
+                ),
+                child: Text(
+                  'One clear photo works great',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: const Color(0xFFF6F1E5),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+            // Buttons at bottom
+            PositionedDirectional(
+              start: 14,
+              end: 14,
+              bottom: 14,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: widget.onCamera,
+                      icon: const Icon(LucideIcons.camera, size: 17),
+                      label: Text(widget.takePhoto),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: AppColors.forest,
+                        minimumSize: const Size(0, 44),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: widget.onGallery,
+                      icon: const Icon(LucideIcons.images, size: 17),
+                      label: Text(widget.choosePhotos),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: const BorderSide(
+                          color: Color(0xFFDCE8D5),
+                          width: 1.2,
+                        ),
+                        minimumSize: const Size(0, 44),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class QueuedScansScreen extends StatelessWidget {
   const QueuedScansScreen({super.key});
 
@@ -736,10 +1072,33 @@ class QueuedScansScreen extends StatelessWidget {
         child: AppContent(
           maxWidth: 760,
           child: scans.isEmpty
-              ? const AppStateView(
-                  kind: AppStateKind.success,
-                  title: 'Nothing waiting to upload',
-                  message: 'Leaf photos kept for later will appear here until you choose to analyse or remove them.',
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        LucideIcons.cloudOff,
+                        size: 48,
+                        color: AppColors.mutedInk,
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'No offline scans',
+                        style: Theme.of(context).textTheme.titleLarge
+                            ?.copyWith(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 8),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 32),
+                        child: Text(
+                          'When you scan without internet, they will be saved here to upload later.',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(color: AppColors.mutedInk),
+                        ),
+                      ),
+                    ],
+                  ),
                 )
               : ListView.separated(
                   padding: const EdgeInsets.only(top: 8, bottom: 36),
@@ -754,15 +1113,19 @@ class QueuedScansScreen extends StatelessWidget {
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(
-                                AppRadius.small,
+                            Container(
+                              width: 84,
+                              height: 84,
+                              decoration: BoxDecoration(
+                                color: AppColors.leaf.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(
+                                  AppRadius.small,
+                                ),
                               ),
-                              child: Image.file(
-                                File(scan.imagePaths.first),
-                                width: 84,
-                                height: 84,
-                                fit: BoxFit.cover,
+                              child: const Icon(
+                                LucideIcons.shieldCheck,
+                                color: AppColors.forest,
+                                size: 30,
                               ),
                             ),
                             const SizedBox(width: 14),
@@ -876,7 +1239,19 @@ class _HistoryRow extends StatelessWidget {
     final prediction = diagnosis.predictions.firstOrNull;
     return Padding(
       padding: const EdgeInsets.only(bottom: 9),
-      child: Card(
+      child: Container(
+        decoration: BoxDecoration(
+          color: Theme.of(context).cardColor,
+          borderRadius: BorderRadius.circular(AppRadius.medium),
+          border: Border.all(color: AppColors.divider),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: () => context.push('/scan/result/${diagnosis.id}'),
@@ -885,25 +1260,54 @@ class _HistoryRow extends StatelessWidget {
               _DiagnosisImage(diagnosis: diagnosis, width: 84, height: 84),
               const SizedBox(width: 14),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      prediction?.name ?? 'Processing',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      '${diagnosis.cropName} · ${context.strings.formatShortDate(diagnosis.createdAt)}',
-                      style: Theme.of(context).textTheme.bodySmall
-                          ?.copyWith(color: AppColors.mutedInk),
-                    ),
-                  ],
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        prediction?.name ?? 'Processing',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        '${diagnosis.cropName} · ${context.strings.formatShortDate(diagnosis.createdAt)}',
+                        style: Theme.of(context).textTheme.bodySmall
+                            ?.copyWith(color: AppColors.mutedInk),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _confidenceColor(diagnosis.confidenceLabel)
+                              .withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(AppRadius.small),
+                        ),
+                        child: Text(
+                          _confidenceText(diagnosis.confidenceLabel),
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(
+                                color: _confidenceColor(
+                                  diagnosis.confidenceLabel,
+                                ),
+                                fontWeight: FontWeight.w600,
+                              ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
               const Padding(
                 padding: EdgeInsetsDirectional.only(end: 12),
-                child: Icon(LucideIcons.chevronRight, size: 20),
+                child: Icon(
+                  LucideIcons.chevronRight,
+                  size: 20,
+                  color: AppColors.mutedInk,
+                ),
               ),
             ],
           ),
@@ -923,6 +1327,7 @@ class DiagnosisResultScreen extends StatefulWidget {
 
 class _DiagnosisResultScreenState extends State<DiagnosisResultScreen> {
   List<DiagnosisAssessmentModel> _history = const [];
+  List<ProgressionComparisonModel> _comparisonHistory = const [];
   bool _loadingHistory = true;
   bool _comparing = false;
 
@@ -934,6 +1339,9 @@ class _DiagnosisResultScreenState extends State<DiagnosisResultScreen> {
         final controller = context.read<AppController>();
         await controller.loadDiagnosis(widget.diagnosisId);
         _history = await controller.loadDiagnosisHistory(widget.diagnosisId);
+        _comparisonHistory = await controller.loadProgressionHistory(
+          widget.diagnosisId,
+        );
       } on ApiException catch (error) {
         if (mounted) showAppSnackBar(context, context.localizedError(error));
       } finally {
@@ -996,15 +1404,6 @@ class _DiagnosisResultScreenState extends State<DiagnosisResultScreen> {
           child: ListView(
             padding: const EdgeInsets.only(bottom: 40),
             children: [
-              if (diagnosis.isSample) ...[
-                InlineNotice(
-                  title: context.tr('sampleOnly'),
-                  message: 'This screen demonstrates the result flow. It was not produced from your photos.',
-                  icon: LucideIcons.flaskConical,
-                  color: AppColors.amber,
-                ),
-                const SizedBox(height: 16),
-              ],
               ClipRRect(
                 borderRadius: BorderRadius.circular(AppRadius.medium),
                 child: AspectRatio(
@@ -1183,6 +1582,46 @@ class _DiagnosisResultScreenState extends State<DiagnosisResultScreen> {
                     ),
                   ),
                 ),
+                if (_comparisonHistory.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  const SectionHeader(
+                    title: 'Earlier visual comparisons',
+                    subtitle: 'Saved analyses can be reopened here.',
+                  ),
+                  const SizedBox(height: 8),
+                  ..._comparisonHistory.map(
+                    (comparison) => ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(
+                        _ProgressionComparisonSheet._trendIcon(
+                          comparison.trend,
+                        ),
+                        color: AppColors.leaf,
+                      ),
+                      title: Text(
+                        _ProgressionComparisonSheet._trendLabel(
+                          comparison.trend,
+                        ),
+                      ),
+                      subtitle: Text(
+                        context.strings.formatDateTime(
+                          comparison.generatedAt.toLocal(),
+                        ),
+                      ),
+                      trailing: const Icon(LucideIcons.chevronRight, size: 18),
+                      onTap: () => showModalBottomSheet<void>(
+                        context: context,
+                        isScrollControlled: true,
+                        useSafeArea: true,
+                        showDragHandle: true,
+                        builder: (_) => _ProgressionComparisonSheet(
+                          caseId: diagnosis.id,
+                          comparison: comparison,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ],
               const SizedBox(height: 24),
               Row(
@@ -1259,6 +1698,12 @@ class _DiagnosisResultScreenState extends State<DiagnosisResultScreen> {
             responseLanguage: Localizations.localeOf(context).languageCode,
           );
       if (!context.mounted) return;
+      setState(() {
+        _comparisonHistory = [
+          comparison,
+          ..._comparisonHistory.where((item) => item.id != comparison.id),
+        ];
+      });
       await showModalBottomSheet<void>(
         context: context,
         isScrollControlled: true,
@@ -1646,21 +2091,33 @@ class _ProgressionTimepoint extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(AppRadius.medium),
-          child: AspectRatio(
+        if (imageIds.isEmpty)
+          const AspectRatio(
             aspectRatio: 4 / 3,
-            child: imageIds.isEmpty
-                ? const ColoredBox(
-                    color: AppColors.divider,
-                    child: Icon(LucideIcons.imageOff),
-                  )
-                : _DiagnosisServerImage(
-                    caseId: caseId,
-                    imageId: imageIds.first,
-                  ),
+            child: ColoredBox(
+              color: AppColors.divider,
+              child: Icon(LucideIcons.imageOff),
+            ),
+          )
+        else
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: imageIds.length == 1 ? 1 : 2,
+              crossAxisSpacing: 6,
+              mainAxisSpacing: 6,
+              childAspectRatio: 4 / 3,
+            ),
+            itemCount: imageIds.length,
+            itemBuilder: (context, index) => ClipRRect(
+              borderRadius: BorderRadius.circular(AppRadius.small),
+              child: _DiagnosisServerImage(
+                caseId: caseId,
+                imageId: imageIds[index],
+              ),
+            ),
           ),
-        ),
         const SizedBox(height: 7),
         Text(label, style: Theme.of(context).textTheme.titleSmall),
         Text(

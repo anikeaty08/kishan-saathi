@@ -7,6 +7,8 @@ import pytest
 from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
 
+from app.core.dependencies import get_paid_operation_rate_limiter
+from app.core.rate_limits import PaidOperationRateLimiter
 from app.main import create_app
 from app.modules.diagnoses.dependencies import get_diagnosis_progression_service
 from app.modules.users.dependencies import get_current_farmer_id
@@ -20,6 +22,7 @@ class FakeProgressionService:
         assert farmer_id == FARMER
         assert selection.response_language == "en"
         return {
+            "comparison_id": UUID(int=9),
             "case_id": case_id,
             "earlier_assessment_id": UUID(int=10),
             "later_assessment_id": UUID(int=11),
@@ -66,6 +69,9 @@ async def test_progression_endpoint_returns_typed_non_diagnostic_contract() -> N
     app = create_app(_test_settings(), FakeDatabase())
     app.dependency_overrides[get_current_farmer_id] = lambda: FARMER
     app.dependency_overrides[get_diagnosis_progression_service] = FakeProgressionService
+    app.dependency_overrides[get_paid_operation_rate_limiter] = lambda: PaidOperationRateLimiter(
+        _test_settings()
+    )
     async with (
         LifespanManager(app),
         AsyncClient(
@@ -76,6 +82,7 @@ async def test_progression_endpoint_returns_typed_non_diagnostic_contract() -> N
         response = await client.post(f"/api/v1/diagnoses/{UUID(int=1)}/progression", json={})
 
     assert response.status_code == 200
+    assert response.json()["comparison_id"] == str(UUID(int=9))
     assert response.json()["trend"] == "unchanged"
     assert response.json()["recommendations"] == ["monitor_same_leaf"]
     assert response.json()["diagnosis_context"]["disease_name"] == "tomato early blight"

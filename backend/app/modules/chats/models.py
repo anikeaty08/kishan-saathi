@@ -16,9 +16,12 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
+
+JSON_DOCUMENT = JSON().with_variant(JSONB(), "postgresql")
 
 
 class ChatSession(Base):
@@ -112,7 +115,7 @@ class ChatSendOperation(Base):
     )
     idempotency_key: Mapped[str] = mapped_column(String(128))
     request_hash: Mapped[str] = mapped_column(String(64))
-    response: Mapped[dict[str, object]] = mapped_column(JSON)
+    response: Mapped[dict[str, object]] = mapped_column(JSON_DOCUMENT)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

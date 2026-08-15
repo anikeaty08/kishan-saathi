@@ -47,13 +47,32 @@ class FarmRepository {
           final ownedPlots = plots
               .where((plot) => plot.farmId == id)
               .toList(growable: false);
-          final firstPlot = ownedPlots.firstOrNull;
+          final latitude = ownedPlots.isEmpty
+              ? null
+              : ownedPlots.fold<double>(0, (sum, plot) => sum + plot.latitude) /
+                    ownedPlots.length;
+          final longitude = ownedPlots.isEmpty
+              ? null
+              : ownedPlots.fold<double>(
+                      0,
+                      (sum, plot) => sum + plot.longitude,
+                    ) /
+                    ownedPlots.length;
+          final locationLabels = ownedPlots
+              .map((plot) => plot.locationLabel?.trim())
+              .whereType<String>()
+              .where((label) => label.isNotEmpty)
+              .toSet();
           return FarmModel(
             id: id,
             name: _requiredString(row, 'name'),
-            location: firstPlot?.locationLabel,
-            latitude: firstPlot?.latitude,
-            longitude: firstPlot?.longitude,
+            location: locationLabels.length == 1
+                ? locationLabels.single
+                : ownedPlots.isEmpty
+                ? null
+                : '${ownedPlots.length} plot locations',
+            latitude: latitude,
+            longitude: longitude,
             plots: ownedPlots,
           );
         })

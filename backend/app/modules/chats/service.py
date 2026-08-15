@@ -117,7 +117,7 @@ class ChatService:
         self._repository.add(chat)
         await self._repository.commit()
         await self._repository.refresh(chat)
-        return ChatResponse.model_validate(chat)
+        return self._response(chat, (farm_id, plot_id))
 
     async def list_chats(
         self,
@@ -139,13 +139,15 @@ class ChatService:
             limit=limit,
             offset=offset,
         )
-        return [ChatResponse.model_validate(chat) for chat in chats]
+        scopes = await self._repository.effective_scope_ids(farmer_id, chats)
+        return [self._response(chat, scopes[chat.id]) for chat in chats]
 
     async def get_chat(self, farmer_id: UUID, chat_id: UUID) -> ChatDetailResponse:
         chat = await self._chat(farmer_id, chat_id)
         messages = await self._repository.recent_messages(farmer_id, chat_id, limit=50)
+        scopes = await self._repository.effective_scope_ids(farmer_id, [chat])
         return ChatDetailResponse(
-            **ChatResponse.model_validate(chat).model_dump(),
+            **self._response(chat, scopes[chat.id]).model_dump(),
             messages=[ChatMessageResponse.model_validate(item) for item in messages],
         )
 
@@ -179,7 +181,8 @@ class ChatService:
             chat.archived_at = datetime.now(tz=UTC) if data.archived else None
         await self._repository.commit()
         await self._repository.refresh(chat)
-        return ChatResponse.model_validate(chat)
+        scopes = await self._repository.effective_scope_ids(farmer_id, [chat])
+        return self._response(chat, scopes[chat.id])
 
     async def delete_chat(self, farmer_id: UUID, chat_id: UUID) -> None:
         await self._repository.delete(await self._chat(farmer_id, chat_id))
@@ -409,7 +412,9 @@ class ChatService:
         preferred_language: SupportedLanguage | None,
         idempotency_key: str,
     ) -> SendMessageResponse:
-        chat = await self._chat(farmer_id, chat_id, for_update=True)
+        # Read and assemble bounded context without a row lock. The durable
+        # ChatTurn queue already guarantees one in-order worker per chat.
+        chat = await self._chat(farmer_id, chat_id)
         request_hash = hashlib.sha256(data.content.encode()).hexdigest()
         previous = await self._repository.get_send_operation(farmer_id, chat_id, idempotency_key)
         if previous is not None:
@@ -427,6 +432,9 @@ class ChatService:
             farm_id=farm_id,
             plot_id=plot_id,
         )
+        # Release the read transaction and its pooled connection before any
+        # model call. Final persistence is serialized in a short locked section.
+        await self._repository.commit()
         task, is_agricultural = await self._task_for_message(
             farmer_id,
             chat,
@@ -438,15 +446,6 @@ class ChatService:
         )
         tools = self._tools(farmer_id, plot_id) if is_agricultural else ()
         allow_diagnosis = self._has_classifier_authority(context)
-        sequence = await self._repository.next_sequence(farmer_id, chat_id)
-        user_message = ChatMessage(
-            farmer_id=farmer_id,
-            chat_id=chat_id,
-            sequence=sequence,
-            role="user",
-            content=data.content,
-        )
-        self._repository.add(user_message)
         try:
             result = await self._llm.respond(
                 LLMRequest(
@@ -492,6 +491,38 @@ class ChatService:
             content = self._render_reply(result.reply)
             if result.reply.treatment is not None:
                 content = f"{content}\n\n{self._render_treatment(result.reply.treatment)}"
+            generated_title: str | None = None
+            if chat.title == "New conversation":
+                try:
+                    generated = await self._llm.generate_title(
+                        content=data.content,
+                        language=(preferred_language.value if preferred_language else "en"),
+                        farmer_id=farmer_id,
+                    )
+                    generated_title = generated.title.strip()
+                except ApplicationError:
+                    generated_title = self._local_title(data.content)
+
+            # Reacquire and lock only for the atomic sequence allocation and
+            # persistence. A concurrent completed retry wins by idempotency key.
+            locked_chat = await self._chat(farmer_id, chat_id, for_update=True)
+            previous = await self._repository.get_send_operation(
+                farmer_id, chat_id, idempotency_key
+            )
+            if previous is not None:
+                if previous.request_hash != request_hash:
+                    raise ApplicationError(code="IDEMPOTENCY_KEY_REUSED", status_code=409)
+                await self._repository.rollback()
+                return SendMessageResponse.model_validate(previous.response)
+            sequence = await self._repository.next_sequence(farmer_id, chat_id)
+            user_message = ChatMessage(
+                farmer_id=farmer_id,
+                chat_id=chat_id,
+                sequence=sequence,
+                role="user",
+                content=data.content,
+            )
+            self._repository.add(user_message)
             assistant_message = ChatMessage(
                 farmer_id=farmer_id,
                 chat_id=chat_id,
@@ -504,20 +535,12 @@ class ChatService:
             )
             self._repository.add(assistant_message)
             reminder_proposal = self._pending_reminder(
-                farmer_id, chat, plot_id, result.reply.reminder_proposal
+                farmer_id, locked_chat, plot_id, result.reply.reminder_proposal
             )
             if reminder_proposal is not None:
                 self._reminders.add(reminder_proposal)
-            if chat.title == "New conversation":
-                try:
-                    generated = await self._llm.generate_title(
-                        content=data.content,
-                        language=(preferred_language.value if preferred_language else "en"),
-                        farmer_id=farmer_id,
-                    )
-                    chat.title = generated.title.strip()
-                except ApplicationError:
-                    chat.title = self._local_title(data.content)
+            if locked_chat.title == "New conversation" and generated_title is not None:
+                locked_chat.title = generated_title
             await self._repository.flush()
             await self._repository.refresh(user_message)
             await self._repository.refresh(assistant_message)
@@ -545,7 +568,7 @@ class ChatService:
             if farm_id is not None or plot_id is not None:
                 self._memory_writer.schedule_scoped_message(
                     farmer_id,
-                    chat.id,
+                    locked_chat.id,
                     user_message,
                     farm_id=farm_id if plot_id is None else None,
                     plot_id=plot_id,
@@ -885,6 +908,19 @@ class ChatService:
         if connection is not None:
             return connection.farm_id, connection.plot_id
         return chat.farm_id, chat.plot_id
+
+    @staticmethod
+    def _response(
+        chat: ChatSession,
+        effective_scope: tuple[UUID | None, UUID | None],
+    ) -> ChatResponse:
+        farm_id, plot_id = effective_scope
+        return ChatResponse.model_validate(chat).model_copy(
+            update={
+                "effective_farm_id": farm_id,
+                "effective_plot_id": plot_id,
+            }
+        )
 
     async def _verified_indexed_context(
         self, farmer_id: UUID, plot_id: UUID, query: str, context: PromptContext

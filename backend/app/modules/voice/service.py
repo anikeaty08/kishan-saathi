@@ -26,6 +26,8 @@ class IncomingAudio:
 class VoiceService:
     """Voice is only an I/O layer; it never creates a chat message itself."""
 
+    _PROVIDER_SPEECH_CHUNK_CHARACTERS = 3800
+
     _SUPPORTED_TRANSCRIPTION_SUFFIXES = {
         ".m4a",
         ".mp3",
@@ -105,4 +107,65 @@ class VoiceService:
             raise ApplicationError(code="CHAT_MESSAGE_NOT_FOUND", status_code=404)
         if len(message.content) > self._settings.voice_max_speech_characters:
             raise ApplicationError(code="VOICE_TEXT_TOO_LONG", status_code=422)
-        return await self._provider.synthesize(SpeechSynthesisRequest(text=message.content))
+        chunks = self._speech_chunks(message.content)
+        results = [
+            await self._provider.synthesize(SpeechSynthesisRequest(text=chunk)) for chunk in chunks
+        ]
+        first = results[0]
+        if any(result.media_type != first.media_type for result in results):
+            raise ApplicationError(code="VOICE_PROVIDER_FAILED", status_code=502)
+        return SpeechSynthesisResult(
+            content=self._join_audio(results),
+            media_type=first.media_type,
+            model=first.model,
+            voice=first.voice,
+        )
+
+    @classmethod
+    def _speech_chunks(cls, text: str) -> list[str]:
+        """Split long replies at natural boundaries before provider limits."""
+
+        remaining = text.strip()
+        chunks: list[str] = []
+        while len(remaining) > cls._PROVIDER_SPEECH_CHUNK_CHARACTERS:
+            window = remaining[: cls._PROVIDER_SPEECH_CHUNK_CHARACTERS]
+            floor = cls._PROVIDER_SPEECH_CHUNK_CHARACTERS // 2
+            split_at = max(
+                window.rfind(separator, floor)
+                for separator in ("। ", ". ", "? ", "! ", "\n", ", ", " ")
+            )
+            if split_at < floor:
+                split_at = cls._PROVIDER_SPEECH_CHUNK_CHARACTERS
+            else:
+                split_at += 1
+            chunk = remaining[:split_at].strip()
+            if chunk:
+                chunks.append(chunk)
+            remaining = remaining[split_at:].strip()
+        if remaining:
+            chunks.append(remaining)
+        if not chunks:
+            raise ApplicationError(code="VOICE_AUDIO_EMPTY", status_code=502)
+        return chunks
+
+    @staticmethod
+    def _join_audio(results: list[SpeechSynthesisResult]) -> bytes:
+        """Join MP3 frame streams while removing repeated intermediate ID3 tags."""
+
+        parts: list[bytes] = []
+        for index, result in enumerate(results):
+            content = result.content
+            if index > 0 and result.media_type == "audio/mpeg" and content.startswith(b"ID3"):
+                if len(content) < 10:
+                    raise ApplicationError(code="VOICE_PROVIDER_FAILED", status_code=502)
+                size = (
+                    (content[6] & 0x7F) << 21
+                    | (content[7] & 0x7F) << 14
+                    | (content[8] & 0x7F) << 7
+                    | (content[9] & 0x7F)
+                )
+                content = content[10 + size :]
+            if not content:
+                raise ApplicationError(code="VOICE_AUDIO_EMPTY", status_code=502)
+            parts.append(content)
+        return b"".join(parts)

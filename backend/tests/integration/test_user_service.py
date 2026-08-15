@@ -30,6 +30,7 @@ class FakeAuthProvider(AuthProvider):
             username="farmer@example.com",
             email="farmer@example.com",
             email_verified=True,
+            name="Nikhil",
         )
 
     async def close(self) -> None:
@@ -70,6 +71,7 @@ async def test_profile_is_provisioned_once_and_updated() -> None:
         await engine.dispose()
 
     assert initial.email == "farmer@example.com"
+    assert initial.name == "Nikhil"
     assert initial.onboarding_complete is False
     assert updated.name == "Nikhil"
     assert updated.preferred_language is SupportedLanguage.HINDI

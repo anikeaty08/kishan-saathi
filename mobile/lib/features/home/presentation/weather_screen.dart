@@ -117,62 +117,135 @@ class _WeatherHero extends StatelessWidget {
         weather.conditionLabel ?? _conditionLabel(weather.conditionCode);
     return Semantics(
       label: '$label, ${weather.temperature.round()} degrees',
-      child: DecoratedBox(
+      child: Container(
         decoration: BoxDecoration(
-          color: const Color(0xFF234837),
-          borderRadius: BorderRadius.circular(AppRadius.medium),
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF1A3D2A), Color(0xFF234837), Color(0xFF1C4230)],
+          ),
+          borderRadius: BorderRadius.circular(AppRadius.large),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.forest.withValues(alpha: 0.35),
+              blurRadius: 28,
+              offset: const Offset(0, 12),
+            ),
+          ],
         ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 20, 18, 18),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+        child: Stack(
+          children: [
+            // Soft glow accent top-right
+            PositionedDirectional(
+              top: -20,
+              end: -20,
+              child: Container(
+                width: 120,
+                height: 120,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [
+                      const Color(0xFFD5A43B).withValues(alpha: 0.18),
+                      const Color(0xFFD5A43B).withValues(alpha: 0),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(22, 22, 22, 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    width: 52,
-                    height: 52,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF1DCA8).withValues(alpha: 0.16),
-                      borderRadius: BorderRadius.circular(AppRadius.medium),
-                    ),
-                    child: Icon(
-                      _conditionIcon(weather.conditionCode),
-                      color: const Color(0xFFF1C85B),
-                      size: 28,
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Condition icon badge
+                      Container(
+                        width: 56,
+                        height: 56,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFD5A43B)
+                              .withValues(alpha: 0.18),
+                          borderRadius: BorderRadius.circular(AppRadius.medium),
+                          border: Border.all(
+                            color: const Color(0xFFD5A43B)
+                                .withValues(alpha: 0.3),
+                          ),
+                        ),
+                        child: Icon(
+                          _conditionIcon(weather.conditionCode),
+                          color: const Color(0xFFF1C85B),
+                          size: 30,
+                        ),
+                      ),
+                      const Spacer(),
+                      // Large temperature
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            '${weather.temperature.round()}°',
+                            style: const TextStyle(
+                              color: Color(0xFFF6F1E5),
+                              fontSize: 64,
+                              fontWeight: FontWeight.w800,
+                              height: 1.0,
+                              letterSpacing: -2,
+                            ),
+                          ),
+                          Text(
+                            'Celsius',
+                            style: TextStyle(
+                              color: const Color(0xFFF6F1E5)
+                                  .withValues(alpha: 0.5),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    label,
+                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                      color: const Color(0xFFF6F1E5),
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                  const Spacer(),
-                  Text(
-                    '${weather.temperature.round()}°',
-                    style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                      color: const Color(0xFFF6F1E5),
-                      fontSize: 44,
-                    ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Icon(
+                        weather.isStale
+                            ? LucideIcons.cloudOff
+                            : LucideIcons.mapPin,
+                        size: 12,
+                        color: const Color(0xFFF6F1E5).withValues(alpha: 0.55),
+                      ),
+                      const SizedBox(width: 5),
+                      Text(
+                        weather.isStale
+                            ? context.tr('weatherStale')
+                            : context.tr('lastUpdated', {
+                                'time': context.strings.formatTime(
+                                  weather.fetchedAt.toLocal(),
+                                ),
+                              }),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: const Color(0xFFF6F1E5).withValues(alpha: 0.6),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
-              const SizedBox(height: 24),
-              Text(
-                label,
-                style: Theme.of(context).textTheme.headlineMedium
-                    ?.copyWith(color: const Color(0xFFF6F1E5)),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                weather.isStale
-                    ? context.tr('weatherStale')
-                    : context.tr('lastUpdated', {
-                        'time': context.strings.formatTime(
-                          weather.fetchedAt.toLocal(),
-                        ),
-                      }),
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: const Color(0xFFF6F1E5).withValues(alpha: 0.68),
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -223,10 +296,21 @@ class _ConditionsGrid extends StatelessWidget {
           ),
           itemBuilder: (context, index) {
             final item = items[index];
-            return DecoratedBox(
+            return Container(
               decoration: BoxDecoration(
-                color: dark ? const Color(0xFF26382E) : const Color(0xFFE3E8D8),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: dark
+                      ? [const Color(0xFF1D3428), const Color(0xFF26382E)]
+                      : [const Color(0xFFEBF2E3), const Color(0xFFDDE8D3)],
+                ),
                 borderRadius: BorderRadius.circular(AppRadius.medium),
+                border: Border.all(
+                  color: dark
+                      ? Colors.white.withValues(alpha: 0.06)
+                      : AppColors.divider,
+                ),
               ),
               child: Padding(
                 padding: const EdgeInsets.all(14),
@@ -296,10 +380,11 @@ class _FieldNote extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
-    return DecoratedBox(
+    return Container(
       decoration: BoxDecoration(
         color: dark ? const Color(0xFF3B321F) : const Color(0xFFF0E2BC),
         borderRadius: BorderRadius.circular(AppRadius.medium),
+        border: Border(left: BorderSide(color: AppColors.amber, width: 3)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),

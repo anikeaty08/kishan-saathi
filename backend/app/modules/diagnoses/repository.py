@@ -11,6 +11,7 @@ from app.modules.diagnoses.models import (
     DiagnosisFeedback,
     DiagnosisImage,
     DiagnosisPrediction,
+    DiagnosisProgressionComparison,
 )
 
 
@@ -165,19 +166,18 @@ class DiagnosisRepository:
     ) -> list[DiagnosisImage]:
         """Return the immutable image batch that produced one assessment."""
 
+        assessment_image_ids = select(DiagnosisPrediction.image_id).where(
+            DiagnosisPrediction.assessment_id == assessment_id,
+            DiagnosisPrediction.scope == "image",
+            DiagnosisPrediction.image_id.is_not(None),
+        )
         result = await self.session.scalars(
             select(DiagnosisImage)
-            .join(
-                DiagnosisPrediction,
-                DiagnosisPrediction.image_id == DiagnosisImage.id,
-            )
             .where(
                 DiagnosisImage.farmer_id == farmer_id,
                 DiagnosisImage.case_id == case_id,
-                DiagnosisPrediction.assessment_id == assessment_id,
-                DiagnosisPrediction.scope == "image",
+                DiagnosisImage.id.in_(assessment_image_ids),
             )
-            .distinct()
             .order_by(
                 DiagnosisImage.captured_or_uploaded_at,
                 DiagnosisImage.created_at,
@@ -269,13 +269,45 @@ class DiagnosisRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_progression_by_hash(
+        self, farmer_id: UUID, case_id: UUID, request_hash: str
+    ) -> DiagnosisProgressionComparison | None:
+        return (
+            await self.session.execute(
+                select(DiagnosisProgressionComparison).where(
+                    DiagnosisProgressionComparison.farmer_id == farmer_id,
+                    DiagnosisProgressionComparison.case_id == case_id,
+                    DiagnosisProgressionComparison.request_hash == request_hash,
+                )
+            )
+        ).scalar_one_or_none()
+
+    async def list_progression_comparisons(
+        self, farmer_id: UUID, case_id: UUID, *, limit: int, offset: int
+    ) -> list[DiagnosisProgressionComparison]:
+        result = await self.session.scalars(
+            select(DiagnosisProgressionComparison)
+            .where(
+                DiagnosisProgressionComparison.farmer_id == farmer_id,
+                DiagnosisProgressionComparison.case_id == case_id,
+            )
+            .order_by(
+                DiagnosisProgressionComparison.created_at.desc(),
+                DiagnosisProgressionComparison.id.desc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+        return list(result)
+
     def add(
         self,
         value: DiagnosisCase
         | DiagnosisImage
         | DiagnosisAssessment
         | DiagnosisPrediction
-        | DiagnosisFeedback,
+        | DiagnosisFeedback
+        | DiagnosisProgressionComparison,
     ) -> None:
         self.session.add(value)
 
@@ -288,7 +320,9 @@ class DiagnosisRepository:
     async def rollback(self) -> None:
         await self.session.rollback()
 
-    async def refresh(self, value: DiagnosisCase | DiagnosisFeedback) -> None:
+    async def refresh(
+        self, value: DiagnosisCase | DiagnosisFeedback | DiagnosisProgressionComparison
+    ) -> None:
         await self.session.refresh(value)
 
     async def delete_case(self, value: DiagnosisCase) -> None:

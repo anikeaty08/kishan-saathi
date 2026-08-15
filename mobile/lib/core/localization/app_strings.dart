@@ -31,7 +31,11 @@ class AppStrings {
     final language = AppLanguage.byCode(locale.languageCode);
     final existing = _cache[language.code];
     if (existing != null) return existing;
-    final english = await _loadBundle('en', assetBundle);
+    // English is the fallback for every locale. Reuse its immutable catalog
+    // after the first load instead of issuing another root-bundle request for
+    // every language switch.
+    final english =
+        _cache['en']?._values ?? await _loadBundle('en', assetBundle);
     final selected = language.code == 'en'
         ? english
         : await _loadBundle(language.code, assetBundle);

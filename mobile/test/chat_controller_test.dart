@@ -202,6 +202,43 @@ void main() {
     expect(repository.pageRequests, 1);
   });
 
+  test(
+    'reopening a general chat connected to a farm preserves context',
+    () async {
+      final repository = _FakeChatRepository()
+        ..loadedChat = const ChatThreadModel(
+          id: 'chat-farm',
+          title: 'North farm advice',
+          scope: 'general',
+          effectiveFarmId: 'farm-1',
+          messages: [],
+        );
+      final controller = await createTestController(
+        live: true,
+        chatRepository: repository,
+      );
+      addTearDown(controller.dispose);
+      controller.farms = const [
+        FarmModel(id: 'farm-1', name: 'North Farm', plots: []),
+      ];
+      controller.chats = const [
+        ChatThreadModel(
+          id: 'chat-farm',
+          title: 'North farm advice',
+          scope: 'general',
+          scopeLabel: 'North Farm',
+          effectiveFarmId: 'farm-1',
+          messages: [],
+        ),
+      ];
+
+      await controller.loadChat('chat-farm');
+
+      expect(controller.chats.single.scopeLabel, 'North Farm');
+      expect(controller.chats.single.contextScope, 'farm');
+    },
+  );
+
   test('turn polling pauses in background and resumes immediately', () async {
     final user = _message('server-user', ChatAuthor.farmer, sequence: 1);
     final assistant = _message(

@@ -45,17 +45,12 @@ class HomeScreen extends StatelessWidget {
               SliverToBoxAdapter(
                 child: AppContent(
                   maxWidth: 1040,
-                  padding: const EdgeInsets.symmetric(horizontal: 18),
+                  padding: EdgeInsets.zero,
                   child: Padding(
                     padding: const EdgeInsets.only(top: 14, bottom: 118),
                     child: LayoutBuilder(
                       builder: (context, constraints) {
                         final wide = constraints.maxWidth >= 820;
-                        final hero = _ScanHero(
-                          name: controller.farmerName,
-                          weather: weather,
-                          locationEnabled: controller.locationEnabled,
-                        );
                         final continueCard = recentDiagnosis == null
                             ? const SizedBox.shrink()
                             : _ContinueScanCard(diagnosis: recentDiagnosis);
@@ -82,82 +77,86 @@ class HomeScreen extends StatelessWidget {
                             }
                           },
                         );
-                        final tasksCard = pendingReminders.isEmpty
-                            ? const SizedBox.shrink()
-                            : _TodayTaskCard(reminders: pendingReminders);
+                        final tasksCard = _TodayTaskCard(
+                          reminders: pendingReminders,
+                        );
 
                         if (!wide) {
                           return Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              if (controller.previewMode) ...[
-                                InlineNotice(
-                                  title: context.tr('demoMode'),
-                                  message: context.tr('demoModeBody'),
-                                  color: AppColors.amber,
-                                  icon: LucideIcons.flaskConical,
+                              _ScanHero(
+                                name: controller.farmerName,
+                                weather: weather,
+                                locationEnabled: controller.locationEnabled,
+                                fullBleed: true,
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 18,
                                 ),
-                                const SizedBox(height: 16),
-                              ],
-                              hero,
-                              if (recentDiagnosis != null) ...[
-                                const SizedBox(height: 18),
-                                continueCard,
-                              ],
-                              const SizedBox(height: 18),
-                              farmsCard,
-                              if (pendingReminders.isNotEmpty) ...[
-                                const SizedBox(height: 18),
-                                tasksCard,
-                              ],
-                              const SizedBox(height: 18),
-                              weatherCard,
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    if (recentDiagnosis != null) ...[
+                                      const SizedBox(height: 18),
+                                      continueCard,
+                                    ],
+                                    const SizedBox(height: 18),
+                                    farmsCard,
+                                    const SizedBox(height: 18),
+                                    tasksCard,
+                                    const SizedBox(height: 18),
+                                    weatherCard,
+                                  ],
+                                ),
+                              ),
                             ],
                           );
                         }
 
-                        return Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              flex: 6,
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  if (controller.previewMode) ...[
-                                    InlineNotice(
-                                      title: context.tr('demoMode'),
-                                      message: context.tr('demoModeBody'),
-                                      color: AppColors.amber,
-                                      icon: LucideIcons.flaskConical,
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 18),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                flex: 6,
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    _ScanHero(
+                                      name: controller.farmerName,
+                                      weather: weather,
+                                      locationEnabled:
+                                          controller.locationEnabled,
                                     ),
-                                    const SizedBox(height: 16),
+                                    if (recentDiagnosis != null) ...[
+                                      const SizedBox(height: 18),
+                                      continueCard,
+                                    ],
                                   ],
-                                  hero,
-                                  if (recentDiagnosis != null) ...[
-                                    const SizedBox(height: 18),
-                                    continueCard,
-                                  ],
-                                ],
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 20),
-                            Expanded(
-                              flex: 4,
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  farmsCard,
-                                  if (pendingReminders.isNotEmpty) ...[
+                              const SizedBox(width: 20),
+                              Expanded(
+                                flex: 4,
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    farmsCard,
                                     const SizedBox(height: 18),
                                     tasksCard,
+                                    const SizedBox(height: 18),
+                                    weatherCard,
                                   ],
-                                  const SizedBox(height: 18),
-                                  weatherCard,
-                                ],
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         );
                       },
                     ),
@@ -177,103 +176,135 @@ class _ScanHero extends StatelessWidget {
     required this.name,
     required this.weather,
     required this.locationEnabled,
+    this.fullBleed = false,
   });
 
   final String name;
   final WeatherSnapshot? weather;
   final bool locationEnabled;
+  final bool fullBleed;
 
   @override
   Widget build(BuildContext context) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    final visualBreathingRoom = 118 - ((textScale - 1).clamp(0.0, 1.0) * 54);
+    final radius = BorderRadius.circular(fullBleed ? 0 : AppRadius.hero);
     return Material(
       color: Colors.transparent,
+      clipBehavior: Clip.antiAlias,
+      borderRadius: radius,
       child: Ink(
+        key: const ValueKey('home-scan-hero-stage'),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(30),
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: dark
-                ? const [Color(0xFF18261D), Color(0xFF0D1711)]
-                : const [Color(0xFFFFFAEF), Color(0xFFEAF1DF)],
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: dark ? 0.22 : 0.08),
-              blurRadius: 34,
-              offset: const Offset(0, 18),
-            ),
-          ],
-          border: Border.all(
-            color: dark
-                ? Colors.white.withValues(alpha: 0.08)
-                : const Color(0xFFE5DDC6),
-          ),
+          borderRadius: radius,
+          color: const Color(0xFF173526),
         ),
         child: Stack(
           children: [
-            const PositionedDirectional(
-              top: -42,
-              end: -30,
-              child: _SoftGlow(size: 168, color: Color(0x6671A858)),
+            Positioned.fill(
+              child: Image.asset(
+                'assets/images/leaf_healthy.jpg',
+                fit: BoxFit.cover,
+                alignment: const Alignment(0.12, -0.08),
+                semanticLabel: 'Healthy green crop leaf ready to scan',
+                errorBuilder: (_, _, _) => Image.asset(
+                  'assets/images/crop_tomato.jpg',
+                  fit: BoxFit.cover,
+                  alignment: Alignment.center,
+                ),
+              ),
             ),
-            const PositionedDirectional(
-              bottom: -54,
-              start: -40,
-              child: _SoftGlow(size: 176, color: Color(0x52D5A43B)),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(22, 20, 22, 22),
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final rowLayout = constraints.maxWidth >= 640;
-                  final visual = const _LeafHeroVisual();
-                  final text = const _HeroText();
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _HeroTopBar(
-                        name: name,
-                        weather: weather,
-                        locationEnabled: locationEnabled,
-                      ),
-                      const SizedBox(height: 24),
-                      if (rowLayout)
-                        Row(
-                          children: [
-                            Expanded(child: text),
-                            const SizedBox(width: 26),
-                            SizedBox(width: 210, child: visual),
-                          ],
-                        )
-                      else ...[
-                        visual,
-                        const SizedBox(height: 22),
-                        text,
-                      ],
-                      const SizedBox(height: 22),
-                      Wrap(
-                        spacing: 10,
-                        runSpacing: 10,
-                        children: [
-                          _HeroShortcut(
-                            icon: LucideIcons.messageCircle,
-                            title: 'Ask Saathi',
-                            subtitle: 'Crop advice',
-                            onTap: () => context.go('/saathi'),
-                          ),
-                          _HeroShortcut(
-                            icon: LucideIcons.warehouse,
-                            title: 'My farms',
-                            subtitle: 'Plots and crops',
-                            onTap: () => context.go('/farm'),
-                          ),
-                        ],
-                      ),
+            const Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    stops: [0, 0.38, 0.72, 1],
+                    colors: [
+                      Color(0xA6172D21),
+                      Color(0x26172D21),
+                      Color(0xB3152C20),
+                      Color(0xF20B1C13),
                     ],
-                  );
-                },
+                  ),
+                ),
+              ),
+            ),
+            PositionedDirectional(
+              top: 92,
+              end: 18,
+              child: IgnorePointer(
+                child: Semantics(
+                  excludeSemantics: true,
+                  child: Container(
+                    width: 92,
+                    height: 92,
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.56),
+                        width: 1.5,
+                      ),
+                      borderRadius: BorderRadius.circular(28),
+                    ),
+                    child: Center(
+                      child: Container(
+                        width: 10,
+                        height: 10,
+                        decoration: const BoxDecoration(
+                          color: AppColors.amber,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 520),
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                  fullBleed ? 20 : 22,
+                  18,
+                  fullBleed ? 20 : 22,
+                  22,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _HeroTopBar(
+                      name: name,
+                      weather: weather,
+                      locationEnabled: locationEnabled,
+                      onImage: true,
+                    ),
+                    SizedBox(height: visualBreathingRoom),
+                    const _HeroText(onImage: true),
+                    const SizedBox(height: 20),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        _HeroShortcut(
+                          icon: LucideIcons.messageCircle,
+                          title: 'Ask Saathi',
+                          subtitle: 'Crop advice',
+                          onTap: () => context.go('/saathi'),
+                          onImage: true,
+                        ),
+                        _HeroShortcut(
+                          icon: LucideIcons.warehouse,
+                          title: 'My farms',
+                          subtitle: 'Plots and crops',
+                          onTap: () => context.go('/farm'),
+                          onImage: true,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
@@ -288,43 +319,64 @@ class _HeroTopBar extends StatelessWidget {
     required this.name,
     required this.weather,
     required this.locationEnabled,
+    this.onImage = false,
   });
 
   final String name;
   final WeatherSnapshot? weather;
   final bool locationEnabled;
+  final bool onImage;
 
   @override
   Widget build(BuildContext context) {
-    final titleStyle = Theme.of(context).textTheme.titleMedium
-        ?.copyWith(color: _strongInk(context), fontWeight: FontWeight.w800);
-    final identity = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          name,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: titleStyle,
-        ),
-        const SizedBox(height: 2),
-        Text(
-          'KrishiSathi',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            color: _mutedInk(context),
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ],
+    final titleStyle = Theme.of(context).textTheme.titleMedium?.copyWith(
+      color: onImage ? Colors.white : _strongInk(context),
+      fontWeight: FontWeight.w800,
     );
-    final bell = IconButton.filledTonal(
+    final identity = GestureDetector(
+      onTap: () => context.push('/profile'),
+      behavior: HitTestBehavior.opaque,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (name.trim().isNotEmpty) ...[
+            Text(
+              name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: titleStyle,
+            ),
+            const SizedBox(height: 2),
+          ],
+          Text(
+            'KrishiSathi',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: onImage
+                  ? Colors.white.withValues(alpha: 0.78)
+                  : _mutedInk(context),
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+    final bell = IconButton.filled(
       tooltip: context.tr('notifications'),
       onPressed: () => context.push('/reminders'),
+      style: IconButton.styleFrom(
+        backgroundColor: onImage
+            ? Colors.black.withValues(alpha: 0.28)
+            : Theme.of(context).colorScheme.secondaryContainer,
+        foregroundColor: onImage
+            ? Colors.white
+            : Theme.of(context).colorScheme.onSecondaryContainer,
+      ),
       icon: const Icon(LucideIcons.bell, size: 19),
     );
     final chip = _WeatherChip(
       weather: weather,
       locationEnabled: locationEnabled,
+      onImage: onImage,
     );
 
     return LayoutBuilder(
@@ -361,7 +413,9 @@ class _HeroTopBar extends StatelessWidget {
 }
 
 class _HeroText extends StatelessWidget {
-  const _HeroText();
+  const _HeroText({this.onImage = false});
+
+  final bool onImage;
 
   @override
   Widget build(BuildContext context) {
@@ -371,18 +425,28 @@ class _HeroText extends StatelessWidget {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
           decoration: BoxDecoration(
-            color: AppColors.leaf.withValues(alpha: 0.1),
+            color: onImage
+                ? Colors.black.withValues(alpha: 0.3)
+                : AppColors.leaf.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(999),
+            border: onImage
+                ? Border.all(color: Colors.white.withValues(alpha: 0.22))
+                : null,
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
+          child: Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 6,
+            runSpacing: 3,
             children: [
-              const Icon(LucideIcons.sparkles, size: 15, color: AppColors.leaf),
-              const SizedBox(width: 6),
+              Icon(
+                LucideIcons.sparkles,
+                size: 15,
+                color: onImage ? AppColors.amber : AppColors.leaf,
+              ),
               Text(
                 'Leaf health assistant',
                 style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  color: AppColors.forest,
+                  color: onImage ? Colors.white : AppColors.forest,
                   fontWeight: FontWeight.w800,
                 ),
               ),
@@ -392,14 +456,23 @@ class _HeroText extends StatelessWidget {
         const SizedBox(height: 14),
         Text(
           'Scan your crop',
-          style: Theme.of(context).textTheme.displaySmall
-              ?.copyWith(color: _strongInk(context), letterSpacing: -0.7),
+          style: Theme.of(context).textTheme.displaySmall?.copyWith(
+            color: onImage ? Colors.white : _strongInk(context),
+            letterSpacing: -0.7,
+            shadows: onImage
+                ? const [Shadow(color: Color(0x66000000), blurRadius: 16)]
+                : null,
+          ),
         ),
         const SizedBox(height: 7),
         Text(
           'Check leaf health from a photo and continue the result with Saathi.',
-          style: Theme.of(context).textTheme.bodyLarge
-              ?.copyWith(color: _mutedInk(context), height: 1.42),
+          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+            color: onImage
+                ? Colors.white.withValues(alpha: 0.86)
+                : _mutedInk(context),
+            height: 1.42,
+          ),
         ),
         const SizedBox(height: 18),
         FilledButton.icon(
@@ -407,8 +480,8 @@ class _HeroText extends StatelessWidget {
           icon: const Icon(LucideIcons.scanLine, size: 19),
           label: const Text('Start scan'),
           style: FilledButton.styleFrom(
-            backgroundColor: AppColors.forest,
-            foregroundColor: Colors.white,
+            backgroundColor: onImage ? Colors.white : AppColors.forest,
+            foregroundColor: onImage ? AppColors.forest : Colors.white,
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(18),
@@ -420,112 +493,16 @@ class _HeroText extends StatelessWidget {
   }
 }
 
-class _LeafHeroVisual extends StatelessWidget {
-  const _LeafHeroVisual();
-
-  @override
-  Widget build(BuildContext context) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    return Center(
-      child: SizedBox(
-        height: 190,
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            Container(
-              width: 176,
-              height: 176,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: RadialGradient(
-                  colors: dark
-                      ? const [Color(0xFF2B4E36), Color(0xFF132219)]
-                      : const [Color(0xFFFFFFFF), Color(0xFFDDEACF)],
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.forest.withValues(alpha: 0.16),
-                    blurRadius: 28,
-                    offset: const Offset(0, 16),
-                  ),
-                ],
-              ),
-            ),
-            Positioned(
-              top: 8,
-              child: Transform.rotate(
-                angle: -0.08,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(42),
-                  child: Image.asset(
-                    'assets/images/leaf_healthy.jpg',
-                    width: 142,
-                    height: 164,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) => const ColoredBox(
-                      color: Color(0xFFDDEACF),
-                      child: Center(
-                        child: Icon(
-                          LucideIcons.leaf,
-                          size: 72,
-                          color: AppColors.forest,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            const PositionedDirectional(
-              top: 18,
-              end: 14,
-              child: _MiniPlantBadge(icon: LucideIcons.droplets),
-            ),
-            const PositionedDirectional(
-              bottom: 18,
-              start: 16,
-              child: _MiniPlantBadge(icon: LucideIcons.sprout),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _MiniPlantBadge extends StatelessWidget {
-  const _MiniPlantBadge({required this.icon});
-
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 42,
-      height: 42,
-      decoration: BoxDecoration(
-        color: Theme.of(context).brightness == Brightness.dark
-            ? const Color(0xFF203427)
-            : Colors.white.withValues(alpha: 0.92),
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.08),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Icon(icon, color: AppColors.leaf, size: 19),
-    );
-  }
-}
-
 class _WeatherChip extends StatelessWidget {
-  const _WeatherChip({required this.weather, required this.locationEnabled});
+  const _WeatherChip({
+    required this.weather,
+    required this.locationEnabled,
+    this.onImage = false,
+  });
 
   final WeatherSnapshot? weather;
   final bool locationEnabled;
+  final bool onImage;
 
   @override
   Widget build(BuildContext context) {
@@ -540,8 +517,8 @@ class _WeatherChip extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
           color: Theme.of(context).brightness == Brightness.dark
-              ? Colors.white.withValues(alpha: 0.07)
-              : Colors.white.withValues(alpha: 0.76),
+              ? Colors.white.withValues(alpha: onImage ? 0.13 : 0.07)
+              : Colors.white.withValues(alpha: onImage ? 0.88 : 0.76),
           borderRadius: BorderRadius.circular(999),
           border: Border.all(
             color: Theme.of(context).brightness == Brightness.dark
@@ -565,7 +542,7 @@ class _WeatherChip extends StatelessWidget {
                 Text(
                   label,
                   style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    color: _strongInk(context),
+                    color: onImage ? AppColors.forest : _strongInk(context),
                     fontWeight: FontWeight.w900,
                   ),
                 ),
@@ -573,8 +550,10 @@ class _WeatherChip extends StatelessWidget {
                   caption,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.labelSmall
-                      ?.copyWith(color: _mutedInk(context), height: 1),
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: onImage ? AppColors.mutedInk : _mutedInk(context),
+                    height: 1,
+                  ),
                 ),
               ],
             ),
@@ -591,19 +570,23 @@ class _HeroShortcut extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.onTap,
+    this.onImage = false,
   });
 
   final IconData icon;
   final String title;
   final String subtitle;
   final VoidCallback onTap;
+  final bool onImage;
 
   @override
   Widget build(BuildContext context) {
     return ConstrainedBox(
       constraints: const BoxConstraints(minWidth: 146, maxWidth: 210),
       child: Material(
-        color: Theme.of(context).brightness == Brightness.dark
+        color: onImage
+            ? Colors.black.withValues(alpha: 0.32)
+            : Theme.of(context).brightness == Brightness.dark
             ? Colors.white.withValues(alpha: 0.06)
             : Colors.white.withValues(alpha: 0.72),
         borderRadius: BorderRadius.circular(20),
@@ -619,10 +602,16 @@ class _HeroShortcut extends StatelessWidget {
                   width: 38,
                   height: 38,
                   decoration: BoxDecoration(
-                    color: AppColors.leaf.withValues(alpha: 0.12),
+                    color: onImage
+                        ? Colors.white.withValues(alpha: 0.14)
+                        : AppColors.leaf.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: Icon(icon, color: AppColors.forest, size: 18),
+                  child: Icon(
+                    icon,
+                    color: onImage ? Colors.white : AppColors.forest,
+                    size: 18,
+                  ),
                 ),
                 const SizedBox(width: 11),
                 Flexible(
@@ -634,16 +623,20 @@ class _HeroShortcut extends StatelessWidget {
                         title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.labelLarge
-                            ?.copyWith(color: _strongInk(context)),
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          color: onImage ? Colors.white : _strongInk(context),
+                        ),
                       ),
                       const SizedBox(height: 2),
                       Text(
                         subtitle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.labelSmall
-                            ?.copyWith(color: _mutedInk(context)),
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: onImage
+                              ? Colors.white.withValues(alpha: 0.72)
+                              : _mutedInk(context),
+                        ),
                       ),
                     ],
                   ),
@@ -764,14 +757,19 @@ class _FarmOverviewCard extends StatelessWidget {
           else
             Column(
               children: [
-                for (final farm in farms.take(3)) ...[
-                  _FarmListTile(
-                    farm: farm,
-                    pendingTasks: _pendingTasksForFarm(farm, pendingReminders),
+                for (final farm in farms.take(3))
+                  Padding(
+                    padding: EdgeInsets.only(
+                      bottom: farm != farms.take(3).last ? 12.0 : 0.0,
+                    ),
+                    child: _FarmListTile(
+                      farm: farm,
+                      pendingTasks: _pendingTasksForFarm(
+                        farm,
+                        pendingReminders,
+                      ),
+                    ),
                   ),
-                  if (farm != farms.take(3).last)
-                    const Divider(height: 18, indent: 64),
-                ],
               ],
             ),
         ],
@@ -795,64 +793,98 @@ class _FarmListTile extends StatelessWidget {
     final asset = CropVisuals.forFarm(
       farm.plots.expand((plot) => plot.crops).map((crop) => crop.name),
     );
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () => context.push('/farm/${farm.id}'),
-        borderRadius: BorderRadius.circular(18),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Row(
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(18),
-                child: Image.asset(
-                  asset,
-                  width: 52,
-                  height: 52,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) => const ColoredBox(
-                    color: Color(0xFFE3EDD8),
-                    child: SizedBox.square(
-                      dimension: 52,
-                      child: Icon(LucideIcons.wheat, color: AppColors.forest),
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).brightness == Brightness.dark
+            ? Colors.white.withValues(alpha: 0.05)
+            : Theme.of(context).colorScheme.surfaceContainer,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: Theme.of(context).brightness == Brightness.dark
+              ? Colors.white.withValues(alpha: 0.05)
+              : Colors.black.withValues(alpha: 0.05),
+        ),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => context.push('/farm/${farm.id}'),
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(18),
+                  child: Image.asset(
+                    asset,
+                    width: 52,
+                    height: 52,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => const ColoredBox(
+                      color: Color(0xFFE3EDD8),
+                      child: SizedBox.square(
+                        dimension: 52,
+                        child: Icon(LucideIcons.wheat, color: AppColors.forest),
+                      ),
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      farm.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleMedium
-                          ?.copyWith(color: _strongInk(context)),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      [
-                        _countText(cropCount, 'crop', 'crops'),
-                        if (pendingTasks > 0)
-                          _countText(pendingTasks, 'task', 'tasks'),
-                      ].join(' · '),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall
-                          ?.copyWith(color: _mutedInk(context)),
-                    ),
-                  ],
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        farm.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(color: _strongInk(context)),
+                      ),
+                      const SizedBox(height: 3),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 5,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Text(
+                            _countText(cropCount, 'crop', 'crops'),
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: _mutedInk(context)),
+                          ),
+                          if (pendingTasks > 0) ...[
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppColors.amber.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                _countText(pendingTasks, 'task', 'tasks'),
+                                style: Theme.of(context).textTheme.labelSmall
+                                    ?.copyWith(
+                                      color: AppColors.amber,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              const Icon(
-                LucideIcons.chevronRight,
-                size: 18,
-                color: AppColors.mutedInk,
-              ),
-            ],
+                const Icon(
+                  LucideIcons.chevronRight,
+                  size: 18,
+                  color: AppColors.mutedInk,
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -877,11 +909,39 @@ class _TodayTaskCard extends StatelessWidget {
             onAction: () => context.push('/reminders'),
           ),
           const SizedBox(height: 11),
-          for (final reminder in reminders.take(2)) ...[
-            _ReminderTile(reminder: reminder),
-            if (reminder != reminders.take(2).last)
-              const Divider(height: 18, indent: 52),
-          ],
+          if (reminders.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.leaf.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    LucideIcons.checkCircle2,
+                    color: AppColors.forest,
+                    size: 32,
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Text(
+                      'All tasks completed for today — crops are well tended!',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: AppColors.forest,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            for (final reminder in reminders.take(2)) ...[
+              _ReminderTile(reminder: reminder),
+              if (reminder != reminders.take(2).last)
+                const Divider(height: 18, indent: 52),
+            ],
         ],
       ),
     );
@@ -974,7 +1034,12 @@ class _PersonalWeatherCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _SectionTitle(title: '$name’s weather', actionLabel: 'View'),
+            _SectionTitle(
+              title: name.trim().isEmpty
+                  ? 'Today’s weather'
+                  : '$name’s weather',
+              actionLabel: 'View',
+            ),
             const SizedBox(height: 12),
             if (current == null)
               _WeatherEmptyLine(
@@ -1045,39 +1110,41 @@ class _WeatherEmptyLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final text = locationEnabled
-        ? 'Load today’s phone weather.'
-        : 'Turn on location to show phone weather.';
-    return Row(
-      children: [
-        Container(
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(
-            color: AppColors.leaf.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: const Icon(
-            LucideIcons.locateFixed,
-            color: AppColors.forest,
-            size: 19,
-          ),
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            AppColors.sky.withValues(alpha: 0.2),
+            AppColors.sky.withValues(alpha: 0.05),
+          ],
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Text(
-            text,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        children: [
+          const Icon(LucideIcons.cloudSun, color: AppColors.sky, size: 48),
+          const SizedBox(height: 12),
+          Text(
+            locationEnabled
+                ? 'Load today’s phone weather.'
+                : 'Turn on location to show phone weather.',
+            textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodyMedium
-                ?.copyWith(color: _mutedInk(context)),
+                ?.copyWith(color: _strongInk(context)),
           ),
-        ),
-        if (locationEnabled)
-          IconButton(
-            tooltip: 'Load weather',
-            onPressed: onRefresh,
-            icon: const Icon(LucideIcons.refreshCw, size: 18),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: locationEnabled ? onRefresh : null,
+            icon: const Icon(LucideIcons.refreshCw, size: 16),
+            label: const Text('Fetch Live Weather'),
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.sky,
+              foregroundColor: Colors.white,
+            ),
           ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -1175,20 +1242,6 @@ class _DiagnosisThumbnail extends StatelessWidget {
       ),
     );
   }
-}
-
-class _SoftGlow extends StatelessWidget {
-  const _SoftGlow({required this.size, required this.color});
-
-  final double size;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    width: size,
-    height: size,
-    decoration: BoxDecoration(shape: BoxShape.circle, color: color),
-  );
 }
 
 String _diagnosisSubtitle(

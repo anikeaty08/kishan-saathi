@@ -129,4 +129,18 @@ PLANTWILD_DISEASE_LABELS = tuple(
     label for label in PLANTWILD_CLASS_NAMES if not label.endswith(" leaf")
 )
 
-assert len(PLANTWILD_CLASS_NAMES) == 89
+
+def crop_name_for_class(class_name: str) -> str:
+    """Return the canonical crop portion of one reviewed PlantWild class."""
+
+    if class_name == "grapevine leafroll disease":
+        return "grape"
+    if class_name.startswith("bell pepper "):
+        return "bell pepper"
+    return class_name.split(" ", maxsplit=1)[0]
+
+
+if len(PLANTWILD_CLASS_NAMES) != 89:
+    raise RuntimeError("PLANTWILD_CLASS_MANIFEST_INVALID")
+if not all(crop_name_for_class(class_name) for class_name in PLANTWILD_CLASS_NAMES):
+    raise RuntimeError("PLANTWILD_CROP_MANIFEST_INVALID")

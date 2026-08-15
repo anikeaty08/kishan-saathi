@@ -153,6 +153,8 @@ class ChatRepository {
       farmId: row['farm_id'] as String?,
       plotId: row['plot_id'] as String?,
       diagnosisCaseId: row['diagnosis_case_id'] as String?,
+      effectiveFarmId: row['effective_farm_id'] as String?,
+      effectivePlotId: row['effective_plot_id'] as String?,
       archived: row['archived_at'] != null,
       messages: const [],
     );

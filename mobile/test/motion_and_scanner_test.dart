@@ -17,7 +17,7 @@ void main() {
     expect(find.text('KrishiSathi'), findsOneWidget);
     expect(find.text('Home ready'), findsOneWidget);
 
-    await tester.pump(const Duration(milliseconds: 800));
+    await tester.pump(const Duration(milliseconds: 1200));
     expect(find.byKey(const ValueKey('app-launch-reveal')), findsNothing);
     expect(find.text('Home ready'), findsOneWidget);
   });

@@ -23,7 +23,7 @@ coverage.xml
 # Logs and runtime state
 *.log
 logs/
-storage/
+/storage/
 uploads/
 
 # Model checkpoints and generated ML artifacts

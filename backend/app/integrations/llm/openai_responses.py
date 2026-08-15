@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from time import monotonic
 from typing import Any, cast
 from uuid import UUID
 
@@ -40,6 +41,7 @@ from app.integrations.llm.provider import (
     MemoryExtractionRequest,
     ReplyDisposition,
 )
+from app.integrations.usage.provider import AIUsageObservation, AIUsageSink, NullAIUsageSink
 
 
 class SafetyReview(BaseModel):
@@ -55,6 +57,7 @@ class OpenAIResponsesProvider(LLMProvider):
         settings: Settings,
         *,
         client: AsyncOpenAI | None = None,
+        usage_sink: AIUsageSink | None = None,
     ) -> None:
         self._client = client or AsyncOpenAI(
             api_key=settings.openai_api_key,
@@ -63,8 +66,10 @@ class OpenAIResponsesProvider(LLMProvider):
         )
         self._owns_client = client is None
         self._safety_model = settings.openai_light_model
+        self._usage_sink = usage_sink or NullAIUsageSink()
 
     async def respond(self, request: LLMRequest, *, model: str) -> LLMResult:
+        started = monotonic()
         safety_identifier = hashlib.sha256(str(request.farmer_id).encode()).hexdigest()
         agent = Agent[Any](
             name="Kishan Saathi agricultural assistant",
@@ -85,6 +90,7 @@ class OpenAIResponsesProvider(LLMProvider):
                     allow_diagnosis=request.allow_diagnosis,
                     required_disposition=request.required_disposition,
                     input_text=request.input_text,
+                    farmer_id=request.farmer_id,
                 )
             ],
             tool_use_behavior="run_llm_again",
@@ -111,6 +117,13 @@ class OpenAIResponsesProvider(LLMProvider):
             reply = result.final_output_as(AssistantReply)
         except (TypeError, ValueError) as exc:
             raise ApplicationError(code="LLM_INVALID_RESPONSE", status_code=502) from exc
+        await self._observe(
+            result,
+            farmer_id=request.farmer_id,
+            operation="chat_response",
+            model=model,
+            started=started,
+        )
         return LLMResult(
             reply=reply,
             provider_response_id=result.last_response_id or "not-stored",
@@ -123,6 +136,7 @@ class OpenAIResponsesProvider(LLMProvider):
     ) -> MemoryExtraction:
         """Extract facts only; never let a transcript directly become memory."""
 
+        started = monotonic()
         safety_identifier = hashlib.sha256(str(request.farmer_id).encode()).hexdigest()
         agent = Agent[Any](
             name="Kishan Saathi scoped memory extractor",
@@ -166,11 +180,19 @@ class OpenAIResponsesProvider(LLMProvider):
             raise ApplicationError(code="LLM_PROVIDER_ERROR", status_code=502) from exc
         except AgentsException as exc:
             raise ApplicationError(code="LLM_ORCHESTRATION_FAILED", status_code=502) from exc
+        await self._observe(
+            result,
+            farmer_id=request.farmer_id,
+            operation="memory_extraction",
+            model=model,
+            started=started,
+        )
         return cast(MemoryExtraction, result.final_output_as(MemoryExtraction))
 
     async def generate_title(
         self, *, content: str, language: str, farmer_id: UUID, model: str
     ) -> GeneratedTitle:
+        started = monotonic()
         safety_identifier = hashlib.sha256(str(farmer_id).encode()).hexdigest()
         agent = Agent[Any](
             name="Kishan Saathi chat title generator",
@@ -202,6 +224,13 @@ class OpenAIResponsesProvider(LLMProvider):
             raise ApplicationError(code="LLM_TITLE_UNAVAILABLE", status_code=503) from exc
         except AgentsException as exc:
             raise ApplicationError(code="LLM_TITLE_UNAVAILABLE", status_code=503) from exc
+        await self._observe(
+            result,
+            farmer_id=farmer_id,
+            operation="title_generation",
+            model=model,
+            started=started,
+        )
         return cast(GeneratedTitle, result.final_output_as(GeneratedTitle))
 
     async def classify_chat_risk(
@@ -209,6 +238,7 @@ class OpenAIResponsesProvider(LLMProvider):
     ) -> ChatRiskClassification:
         """Classify routing risk with a typed, non-answering mini-model call."""
 
+        started = monotonic()
         safety_identifier = hashlib.sha256(str(farmer_id).encode()).hexdigest()
         agent = Agent[Any](
             name="Kishan Saathi chat risk classifier",
@@ -249,6 +279,13 @@ class OpenAIResponsesProvider(LLMProvider):
             raise ApplicationError(code="LLM_ROUTING_UNAVAILABLE", status_code=503) from exc
         except AgentsException as exc:
             raise ApplicationError(code="LLM_ROUTING_UNAVAILABLE", status_code=503) from exc
+        await self._observe(
+            result,
+            farmer_id=farmer_id,
+            operation="chat_routing",
+            model=model,
+            started=started,
+        )
         return cast(ChatRiskClassification, result.final_output_as(ChatRiskClassification))
 
     def _safety_output_guardrail(
@@ -258,10 +295,12 @@ class OpenAIResponsesProvider(LLMProvider):
         allow_diagnosis: bool,
         required_disposition: "ReplyDisposition | None",
         input_text: str,
+        farmer_id: UUID,
     ) -> OutputGuardrail[Any]:
         async def review(
             _context: RunContextWrapper[Any], _agent: Agent[Any], output: Any
         ) -> GuardrailFunctionOutput:
+            started = monotonic()
             reply = AssistantReply.model_validate(output)
             reviewer = Agent[Any](
                 name="Kishan Saathi multilingual safety reviewer",
@@ -324,6 +363,13 @@ class OpenAIResponsesProvider(LLMProvider):
                 max_turns=2,
                 workflow_name="Kishan Saathi safety review",
             )
+            await self._observe(
+                result,
+                farmer_id=farmer_id,
+                operation="safety_review",
+                model=self._safety_model,
+                started=started,
+            )
             safety = result.final_output_as(SafetyReview)
             return GuardrailFunctionOutput(output_info=safety, tripwire_triggered=safety.unsafe)
 
@@ -381,6 +427,35 @@ class OpenAIResponsesProvider(LLMProvider):
     async def close(self) -> None:
         if self._owns_client:
             await self._client.close()
+
+    async def _observe(
+        self,
+        result: Any,
+        *,
+        farmer_id: UUID,
+        operation: str,
+        model: str,
+        started: float,
+    ) -> None:
+        usage = result.context_wrapper.usage
+        input_details = usage.input_tokens_details
+        output_details = usage.output_tokens_details
+        await self._usage_sink.record(
+            AIUsageObservation(
+                farmer_id=farmer_id,
+                operation=operation,
+                model=model,
+                provider_response_id=result.last_response_id,
+                request_count=usage.requests,
+                input_tokens=usage.input_tokens,
+                cached_input_tokens=(input_details.cached_tokens or 0),
+                cache_write_tokens=(getattr(input_details, "cache_write_tokens", 0) or 0),
+                output_tokens=usage.output_tokens,
+                reasoning_tokens=(output_details.reasoning_tokens or 0),
+                total_tokens=usage.total_tokens,
+                latency_ms=max(0, round((monotonic() - started) * 1000)),
+            )
+        )
 
 
 def _json_value(value: str) -> object:

@@ -7,7 +7,7 @@ from uuid import UUID
 
 import pytest
 from PIL import Image
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import Settings
@@ -48,7 +48,14 @@ class SequencedInference(LeafInferenceProvider):
         self.confidences = iter(confidences)
         self.plant_names: list[str | None] = []
 
-    async def diagnose(self, *, images: tuple[bytes, ...], plant_name: str | None) -> CaseInference:
+    async def diagnose(
+        self,
+        *,
+        farmer_id: UUID,
+        images: tuple[bytes, ...],
+        plant_name: str | None,
+    ) -> CaseInference:
+        del farmer_id
         confidence = next(self.confidences)
         self.plant_names.append(plant_name)
         per_image = tuple(
@@ -73,8 +80,14 @@ class SequencedInference(LeafInferenceProvider):
 
 
 class FailingInference(LeafInferenceProvider):
-    async def diagnose(self, *, images: tuple[bytes, ...], plant_name: str | None) -> CaseInference:
-        del images, plant_name
+    async def diagnose(
+        self,
+        *,
+        farmer_id: UUID,
+        images: tuple[bytes, ...],
+        plant_name: str | None,
+    ) -> CaseInference:
+        del farmer_id, images, plant_name
         raise ApplicationError(code="LEAF_MODEL_UNAVAILABLE", status_code=503)
 
     async def close(self) -> None:
@@ -93,6 +106,7 @@ class RecordingContextCleaner:
 async def test_case_retakes_feedback_owner_isolation_and_deletion(tmp_path: Path) -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
+        await connection.execute(text("PRAGMA foreign_keys=ON"))
         await connection.run_sync(Base.metadata.create_all)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     storage = LocalObjectStorage(tmp_path)
@@ -175,6 +189,7 @@ async def test_case_retakes_feedback_owner_isolation_and_deletion(tmp_path: Path
 async def test_failed_inference_removes_stored_objects_and_database_rows(tmp_path: Path) -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
+        await connection.execute(text("PRAGMA foreign_keys=ON"))
         await connection.run_sync(Base.metadata.create_all)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -209,11 +224,12 @@ async def test_failed_inference_removes_stored_objects_and_database_rows(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_retake_processes_only_new_batch_and_keeps_unbounded_case_history(
+async def test_retake_processes_only_new_batch_and_enforces_case_image_limit(
     tmp_path: Path,
 ) -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
+        await connection.execute(text("PRAGMA foreign_keys=ON"))
         await connection.run_sync(Base.metadata.create_all)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -222,9 +238,13 @@ async def test_retake_processes_only_new_batch_and_keeps_unbounded_case_history(
             session.add(_farmer(FARMER, "bounded"))
             await session.commit()
             storage = LocalObjectStorage(tmp_path)
-            inference = SequencedInference([0.60] * 22)
+            inference = SequencedInference([0.60] * 4)
             service = DiagnosisService(
-                settings=Settings(_env_file=None, max_diagnosis_images=2),
+                settings=Settings(
+                    _env_file=None,
+                    max_diagnosis_images=2,
+                    max_diagnosis_case_images=4,
+                ),
                 repository=DiagnosisRepository(session),
                 farm_repository=FarmRepository(session),
                 report_repository=ReportRepository(session),
@@ -240,9 +260,10 @@ async def test_retake_processes_only_new_batch_and_keeps_unbounded_case_history(
                 link=DiagnosisLink(),
             )
 
-            updated = case
-            for image_index in range(2, 23):
-                updated = await service.add_retakes(FARMER, case.id, [_incoming(image_index)])
+            updated = await service.add_retakes(FARMER, case.id, [_incoming(2)])
+            updated = await service.add_retakes(FARMER, case.id, [_incoming(3)])
+            with pytest.raises(ApplicationError) as caught:
+                await service.add_retakes(FARMER, case.id, [_incoming(4)])
             first_page = await service.image_page(FARMER, case.id, limit=12, offset=0)
             second_page = await service.image_page(FARMER, case.id, limit=12, offset=12)
             stored_prediction_count = await session.scalar(
@@ -253,12 +274,13 @@ async def test_retake_processes_only_new_batch_and_keeps_unbounded_case_history(
     finally:
         await engine.dispose()
 
-    assert updated.image_count == 23
-    assert len(updated.images) == 20
-    assert len(first_page) == 12
-    assert len(second_page) == 11
-    assert stored_prediction_count == 23
-    assert len(inference.plant_names) == 22
+    assert caught.value.code == "SCAN_CASE_IMAGE_LIMIT_REACHED"
+    assert updated.image_count == 4
+    assert len(updated.images) == 4
+    assert len(first_page) == 4
+    assert len(second_page) == 0
+    assert stored_prediction_count == 4
+    assert len(inference.plant_names) == 3
 
 
 def _farmer(farmer_id: UUID, suffix: str) -> FarmerProfile:

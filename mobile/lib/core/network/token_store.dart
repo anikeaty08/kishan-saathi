@@ -19,7 +19,14 @@ class AuthTokens {
 
 class SecureTokenStore {
   SecureTokenStore({FlutterSecureStorage? storage})
-    : _storage = storage ?? const FlutterSecureStorage();
+    : _storage =
+          storage ??
+          const FlutterSecureStorage(
+            aOptions: AndroidOptions(resetOnError: true),
+            iOptions: IOSOptions(
+              accessibility: KeychainAccessibility.unlocked_this_device,
+            ),
+          );
 
   static const _accessKey = 'cognito_access_token';
   static const _refreshKey = 'cognito_refresh_token';
@@ -62,5 +69,10 @@ class SecureTokenStore {
     ]);
   }
 
-  Future<void> clear() => _storage.deleteAll();
+  Future<void> clear() => Future.wait([
+    _storage.delete(key: _accessKey),
+    _storage.delete(key: _refreshKey),
+    _storage.delete(key: _idKey),
+    _storage.delete(key: _expiryKey),
+  ]);
 }

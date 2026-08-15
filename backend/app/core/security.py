@@ -29,3 +29,4 @@ class ExternalIdentity:
     username: str
     email: str
     email_verified: bool
+    name: str | None = None

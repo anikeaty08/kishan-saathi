@@ -18,9 +18,12 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
+
+JSON_DOCUMENT = JSON().with_variant(JSONB(), "postgresql")
 
 
 class DiagnosisCase(Base):
@@ -171,3 +174,53 @@ class DiagnosisFeedback(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class DiagnosisProgressionComparison(Base):
+    """Immutable, reopenable audit record for one paid visual comparison."""
+
+    __tablename__ = "diagnosis_progression_comparisons"
+    __table_args__ = (
+        UniqueConstraint(
+            "farmer_id",
+            "case_id",
+            "request_hash",
+            name="uq_progression_comparisons_request",
+        ),
+        CheckConstraint("confidence BETWEEN 0 AND 1", name="ck_progression_confidence"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    farmer_id: Mapped[UUID] = mapped_column(
+        ForeignKey("farmer_profiles.id", ondelete="CASCADE"), index=True
+    )
+    case_id: Mapped[UUID] = mapped_column(
+        ForeignKey("diagnosis_cases.id", ondelete="CASCADE"), index=True
+    )
+    earlier_assessment_id: Mapped[UUID] = mapped_column(
+        ForeignKey("diagnosis_assessments.id", ondelete="CASCADE"), index=True
+    )
+    later_assessment_id: Mapped[UUID] = mapped_column(
+        ForeignKey("diagnosis_assessments.id", ondelete="CASCADE"), index=True
+    )
+    request_hash: Mapped[str] = mapped_column(String(64))
+    response_language: Mapped[str] = mapped_column(String(8))
+    earlier_captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    later_captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    earlier_image_ids: Mapped[list[str]] = mapped_column(JSON_DOCUMENT)
+    later_image_ids: Mapped[list[str]] = mapped_column(JSON_DOCUMENT)
+    trend: Mapped[str] = mapped_column(String(20))
+    confidence: Mapped[float] = mapped_column(Float)
+    evidence: Mapped[list[str]] = mapped_column(JSON_DOCUMENT)
+    limitations: Mapped[list[str]] = mapped_column(JSON_DOCUMENT)
+    recommendations: Mapped[list[str]] = mapped_column(JSON_DOCUMENT)
+    image_quality: Mapped[dict[str, object]] = mapped_column(JSON_DOCUMENT)
+    diagnosis_context: Mapped[dict[str, object] | None] = mapped_column(
+        JSON_DOCUMENT, nullable=True
+    )
+    model_name: Mapped[str] = mapped_column(String(100))
+    provider_response_id: Mapped[str] = mapped_column(String(255))
+    prompt_version: Mapped[str] = mapped_column(String(32))
+    schema_version: Mapped[str] = mapped_column(String(32))
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -6,9 +6,11 @@ import 'package:provider/provider.dart';
 import '../../../core/localization/app_language.dart';
 import '../../../core/localization/app_strings.dart';
 import '../../../core/network/api_exception.dart';
+import '../../../core/permissions/app_permission_service.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/ui/app_ui.dart';
 import '../../shared/presentation/app_controller.dart';
+import 'auth_visuals.dart';
 
 class WelcomeScreen extends StatelessWidget {
   const WelcomeScreen({super.key});
@@ -41,24 +43,14 @@ class WelcomeScreen extends StatelessWidget {
             );
           }
 
-          final textScale = MediaQuery.textScalerOf(context).scale(1);
           final shortViewport = constraints.maxHeight < 650;
-          final heroHeight =
-              (constraints.maxHeight * (shortViewport ? 0.30 : 0.49))
-                  .clamp(
-                    shortViewport ? 160.0 : 280.0,
-                    textScale > 1.4 ? 380.0 : 460.0,
-                  )
-                  .toDouble();
-          return CustomScrollView(
-            slivers: [
-              SliverToBoxAdapter(
-                child: SizedBox(
-                  height: heroHeight,
-                  child: const _WelcomeHeroImage(),
-                ),
-              ),
-              SliverToBoxAdapter(
+          return Stack(
+            children: [
+              Positioned.fill(child: _WelcomeHeroImage()),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
                 child: SafeArea(
                   top: false,
                   child: _WelcomeContent(compact: shortViewport),
@@ -77,6 +69,7 @@ class _WelcomeHeroImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Stack(
+    key: const ValueKey('welcome-hero-image'),
     fit: StackFit.expand,
     children: [
       Image.asset(
@@ -95,7 +88,13 @@ class _WelcomeHeroImage extends StatelessWidget {
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Color(0x08000000), Color(0x2E14231B)],
+            stops: [0.0, 0.35, 0.75, 1.0],
+            colors: [
+              Color(0x00000000),
+              Color(0x14000000),
+              Color(0xB0173B2C),
+              Color(0xF5173B2C),
+            ],
           ),
         ),
       ),
@@ -110,59 +109,71 @@ class _WelcomeContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    return ColoredBox(
-      color: dark ? const Color(0xFF101B15) : const Color(0xFFF3F0E6),
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(24, compact ? 18 : 26, 24, 24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            BrandMark(size: compact ? 36 : 42),
-            SizedBox(height: compact ? 18 : 28),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 520),
-              child: Text(
-                context.tr('welcomeTitle'),
-                style: Theme.of(context).textTheme.displaySmall,
-              ),
-            ),
-            if (!compact) ...[
-              const SizedBox(height: 12),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 500),
-                child: Text(
-                  context.tr('welcomeBody'),
-                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: dark
-                        ? Colors.white.withValues(alpha: 0.72)
-                        : AppColors.mutedInk,
+    return Padding(
+      padding: EdgeInsets.fromLTRB(24, compact ? 12 : 18, 24, 32),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.end,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          BrandMark(size: compact ? 34 : 40, dark: true),
+          SizedBox(height: compact ? 14 : 22),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: Text(
+              context.tr('welcomeTitle'),
+              style: Theme.of(context).textTheme.displaySmall?.copyWith(
+                color: Colors.white,
+                shadows: [
+                  Shadow(
+                    color: Colors.black.withValues(alpha: 0.3),
+                    blurRadius: 12,
                   ),
-                ),
-              ),
-            ],
-            SizedBox(height: compact ? 18 : 26),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: () => context.push('/auth'),
-                child: Text(context.tr('getStarted')),
+                ],
               ),
             ),
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: TextButton(
-                onPressed: () => context.push('/onboarding/language'),
-                style: TextButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
+          ),
+          if (!compact) ...[
+            const SizedBox(height: 10),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 500),
+              child: Text(
+                context.tr('welcomeBody'),
+                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                  color: Colors.white.withValues(alpha: 0.78),
+                  height: 1.5,
                 ),
-                child: Text(context.tr('chooseLanguage')),
               ),
             ),
           ],
-        ),
+          SizedBox(height: compact ? 20 : 30),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: () => context.push('/auth'),
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: AppColors.forest,
+                minimumSize: const Size(double.infinity, 54),
+              ),
+              child: Text(
+                context.tr('getStarted'),
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: TextButton(
+              onPressed: () => context.push('/onboarding/language'),
+              style: TextButton.styleFrom(
+                minimumSize: const Size.fromHeight(44),
+                foregroundColor: Colors.white.withValues(alpha: 0.75),
+              ),
+              child: Text(context.tr('chooseLanguage')),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -177,13 +188,34 @@ class AuthScreen extends StatefulWidget {
 
 class _AuthScreenState extends State<AuthScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _createAccount = false;
   bool _obscure = true;
 
+  Future<bool> _showEmailConfirmation() async {
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) =>
+          _SignUpConfirmationSheet(email: _emailController.text.trim()),
+    );
+    if ((confirmed ?? false) && mounted) {
+      setState(() => _createAccount = false);
+      showAppSnackBar(
+        context,
+        'Email confirmed. Sign in to continue.',
+        success: true,
+      );
+    }
+    return confirmed ?? false;
+  }
+
   @override
   void dispose() {
+    _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
@@ -195,6 +227,7 @@ class _AuthScreenState extends State<AuthScreen> {
     try {
       if (_createAccount) {
         final alreadyConfirmed = await controller.signUp(
+          _nameController.text,
           _emailController.text,
           _passwordController.text,
         );
@@ -207,22 +240,7 @@ class _AuthScreenState extends State<AuthScreen> {
             success: true,
           );
         } else {
-          final confirmed = await showModalBottomSheet<bool>(
-            context: context,
-            isScrollControlled: true,
-            showDragHandle: true,
-            builder: (context) =>
-                _SignUpConfirmationSheet(email: _emailController.text.trim()),
-          );
-          if (confirmed ?? false) {
-            if (!mounted) return;
-            setState(() => _createAccount = false);
-            showAppSnackBar(
-              context,
-              'Email confirmed. Sign in to continue.',
-              success: true,
-            );
-          }
+          await _showEmailConfirmation();
         }
       } else {
         await controller.signIn(
@@ -230,10 +248,21 @@ class _AuthScreenState extends State<AuthScreen> {
           _passwordController.text,
         );
         if (!mounted) return;
-        context.go('/onboarding/profile');
+        if (controller.onboardingComplete) {
+          context.go('/home');
+        } else if (controller.hasFarmerName) {
+          context.go('/onboarding/language');
+        } else {
+          context.go('/onboarding/profile');
+        }
       }
     } on ApiException catch (error) {
       if (!mounted) return;
+      if (error.code == 'AUTH_EMAIL_UNCONFIRMED' ||
+          error.code == 'AUTH_ACCOUNT_EXISTS') {
+        await _showEmailConfirmation();
+        return;
+      }
       showAppSnackBar(context, context.localizedError(error));
     }
   }
@@ -242,64 +271,98 @@ class _AuthScreenState extends State<AuthScreen> {
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
     return Scaffold(
-      appBar: AppBar(),
-      body: SafeArea(
-        top: false,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final expanded = constraints.maxWidth >= 840;
-            final form = _buildForm(context, controller);
-            if (expanded) {
-              return Row(
-                children: [
-                  const Expanded(
-                    flex: 11,
-                    child: Padding(
-                      padding: EdgeInsetsDirectional.fromSTEB(24, 8, 12, 24),
-                      child: _AuthHero(expanded: true),
-                    ),
-                  ),
-                  Expanded(
-                    flex: 9,
-                    child: SingleChildScrollView(
-                      keyboardDismissBehavior:
-                          ScrollViewKeyboardDismissBehavior.onDrag,
-                      child: AppContent(
-                        maxWidth: 560,
-                        child: Padding(
-                          padding: const EdgeInsetsDirectional.fromSTEB(
-                            28,
-                            24,
-                            28,
-                            40,
-                          ),
-                          child: form,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              );
-            }
-            return SingleChildScrollView(
-              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-              child: AppContent(
-                maxWidth: 560,
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 4, bottom: 32),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const _AuthHero(expanded: false),
-                      const SizedBox(height: 24),
-                      form,
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final expanded = constraints.maxWidth >= 840;
+          final horizontalPadding = expanded ? 40.0 : 16.0;
+          final verticalPadding = expanded ? 32.0 : 16.0;
+          final form = AuthSurface(child: _buildForm(context, controller));
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              const AuthHero(),
+              const DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    stops: [0, 0.38, 1],
+                    colors: [
+                      Color(0x4D071B10),
+                      Color(0x7307140C),
+                      Color(0xE608120B),
                     ],
                   ),
                 ),
               ),
-            );
-          },
-        ),
+              SafeArea(
+                child: SingleChildScrollView(
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: horizontalPadding,
+                    vertical: verticalPadding,
+                  ),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight:
+                          constraints.maxHeight -
+                          MediaQuery.paddingOf(context).vertical -
+                          (verticalPadding * 2),
+                    ),
+                    child: expanded
+                        ? Row(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              const Expanded(child: AuthStory()),
+                              const SizedBox(width: 48),
+                              ConstrainedBox(
+                                constraints: const BoxConstraints(
+                                  maxWidth: 500,
+                                ),
+                                child: form,
+                              ),
+                            ],
+                          )
+                        : Column(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              const SizedBox(height: 82),
+                              ConstrainedBox(
+                                constraints: const BoxConstraints(
+                                  maxWidth: 520,
+                                ),
+                                child: form,
+                              ),
+                            ],
+                          ),
+                  ),
+                ),
+              ),
+              SafeArea(
+                child: Align(
+                  alignment: AlignmentDirectional.topStart,
+                  child: Padding(
+                    padding: const EdgeInsetsDirectional.only(
+                      start: 12,
+                      top: 6,
+                    ),
+                    child: IconButton.filled(
+                      tooltip: MaterialLocalizations.of(context)
+                          .backButtonTooltip,
+                      onPressed: () => context.pop(),
+                      style: IconButton.styleFrom(
+                        backgroundColor: Colors.black.withValues(alpha: 0.38),
+                        foregroundColor: Colors.white,
+                      ),
+                      icon: const Icon(LucideIcons.arrowLeft),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -310,27 +373,49 @@ class _AuthScreenState extends State<AuthScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const BrandMark(size: 42),
-          const SizedBox(height: 22),
+          Row(
+            children: [
+              const BrandMark(size: 38, showName: false),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'KrishiSathi',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
           SizedBox(
             width: double.infinity,
-            child: SegmentedButton<bool>(
-              showSelectedIcon: false,
-              segments: [
-                ButtonSegment<bool>(
-                  value: false,
-                  icon: const Icon(LucideIcons.logIn, size: 18),
-                  label: Text(context.tr('signIn')),
-                ),
-                ButtonSegment<bool>(
-                  value: true,
-                  icon: const Icon(LucideIcons.userPlus, size: 18),
-                  label: Text(context.tr('createAccount')),
-                ),
-              ],
-              selected: {_createAccount},
-              onSelectionChanged: (selection) {
-                setState(() => _createAccount = selection.single);
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final vertical =
+                    constraints.maxWidth < 340 ||
+                    MediaQuery.textScalerOf(context).scale(1) > 1.35;
+                return SegmentedButton<bool>(
+                  direction: vertical ? Axis.vertical : Axis.horizontal,
+                  showSelectedIcon: false,
+                  segments: [
+                    ButtonSegment<bool>(
+                      value: false,
+                      icon: const Icon(LucideIcons.logIn, size: 18),
+                      label: Text(context.tr('signIn')),
+                    ),
+                    ButtonSegment<bool>(
+                      value: true,
+                      icon: const Icon(LucideIcons.userPlus, size: 18),
+                      label: Text(context.tr('createAccount')),
+                    ),
+                  ],
+                  selected: {_createAccount},
+                  onSelectionChanged: (selection) {
+                    setState(() => _createAccount = selection.single);
+                  },
+                );
               },
             ),
           ),
@@ -343,17 +428,29 @@ class _AuthScreenState extends State<AuthScreen> {
           Text(
             _createAccount ? 'Create your private farmer account.' : 'Welcome back. Your farm records stay private to your account.',
             style: Theme.of(context).textTheme.bodyLarge
-                ?.copyWith(color: AppColors.mutedInk),
+                ?.copyWith(color: Colors.white.withValues(alpha: 0.76)),
           ),
           const SizedBox(height: 24),
-          if (!controller.config.isCognitoConfigured) ...[
-            InlineNotice(
-              title: context.tr('demoMode'),
-              message: context.tr('authNotConfigured'),
-              icon: LucideIcons.cloudOff,
-              color: AppColors.amber,
+          if (_createAccount) ...[
+            TextFormField(
+              controller: _nameController,
+              textCapitalization: TextCapitalization.words,
+              textInputAction: TextInputAction.next,
+              autofillHints: const [AutofillHints.name],
+              decoration: InputDecoration(
+                labelText: context.tr('nameHint'),
+                prefixIcon: const Icon(LucideIcons.userRound, size: 20),
+              ),
+              validator: (value) {
+                final normalized = value?.trim() ?? '';
+                if (normalized.isEmpty) return 'Enter your name.';
+                if (normalized.length > 100) {
+                  return 'Keep the name under 100 characters.';
+                }
+                return null;
+              },
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 14),
           ],
           TextFormField(
             controller: _emailController,
@@ -397,16 +494,14 @@ class _AuthScreenState extends State<AuthScreen> {
             Align(
               alignment: AlignmentDirectional.centerEnd,
               child: TextButton(
-                onPressed: controller.config.isCognitoConfigured
-                    ? () => showModalBottomSheet<void>(
-                        context: context,
-                        isScrollControlled: true,
-                        showDragHandle: true,
-                        builder: (context) => _PasswordRecoverySheet(
-                          initialEmail: _emailController.text.trim(),
-                        ),
-                      )
-                    : null,
+                onPressed: () => showModalBottomSheet<void>(
+                  context: context,
+                  isScrollControlled: true,
+                  showDragHandle: true,
+                  builder: (context) => _PasswordRecoverySheet(
+                    initialEmail: _emailController.text.trim(),
+                  ),
+                ),
                 child: Text(context.tr('forgotPassword')),
               ),
             )
@@ -415,10 +510,7 @@ class _AuthScreenState extends State<AuthScreen> {
           SizedBox(
             width: double.infinity,
             child: FilledButton(
-              onPressed:
-                  controller.busy || !controller.config.isCognitoConfigured
-                  ? null
-                  : _submit,
+              onPressed: controller.busy ? null : _submit,
               child: controller.busy
                   ? const SizedBox.square(
                       dimension: 22,
@@ -431,45 +523,66 @@ class _AuthScreenState extends State<AuthScreen> {
                     ),
             ),
           ),
-          const SizedBox(height: 10),
-          Center(
-            child: TextButton.icon(
-              onPressed: () => context.go('/onboarding/profile?preview=true'),
-              icon: const Icon(LucideIcons.eye, size: 17),
-              label: Text(context.tr('usePreview')),
-            ),
+          const SizedBox(height: 8),
+          const SizedBox(height: 20),
+          Wrap(
+            alignment: WrapAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 10,
+            runSpacing: 8,
+            children: [
+              Icon(
+                LucideIcons.lock,
+                size: 12,
+                color: Colors.white.withValues(alpha: 0.68),
+              ),
+              const SizedBox(width: 2),
+              Text(
+                'Secure',
+                style: Theme.of(context).textTheme.labelSmall
+                    ?.copyWith(color: Colors.white.withValues(alpha: 0.68)),
+              ),
+              Container(
+                width: 3,
+                height: 3,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.5),
+                  shape: BoxShape.circle,
+                ),
+              ),
+              Icon(
+                LucideIcons.wheat,
+                size: 12,
+                color: Colors.white.withValues(alpha: 0.68),
+              ),
+              const SizedBox(width: 2),
+              Text(
+                'Made for India',
+                style: Theme.of(context).textTheme.labelSmall
+                    ?.copyWith(color: Colors.white.withValues(alpha: 0.68)),
+              ),
+              Container(
+                width: 3,
+                height: 3,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.5),
+                  shape: BoxShape.circle,
+                ),
+              ),
+              Icon(
+                LucideIcons.languages,
+                size: 12,
+                color: Colors.white.withValues(alpha: 0.68),
+              ),
+              const SizedBox(width: 2),
+              Text(
+                '22 Indian languages',
+                style: Theme.of(context).textTheme.labelSmall
+                    ?.copyWith(color: Colors.white.withValues(alpha: 0.68)),
+              ),
+            ],
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _AuthHero extends StatelessWidget {
-  const _AuthHero({required this.expanded});
-
-  final bool expanded;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      image: true,
-      label: 'Healthy Indian crops growing in a sunlit field',
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(AppRadius.medium),
-        child: SizedBox(
-          height: expanded ? double.infinity : 132,
-          width: double.infinity,
-          child: Image.asset(
-            'assets/images/auth_field_hero.webp',
-            alignment: expanded
-                ? const Alignment(0.05, 0)
-                : const Alignment(0, 0.12),
-            fit: BoxFit.cover,
-            filterQuality: FilterQuality.medium,
-            excludeFromSemantics: true,
-          ),
-        ),
       ),
     );
   }
@@ -488,6 +601,7 @@ class _SignUpConfirmationSheet extends StatefulWidget {
 class _SignUpConfirmationSheetState extends State<_SignUpConfirmationSheet> {
   final _key = GlobalKey<FormState>();
   final _code = TextEditingController();
+  bool _resending = false;
 
   @override
   void dispose() {
@@ -505,6 +619,25 @@ class _SignUpConfirmationSheetState extends State<_SignUpConfirmationSheet> {
       if (mounted) Navigator.of(context).pop(true);
     } on ApiException catch (error) {
       if (mounted) showAppSnackBar(context, context.localizedError(error));
+    }
+  }
+
+  Future<void> _resend() async {
+    if (_resending) return;
+    setState(() => _resending = true);
+    try {
+      await context.read<AppController>().resendSignUpCode(widget.email);
+      if (mounted) {
+        showAppSnackBar(
+          context,
+          'A new confirmation code was sent.',
+          success: true,
+        );
+      }
+    } on ApiException catch (error) {
+      if (mounted) showAppSnackBar(context, context.localizedError(error));
+    } finally {
+      if (mounted) setState(() => _resending = false);
     }
   }
 
@@ -562,6 +695,19 @@ class _SignUpConfirmationSheetState extends State<_SignUpConfirmationSheet> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Text('Confirm email'),
+                ),
+              ),
+              Align(
+                alignment: AlignmentDirectional.center,
+                child: TextButton.icon(
+                  onPressed: busy || _resending ? null : _resend,
+                  icon: _resending
+                      ? const SizedBox.square(
+                          dimension: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(LucideIcons.refreshCw, size: 17),
+                  label: const Text('Resend confirmation code'),
                 ),
               ),
             ],
@@ -938,9 +1084,14 @@ class LanguageSetupScreen extends StatelessWidget {
                 child: SizedBox(
                   width: double.infinity,
                   child: FilledButton(
-                    onPressed: () => context.push(
-                      '/onboarding/permissions?preview=$preview',
-                    ),
+                    onPressed: () {
+                      final controller = context.read<AppController>();
+                      if (!controller.isAuthenticated) {
+                        context.go('/auth');
+                        return;
+                      }
+                      context.push('/onboarding/permissions?preview=$preview');
+                    },
                     child: Text(context.tr('continue')),
                   ),
                 ),
@@ -957,6 +1108,53 @@ class PermissionsSetupScreen extends StatelessWidget {
   const PermissionsSetupScreen({super.key, required this.preview});
 
   final bool preview;
+
+  Future<void> _setPermission(
+    BuildContext context,
+    AppPermissionKind kind,
+    bool enabled,
+  ) async {
+    final controller = context.read<AppController>();
+    final state = switch (kind) {
+      AppPermissionKind.location => await controller.setLocationEnabled(
+        enabled,
+      ),
+      AppPermissionKind.camera => await controller.setCameraEnabled(enabled),
+      AppPermissionKind.notifications => await controller.setNotifications(
+        enabled,
+      ),
+    };
+    if (!context.mounted || !enabled || state.isAllowed) return;
+    if (!state.requiresSettings) {
+      showAppSnackBar(
+        context,
+        'Permission was not granted. You can enable it later in Settings.',
+      );
+      return;
+    }
+    final openSettings = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Permission blocked'),
+        content: const Text(
+          'This permission is blocked by the device. Open system Settings to enable it.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Not now'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Open Settings'),
+          ),
+        ],
+      ),
+    );
+    if (openSettings ?? false) {
+      await controller.openAppPermissionSettings();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -987,21 +1185,27 @@ class PermissionsSetupScreen extends StatelessWidget {
                 icon: LucideIcons.mapPin,
                 title: context.tr('locationPermission'),
                 value: controller.locationEnabled,
-                onChanged: controller.setLocationEnabled,
+                onChanged: (value) =>
+                    _setPermission(context, AppPermissionKind.location, value),
               ),
               const Divider(),
               _PermissionRow(
                 icon: LucideIcons.bell,
                 title: context.tr('notificationPermission'),
                 value: controller.notificationsEnabled,
-                onChanged: controller.setNotifications,
+                onChanged: (value) => _setPermission(
+                  context,
+                  AppPermissionKind.notifications,
+                  value,
+                ),
               ),
               const Divider(),
               _PermissionRow(
                 icon: LucideIcons.camera,
                 title: context.tr('cameraPermission'),
                 value: controller.cameraEnabled,
-                onChanged: controller.setCameraEnabled,
+                onChanged: (value) =>
+                    _setPermission(context, AppPermissionKind.camera, value),
               ),
               const Spacer(),
               SizedBox(
@@ -1009,7 +1213,7 @@ class PermissionsSetupScreen extends StatelessWidget {
                 child: FilledButton(
                   onPressed: () async {
                     await context.read<AppController>().completeOnboarding(
-                      preview: preview,
+                      preview: false,
                     );
                     if (context.mounted) context.go('/home');
                   },

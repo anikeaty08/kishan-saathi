@@ -21,14 +21,30 @@ class BrandMark extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(AppRadius.medium),
-          child: Image.asset(
-            'assets/branding/app_icon.png',
-            width: size,
-            height: size,
-            fit: BoxFit.cover,
-            semanticLabel: context.tr('appName'),
+        Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(size * 0.22),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.08),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.2),
+              width: 0.5,
+            ),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(size * 0.22),
+            child: Image.asset(
+              'assets/branding/app_icon.png',
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+              semanticLabel: context.tr('appName'),
+            ),
           ),
         ),
         if (showName) ...[

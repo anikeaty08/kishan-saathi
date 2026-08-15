@@ -148,7 +148,8 @@ class FarmService:
         for field in data.model_fields_set:
             setattr(crop, field, getattr(data, field))
         if stage_changed:
-            assert data.stage is not None
+            if data.stage is None:
+                raise ApplicationError(code="CROP_STAGE_REQUIRED", status_code=422)
             self.repository.add(
                 CropStageEvent(
                     farmer_id=farmer_id,

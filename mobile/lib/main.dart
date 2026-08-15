@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -8,6 +9,8 @@ import 'core/localization/app_strings.dart';
 import 'core/network/api_client.dart';
 import 'core/network/krishi_api.dart';
 import 'core/network/token_store.dart';
+import 'core/permissions/app_permission_service.dart';
+import 'core/storage/private_local_store.dart';
 import 'features/farm/data/farm_repository.dart';
 import 'features/farm/data/location_repository.dart';
 import 'features/farm/data/timeline_repository.dart';
@@ -23,6 +26,10 @@ import 'features/shared/presentation/app_controller.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  LicenseRegistry.addLicense(() async* {
+    final license = await rootBundle.loadString('assets/fonts/Sora-OFL.txt');
+    yield LicenseEntryWithLineBreaks(['Sora'], license);
+  });
   await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
 
   final preferences = await SharedPreferences.getInstance();
@@ -33,6 +40,7 @@ Future<void> main() async {
     tokenStore: tokenStore,
   );
   final api = KrishiApi(apiClient);
+  final privateLocalStore = SecurePrivateLocalStore();
   final controller = AppController(
     config: config,
     preferences: preferences,
@@ -48,7 +56,12 @@ Future<void> main() async {
     reminderRepository: ReminderRepository(api),
     memoryRepository: MemoryRepository(api),
     timelineRepository: TimelineRepository(api),
-    scanQueueRepository: ScanQueueRepository(preferences),
+    scanQueueRepository: ScanQueueRepository(
+      preferences,
+      privateLocalStore: privateLocalStore,
+    ),
+    privateLocalStore: privateLocalStore,
+    permissionService: const DeviceAppPermissionService(),
   );
   await controller.initialize();
   await AppStrings.load(controller.locale);

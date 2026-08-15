@@ -11,6 +11,32 @@ import 'package:provider/provider.dart';
 import 'support/test_controller.dart';
 
 void main() {
+  testWidgets('new chat keeps the selected farm visible', (tester) async {
+    final controller = await createTestController();
+    addTearDown(controller.dispose);
+    controller.farms = const [
+      FarmModel(id: 'farm-1', name: 'North Farm', plots: []),
+    ];
+
+    await tester.pumpWidget(_screen(controller, const NewChatScreen()));
+    final scopePicker = tester.widget<SegmentedButton<String>>(
+      find.byType(SegmentedButton<String>),
+    );
+    scopePicker.onSelectionChanged!({'farm'});
+    await tester.pumpAndSettle();
+
+    final selector = find.byType(DropdownButtonFormField<String>);
+    expect(selector, findsOneWidget);
+    await tester.tap(selector);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('North Farm').last);
+    await tester.pumpAndSettle();
+
+    final selected = tester.widget<DropdownButtonFormField<String>>(selector);
+    expect(selected.initialValue, 'farm-1');
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('empty general chat opens with useful natural starters', (
     tester,
   ) async {
@@ -118,6 +144,7 @@ void main() {
     final controller = await createTestController();
     addTearDown(controller.dispose);
     final diagnosis = DemoData.diagnoses.single;
+    controller.diagnoses = [diagnosis];
     controller.chats = [
       ChatThreadModel(
         id: 'chat-scan',
@@ -166,6 +193,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('linked-scan-card')), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('linked-scan-card')),
+        matching: find.byType(Image),
+      ),
+      findsNothing,
+    );
     expect(find.text('What to do now'), findsOneWidget);
     expect(find.text('Why this matters'), findsOneWidget);
     expect(find.text('General precautions'), findsOneWidget);
@@ -204,6 +238,21 @@ void main() {
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
     final controller = await createTestController();
     addTearDown(controller.dispose);
+    controller.chats = [
+      ChatThreadModel(
+        id: 'chat-1',
+        title: 'Field planning',
+        scope: 'general',
+        messages: [
+          ChatMessageModel(
+            id: 'farmer-tablet',
+            author: ChatAuthor.farmer,
+            text: 'What should I check today?',
+            sentAt: DateTime(2026, 8, 15, 8),
+          ),
+        ],
+      ),
+    ];
 
     await tester.pumpWidget(
       _screen(controller, const ChatDetailScreen(chatId: 'chat-1')),
@@ -213,6 +262,114 @@ void main() {
     expect(find.byKey(const ValueKey('chat-composer')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  for (final viewport
+      in <
+        ({
+          String name,
+          Size size,
+          String locale,
+          bool rtl,
+          double textScale,
+          FakeViewPadding padding,
+        })
+      >[
+        (
+          name: 'Realme-sized Android at 200 percent text',
+          size: Size(360, 780),
+          locale: 'en',
+          rtl: false,
+          textScale: 2,
+          padding: FakeViewPadding(top: 24),
+        ),
+        (
+          name: 'iPhone safe areas',
+          size: Size(393, 852),
+          locale: 'en',
+          rtl: false,
+          textScale: 1,
+          padding: FakeViewPadding(top: 47, bottom: 34),
+        ),
+        (
+          name: 'RTL phone',
+          size: Size(393, 852),
+          locale: 'en',
+          rtl: true,
+          textScale: 1,
+          padding: FakeViewPadding(top: 47, bottom: 34),
+        ),
+        (
+          name: 'centered tablet',
+          size: Size(1024, 900),
+          locale: 'en',
+          rtl: false,
+          textScale: 1,
+          padding: FakeViewPadding.zero,
+        ),
+      ]) {
+    testWidgets('conversation remains document-like on ${viewport.name}', (
+      tester,
+    ) async {
+      tester.view.physicalSize = viewport.size;
+      tester.view.devicePixelRatio = 1;
+      tester.view.padding = viewport.padding;
+      tester.view.viewPadding = viewport.padding;
+      tester.platformDispatcher.textScaleFactorTestValue = viewport.textScale;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPadding);
+      addTearDown(tester.view.resetViewPadding);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+      final controller = await createTestController(locale: viewport.locale);
+      addTearDown(controller.dispose);
+      controller.chats = [
+        ChatThreadModel(
+          id: 'chat-visual',
+          title: 'Field planning',
+          scope: 'general',
+          messages: [
+            ChatMessageModel(
+              id: 'farmer-visual',
+              author: ChatAuthor.farmer,
+              text: 'What should I check today?',
+              sentAt: DateTime(2026, 8, 15, 8),
+            ),
+            ChatMessageModel(
+              id: 'assistant-visual',
+              author: ChatAuthor.assistant,
+              text: 'Walk the field early and inspect the lower leaves first.',
+              sentAt: DateTime(2026, 8, 15, 8, 1),
+            ),
+          ],
+        ),
+      ];
+      const detail = ChatDetailScreen(chatId: 'chat-visual');
+      await tester.pumpWidget(
+        _screen(
+          controller,
+          viewport.rtl
+              ? Directionality(textDirection: TextDirection.rtl, child: detail)
+              : detail,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final composer = find.byKey(const ValueKey('chat-composer-surface'));
+      expect(composer, findsOneWidget);
+      expect(
+        tester.getSize(composer).width,
+        lessThanOrEqualTo(
+          viewport.size.width >= 600 ? 720 : viewport.size.width,
+        ),
+      );
+      expect(find.byType(Image), findsNothing);
+      if (viewport.rtl) {
+        expect(Directionality.of(tester.element(composer)), TextDirection.rtl);
+      }
+      expect(tester.takeException(), isNull);
+    });
+  }
 }
 
 Widget _screen(AppController controller, Widget child) {

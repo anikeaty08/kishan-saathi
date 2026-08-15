@@ -2,6 +2,7 @@
 
 import asyncio
 from contextlib import AbstractAsyncContextManager
+from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -79,8 +80,11 @@ async def test_failed_object_delete_remains_retryable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_background_worker_automatically_reconciles_due_jobs() -> None:
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+async def test_background_worker_automatically_reconciles_due_jobs(tmp_path: Path) -> None:
+    # A file-backed database gives concurrent worker/test sessions distinct
+    # connections. SQLite's in-memory StaticPool lets one session rollback
+    # another session's transaction and is not a valid worker-concurrency test.
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'cleanup.db'}")
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
     sessions = async_sessionmaker(engine, expire_on_commit=False)

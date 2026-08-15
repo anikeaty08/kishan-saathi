@@ -4,9 +4,12 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
+
+JSON_DOCUMENT = JSON().with_variant(JSONB(), "postgresql")
 
 
 class DiagnosisReport(Base):
@@ -23,8 +26,8 @@ class DiagnosisReport(Base):
         ForeignKey("diagnosis_cases.id", ondelete="CASCADE"), index=True
     )
     title: Mapped[str] = mapped_column(String(255))
-    snapshot: Mapped[dict[str, object]] = mapped_column(JSON)
-    approved_fields: Mapped[list[str]] = mapped_column(JSON)
+    snapshot: Mapped[dict[str, object]] = mapped_column(JSON_DOCUMENT)
+    approved_fields: Mapped[list[str]] = mapped_column(JSON_DOCUMENT)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     status: Mapped[str] = mapped_column(String(16), default="active", index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

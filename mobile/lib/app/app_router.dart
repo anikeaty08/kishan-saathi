@@ -17,22 +17,45 @@ GoRouter createAppRouter(AppController controller) {
   final rootKey = GlobalKey<NavigatorState>(debugLabel: 'root');
   return GoRouter(
     navigatorKey: rootKey,
-    initialLocation: controller.onboardingComplete ? '/home' : '/welcome',
-    refreshListenable: controller,
+    initialLocation: controller.onboardingComplete
+        ? '/home'
+        : controller.isAuthenticated
+        ? (controller.hasFarmerName
+              ? '/onboarding/language'
+              : '/onboarding/profile')
+        : '/welcome',
+    // Route guards depend only on onboarding state. Data, weather, locale, and
+    // theme updates must rebuild their widgets without resetting navigation.
+    refreshListenable: controller.navigationRefresh,
     redirect: (context, state) {
       final path = state.uri.path;
+      final hasAppAccess = controller.isAuthenticated || controller.previewMode;
+      final publicPath = path == '/welcome' || path == '/auth';
       final onboardingPath =
           path == '/welcome' ||
           path == '/auth' ||
           path.startsWith('/onboarding/');
-      final mainPath =
-          path == '/home' ||
-          path == '/farm' ||
-          path == '/scan' ||
-          path == '/saathi';
-      if (!controller.onboardingComplete && mainPath) return '/welcome';
-      if (controller.onboardingComplete && path == '/welcome') return '/home';
-      if (!controller.onboardingComplete || onboardingPath) return null;
+      if (!hasAppAccess) {
+        return publicPath ? null : '/welcome';
+      }
+      if (!controller.isAuthenticated && controller.previewMode && publicPath) {
+        return null;
+      }
+      if (!controller.onboardingComplete) {
+        if (path == '/onboarding/profile' && !controller.hasFarmerName) {
+          return null;
+        }
+        if (path == '/onboarding/language' && controller.hasFarmerName) {
+          return null;
+        }
+        if (path == '/onboarding/permissions' && controller.hasFarmerName) {
+          return null;
+        }
+        return controller.hasFarmerName
+            ? '/onboarding/language'
+            : '/onboarding/profile';
+      }
+      if (onboardingPath) return '/home';
       return null;
     },
     routes: [

@@ -60,7 +60,8 @@ class ScopedMemoryFact(Base):
             name="ck_scoped_memory_facts_scope",
         ),
         CheckConstraint(
-            "index_status IN ('pending', 'indexed', 'failed', 'deleting', 'delete_failed')",
+            "index_status IN ('pending', 'indexing', 'indexed', 'failed', "
+            "'deleting', 'delete_failed')",
             name="ck_scoped_memory_facts_index_status",
         ),
         Index(
@@ -104,6 +105,10 @@ class ScopedMemoryFact(Base):
     normalized_text: Mapped[str] = mapped_column(String(500))
     provider_memory_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     index_status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    operation_lease_token: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
+    operation_lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

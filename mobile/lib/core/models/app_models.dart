@@ -44,14 +44,14 @@ class ForecastDayModel {
 
 class PlotWeatherModel {
   const PlotWeatherModel({
-    required this.current,
+    this.current,
     required this.forecast,
     required this.timezone,
     required this.fetchedAt,
     this.isStale = false,
   });
 
-  final WeatherSnapshot current;
+  final WeatherSnapshot? current;
   final List<ForecastDayModel> forecast;
   final String timezone;
   final DateTime fetchedAt;
@@ -619,6 +619,8 @@ class ChatThreadModel {
     this.farmId,
     this.plotId,
     this.diagnosisCaseId,
+    this.effectiveFarmId,
+    this.effectivePlotId,
     this.archived = false,
   });
 
@@ -629,8 +631,17 @@ class ChatThreadModel {
   final String? farmId;
   final String? plotId;
   final String? diagnosisCaseId;
+  final String? effectiveFarmId;
+  final String? effectivePlotId;
   final bool archived;
   final List<ChatMessageModel> messages;
+
+  String get contextScope {
+    if (scope == 'scan') return 'scan';
+    if (effectivePlotId != null) return 'plot';
+    if (effectiveFarmId != null) return 'farm';
+    return scope;
+  }
 
   ChatThreadModel copyWith({
     String? title,
@@ -638,6 +649,9 @@ class ChatThreadModel {
     bool? archived,
     String? scopeLabel,
     bool clearScopeLabel = false,
+    String? effectiveFarmId,
+    String? effectivePlotId,
+    bool replaceEffectiveScope = false,
   }) => ChatThreadModel(
     id: id,
     title: title ?? this.title,
@@ -646,6 +660,12 @@ class ChatThreadModel {
     farmId: farmId,
     plotId: plotId,
     diagnosisCaseId: diagnosisCaseId,
+    effectiveFarmId: replaceEffectiveScope
+        ? effectiveFarmId
+        : effectiveFarmId ?? this.effectiveFarmId,
+    effectivePlotId: replaceEffectiveScope
+        ? effectivePlotId
+        : effectivePlotId ?? this.effectivePlotId,
     archived: archived ?? this.archived,
     messages: messages ?? this.messages,
   );

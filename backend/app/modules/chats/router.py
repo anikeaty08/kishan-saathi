@@ -5,7 +5,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Response, status
 
-from app.core.dependencies import get_auth_context
+from app.core.dependencies import get_auth_context, get_paid_operation_rate_limiter
+from app.core.rate_limits import PaidOperationRateLimiter
 from app.core.security import AuthContext
 from app.modules.chats.dependencies import get_chat_service
 from app.modules.chats.schemas import (
@@ -101,16 +102,18 @@ async def send_message(
     service: Service,
     context: Annotated[AuthContext, Depends(get_auth_context)],
     user_service: Annotated[UserServicePort, Depends(get_user_service)],
+    limiter: Annotated[PaidOperationRateLimiter, Depends(get_paid_operation_rate_limiter)],
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=128)],
 ) -> ChatTurnResponse:
     profile = await user_service.get_profile(context)
-    return await service.enqueue_message(
-        farmer_id,
-        chat_id,
-        data,
-        preferred_language=profile.preferred_language,
-        idempotency_key=idempotency_key,
-    )
+    async with limiter.request(farmer_id, "chat"):
+        return await service.enqueue_message(
+            farmer_id,
+            chat_id,
+            data,
+            preferred_language=profile.preferred_language,
+            idempotency_key=idempotency_key,
+        )
 
 
 @router.get("/{chat_id}/turns", response_model=list[ChatTurnResponse])

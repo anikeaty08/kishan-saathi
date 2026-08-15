@@ -28,8 +28,10 @@ abstract final class AppSpacing {
 }
 
 abstract final class AppRadius {
-  static const small = 4.0;
-  static const medium = 8.0;
+  static const small = 12.0;
+  static const medium = 16.0;
+  static const large = 24.0;
+  static const hero = 32.0;
 }
 
 abstract final class AppTheme {
@@ -54,8 +56,8 @@ abstract final class AppTheme {
       ),
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: AppColors.surface,
-        indicatorColor: AppColors.leaf.withValues(alpha: 0.13),
-        height: 68,
+        indicatorColor: AppColors.leaf.withValues(alpha: 0.22),
+        height: 72,
         elevation: 0,
         labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
         iconTheme: WidgetStateProperty.resolveWith(
@@ -69,7 +71,7 @@ abstract final class AppTheme {
       ),
       navigationRailTheme: const NavigationRailThemeData(
         backgroundColor: AppColors.surface,
-        indicatorColor: Color(0x1F2E7D4F),
+        indicatorColor: Color(0x382E7D4F),
         selectedIconTheme: IconThemeData(color: AppColors.forest),
         unselectedIconTheme: IconThemeData(color: AppColors.mutedInk),
         groupAlignment: -0.75,
@@ -97,78 +99,94 @@ abstract final class AppTheme {
         elevation: 0,
         scrolledUnderElevation: 0,
       ),
+      navigationBarTheme: NavigationBarThemeData(
+        backgroundColor: const Color(0xFF111D16),
+        indicatorColor: AppColors.leaf.withValues(alpha: 0.22),
+        height: 72,
+        elevation: 0,
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+        iconTheme: WidgetStateProperty.resolveWith(
+          (states) => IconThemeData(
+            color: states.contains(WidgetState.selected)
+                ? AppColors.youngLeaf
+                : AppColors.mutedInk,
+            size: 23,
+          ),
+        ),
+      ),
     );
   }
 
   static ThemeData _base(ColorScheme scheme) {
-    final textTheme = Typography.material2021().black
-        .apply(
-          bodyColor: scheme.onSurface,
-          displayColor: scheme.onSurface,
-          fontFamilyFallback: const [
-            'Noto Sans',
-            'Noto Sans Devanagari',
-            'Noto Sans Bengali',
-            'Noto Sans Gujarati',
-            'Noto Sans Gurmukhi',
-            'Noto Sans Tamil',
-            'Noto Sans Telugu',
-            'Noto Sans Kannada',
-            'Noto Sans Malayalam',
-            'Noto Sans Oriya',
-            'Noto Sans Ol Chiki',
-            'Noto Sans Meetei Mayek',
-            'Noto Nastaliq Urdu',
-          ],
-        )
-        .copyWith(
-          displaySmall: const TextStyle(
-            fontSize: 34,
-            height: 1.08,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0,
-          ),
-          headlineLarge: const TextStyle(
-            fontSize: 28,
-            height: 1.15,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0,
-          ),
-          headlineMedium: const TextStyle(
-            fontSize: 23,
-            height: 1.2,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0,
-          ),
-          titleLarge: const TextStyle(
-            fontSize: 19,
-            height: 1.25,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0,
-          ),
-          titleMedium: const TextStyle(
-            fontSize: 16,
-            height: 1.3,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 0,
-          ),
-          bodyLarge: const TextStyle(
-            fontSize: 16,
-            height: 1.45,
-            letterSpacing: 0,
-          ),
-          bodyMedium: const TextStyle(
-            fontSize: 14,
-            height: 1.45,
-            letterSpacing: 0,
-          ),
-          labelLarge: const TextStyle(
-            fontSize: 14,
-            height: 1.2,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 0,
-          ),
-        );
+    const fontFallback = [
+      'Noto Sans',
+      'Noto Sans Devanagari',
+      'Noto Sans Bengali',
+      'Noto Sans Gujarati',
+      'Noto Sans Gurmukhi',
+      'Noto Sans Tamil',
+      'Noto Sans Telugu',
+      'Noto Sans Kannada',
+      'Noto Sans Malayalam',
+      'Noto Sans Oriya',
+      'Noto Sans Ol Chiki',
+      'Noto Sans Meetei Mayek',
+      'Noto Nastaliq Urdu',
+    ];
+    final baseTextTheme = Typography.material2021().black.apply(
+      bodyColor: scheme.onSurface,
+      displayColor: scheme.onSurface,
+      fontFamily: 'Sora',
+      fontFamilyFallback: fontFallback,
+    );
+    final textTheme = baseTextTheme.copyWith(
+      displaySmall: baseTextTheme.displaySmall?.copyWith(
+        fontSize: 34,
+        height: 1.08,
+        fontWeight: FontWeight.w800,
+        letterSpacing: -0.5,
+      ),
+      headlineLarge: baseTextTheme.headlineLarge?.copyWith(
+        fontSize: 28,
+        height: 1.15,
+        fontWeight: FontWeight.w800,
+        letterSpacing: -0.3,
+      ),
+      headlineMedium: baseTextTheme.headlineMedium?.copyWith(
+        fontSize: 23,
+        height: 1.2,
+        fontWeight: FontWeight.w700,
+        letterSpacing: -0.2,
+      ),
+      titleLarge: baseTextTheme.titleLarge?.copyWith(
+        fontSize: 19,
+        height: 1.25,
+        fontWeight: FontWeight.w700,
+        letterSpacing: -0.1,
+      ),
+      titleMedium: baseTextTheme.titleMedium?.copyWith(
+        fontSize: 16,
+        height: 1.3,
+        fontWeight: FontWeight.w600,
+        letterSpacing: 0,
+      ),
+      bodyLarge: baseTextTheme.bodyLarge?.copyWith(
+        fontSize: 16,
+        height: 1.5,
+        letterSpacing: 0,
+      ),
+      bodyMedium: baseTextTheme.bodyMedium?.copyWith(
+        fontSize: 14,
+        height: 1.5,
+        letterSpacing: 0,
+      ),
+      labelLarge: baseTextTheme.labelLarge?.copyWith(
+        fontSize: 14,
+        height: 1.2,
+        fontWeight: FontWeight.w600,
+        letterSpacing: 0,
+      ),
+    );
 
     return ThemeData(
       useMaterial3: true,
@@ -178,7 +196,7 @@ abstract final class AppTheme {
       visualDensity: VisualDensity.standard,
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: {
-          TargetPlatform.android: ZoomPageTransitionsBuilder(),
+          TargetPlatform.android: CupertinoPageTransitionsBuilder(),
           TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
         },
       ),
@@ -200,7 +218,7 @@ abstract final class AppTheme {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppRadius.medium),
           ),
-          textStyle: textTheme.labelLarge,
+          textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
@@ -209,7 +227,7 @@ abstract final class AppTheme {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppRadius.medium),
           ),
-          textStyle: textTheme.labelLarge,
+          textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
@@ -217,7 +235,7 @@ abstract final class AppTheme {
         fillColor: scheme.surface,
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 16,
-          vertical: 15,
+          vertical: 16,
         ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(AppRadius.medium),
@@ -229,15 +247,15 @@ abstract final class AppTheme {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(AppRadius.medium),
-          borderSide: BorderSide(color: scheme.primary, width: 1.5),
+          borderSide: BorderSide(color: scheme.primary, width: 2),
         ),
       ),
       chipTheme: ChipThemeData(
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadius.medium),
+          borderRadius: BorderRadius.circular(AppRadius.small),
         ),
         side: BorderSide(color: scheme.outlineVariant),
-        labelStyle: textTheme.labelLarge,
+        labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
       ),
     );
   }

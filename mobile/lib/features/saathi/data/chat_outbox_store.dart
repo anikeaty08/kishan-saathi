@@ -71,7 +71,14 @@ abstract interface class ChatOutboxStore {
 
 class SecureChatOutboxStore implements ChatOutboxStore {
   SecureChatOutboxStore({FlutterSecureStorage? storage})
-    : _storage = storage ?? const FlutterSecureStorage();
+    : _storage =
+          storage ??
+          const FlutterSecureStorage(
+            aOptions: AndroidOptions(resetOnError: true),
+            iOptions: IOSOptions(
+              accessibility: KeychainAccessibility.unlocked_this_device,
+            ),
+          );
 
   static const _key = 'krishisathi_chat_outbox_v1';
   final FlutterSecureStorage _storage;

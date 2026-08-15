@@ -35,6 +35,7 @@ class SqlAlchemyUserRepository:
             cognito_username=identity.username,
             email=identity.email,
             email_verified=identity.email_verified,
+            name=identity.name,
         )
         self._session.add(profile)
         return profile

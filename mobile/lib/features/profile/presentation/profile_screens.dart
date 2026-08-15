@@ -28,53 +28,124 @@ class ProfileScreen extends StatelessWidget {
           child: ListView(
             padding: const EdgeInsets.only(bottom: 32),
             children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-                child: Row(
-                  children: [
-                    InitialAvatar(
-                      name: controller.farmerName,
-                      size: 76,
-                      semanticLabel: controller.farmerName,
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            controller.farmerName,
-                            style: Theme.of(context).textTheme.headlineMedium,
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            controller.isAuthenticated
-                                ? 'Private farmer account'
-                                : context.tr('demoMode'),
-                            style: Theme.of(context).textTheme.bodyMedium
-                                ?.copyWith(color: AppColors.mutedInk),
-                          ),
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  // Gradient header band
+                  Container(
+                    height: 110,
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          AppColors.forest,
+                          Color(0xFF1E5038),
+                          AppColors.leaf,
                         ],
                       ),
                     ),
-                    IconButton.filledTonal(
-                      tooltip: context.tr('edit'),
-                      onPressed: () => _editName(context, controller),
-                      icon: const Icon(LucideIcons.pencil, size: 19),
-                    ),
-                  ],
-                ),
-              ),
-              if (controller.previewMode)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                  child: InlineNotice(
-                    title: context.tr('demoMode'),
-                    message: context.tr('demoModeBody'),
-                    icon: LucideIcons.flaskConical,
-                    color: AppColors.amber,
                   ),
-                ),
+                  // Avatar + name row positioned overlapping the band
+                  Positioned(
+                    left: 20,
+                    right: 20,
+                    top: 56,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.white.withValues(alpha: 0.2),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppColors.forest.withValues(alpha: 0.3),
+                                blurRadius: 20,
+                                spreadRadius: 4,
+                              ),
+                            ],
+                          ),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white, width: 3),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.15),
+                                  blurRadius: 12,
+                                  offset: const Offset(0, 6),
+                                ),
+                              ],
+                            ),
+                            child: controller.hasFarmerName
+                                ? InitialAvatar(
+                                    name: controller.farmerName,
+                                    size: 76,
+                                    semanticLabel: controller.farmerName,
+                                  )
+                                : const SizedBox.square(
+                                    dimension: 76,
+                                    child: Center(
+                                      child: BrandMark(
+                                        size: 44,
+                                        showName: false,
+                                      ),
+                                    ),
+                                  ),
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (controller.hasFarmerName) ...[
+                                  Text(
+                                    controller.farmerName,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleLarge
+                                        ?.copyWith(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                ],
+                                Text(
+                                  'Private farmer account',
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
+                                        color: Colors.white.withValues(
+                                          alpha: 0.75,
+                                        ),
+                                      ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: context.tr('edit'),
+                          onPressed: () => _editName(context, controller),
+                          icon: const Icon(
+                            LucideIcons.pencil,
+                            size: 19,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 158),
+                ],
+              ),
+              const SizedBox(height: 50),
               _SettingsSection(
                 title: 'Preferences',
                 children: [
@@ -87,11 +158,14 @@ class ProfileScreen extends StatelessWidget {
                   _SettingsTile(
                     icon: LucideIcons.bell,
                     title: context.tr('notifications'),
-                    subtitle: controller.notificationsEnabled
+                    subtitle:
+                        controller.farmReminderNotificationsEnabled ||
+                            controller.weatherAlertNotificationsEnabled
                         ? 'Enabled'
                         : 'Disabled',
                     onTap: () => context.push('/settings/notifications'),
                   ),
+
                   _SettingsTile(
                     icon: LucideIcons.sunMoon,
                     title: context.tr('appearance'),
@@ -193,6 +267,32 @@ class ProfileScreen extends StatelessWidget {
     ).whenComplete(text.dispose);
   }
 
+  void _confirmSignOut(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(context.tr('signOut')),
+        content: const Text(
+          'You can sign in again to restore private server data. Local preview data will reset.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(context.tr('cancel')),
+          ),
+          FilledButton(
+            onPressed: () async {
+              await context.read<AppController>().signOut();
+              if (dialogContext.mounted) Navigator.pop(dialogContext);
+              if (context.mounted) context.go('/welcome');
+            },
+            child: Text(context.tr('signOut')),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showThemeSheet(BuildContext context, AppController controller) {
     showModalBottomSheet<void>(
       context: context,
@@ -236,32 +336,6 @@ class ProfileScreen extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  void _confirmSignOut(BuildContext context) {
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(context.tr('signOut')),
-        content: const Text(
-          'You can sign in again to restore private server data. Local preview data will reset.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: Text(context.tr('cancel')),
-          ),
-          FilledButton(
-            onPressed: () async {
-              await context.read<AppController>().signOut();
-              if (dialogContext.mounted) Navigator.pop(dialogContext);
-              if (context.mounted) context.go('/welcome');
-            },
-            child: Text(context.tr('signOut')),
-          ),
-        ],
       ),
     );
   }
@@ -323,26 +397,44 @@ class _SettingsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(top: 22),
+      padding: const EdgeInsets.only(top: 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
+            padding: const EdgeInsets.symmetric(horizontal: 24),
             child: Text(
               title.toUpperCase(),
               style: Theme.of(context).textTheme.labelSmall?.copyWith(
                 color: AppColors.mutedInk,
+                letterSpacing: 1.4,
                 fontWeight: FontWeight.w700,
               ),
             ),
           ),
           const SizedBox(height: 8),
-          DecoratedBox(
-            decoration: BoxDecoration(
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Material(
+              clipBehavior: Clip.antiAlias,
               color: Theme.of(context).colorScheme.surface,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppRadius.medium),
+                side: BorderSide(
+                  color: Theme.of(context).colorScheme.outlineVariant
+                      .withValues(alpha: 0.5),
+                ),
+              ),
+              child: Column(
+                children: [
+                  for (var i = 0; i < children.length; i++) ...[
+                    children[i],
+                    if (i < children.length - 1)
+                      const Divider(height: 1, indent: 56),
+                  ],
+                ],
+              ),
             ),
-            child: Column(children: children),
           ),
         ],
       ),
@@ -389,44 +481,71 @@ class LanguageSettingsScreen extends StatelessWidget {
         child: AppContent(
           maxWidth: 680,
           padding: EdgeInsets.zero,
-          child: ListView.separated(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 30),
-            itemCount: AppLanguage.supported.length,
-            separatorBuilder: (_, _) => const Divider(indent: 64),
-            itemBuilder: (context, index) {
-              final language = AppLanguage.supported[index];
-              final isSelected = selected == language.code;
-              return ListTile(
-                minTileHeight: 60,
-                selected: isSelected,
-                selectedTileColor: AppColors.leaf.withValues(alpha: 0.08),
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 24, 16, 32),
+            children: [
+              Material(
+                clipBehavior: Clip.antiAlias,
+                color: Theme.of(context).colorScheme.surface,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(AppRadius.medium),
+                  side: BorderSide(
+                    color: Theme.of(context).colorScheme.outlineVariant
+                        .withValues(alpha: 0.5),
+                  ),
                 ),
-                leading: const Icon(
-                  LucideIcons.languages,
-                  color: AppColors.forest,
+                child: Column(
+                  children: [
+                    for (var i = 0; i < AppLanguage.supported.length; i++) ...[
+                      Builder(
+                        builder: (context) {
+                          final language = AppLanguage.supported[i];
+                          final isSelected = selected == language.code;
+                          return ListTile(
+                            minTileHeight: 60,
+                            selected: isSelected,
+                            selectedTileColor: AppColors.leaf.withValues(
+                              alpha: 0.08,
+                            ),
+                            leading: const Icon(
+                              LucideIcons.languages,
+                              color: AppColors.forest,
+                            ),
+                            title: Text(language.nativeName),
+                            subtitle:
+                                language.nativeName == language.englishName
+                                ? null
+                                : Text(language.englishName),
+                            trailing: isSelected
+                                ? const Icon(
+                                    LucideIcons.circleCheck,
+                                    color: AppColors.leaf,
+                                  )
+                                : null,
+                            onTap: () async {
+                              try {
+                                await context.read<AppController>().setLocale(
+                                  language.code,
+                                );
+                              } on ApiException catch (error) {
+                                if (context.mounted) {
+                                  showAppSnackBar(
+                                    context,
+                                    context.localizedError(error),
+                                  );
+                                }
+                              }
+                            },
+                          );
+                        },
+                      ),
+                      if (i < AppLanguage.supported.length - 1)
+                        const Divider(height: 1, indent: 56),
+                    ],
+                  ],
                 ),
-                title: Text(language.nativeName),
-                subtitle: language.nativeName == language.englishName
-                    ? null
-                    : Text(language.englishName),
-                trailing: isSelected
-                    ? const Icon(LucideIcons.circleCheck, color: AppColors.leaf)
-                    : null,
-                onTap: () async {
-                  try {
-                    await context.read<AppController>().setLocale(
-                      language.code,
-                    );
-                  } on ApiException catch (error) {
-                    if (context.mounted) {
-                      showAppSnackBar(context, context.localizedError(error));
-                    }
-                  }
-                },
-              );
-            },
+              ),
+            ],
           ),
         ),
       ),
@@ -447,26 +566,65 @@ class NotificationSettingsScreen extends StatelessWidget {
         child: AppContent(
           maxWidth: 680,
           child: ListView(
-            padding: const EdgeInsets.only(top: 8, bottom: 32),
+            padding: const EdgeInsets.fromLTRB(16, 24, 16, 32),
             children: [
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Farm reminders'),
-                subtitle: const Text(
-                  'Accepted tasks, due times and recurring work',
+              Container(
+                clipBehavior: Clip.antiAlias,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surface,
+                  borderRadius: BorderRadius.circular(AppRadius.medium),
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.outlineVariant
+                        .withValues(alpha: 0.5),
+                  ),
                 ),
-                value: controller.notificationsEnabled,
-                onChanged: controller.setNotifications,
+                child: Column(
+                  children: [
+                    SwitchListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                      ),
+                      title: const Text('Farm reminders'),
+                      subtitle: const Text(
+                        'Accepted tasks, due times and recurring work',
+                      ),
+                      value: controller.farmReminderNotificationsEnabled,
+                      onChanged: (value) async {
+                        final status = await controller
+                            .setFarmReminderNotifications(value);
+                        if (context.mounted && value && !status.isAllowed) {
+                          showAppSnackBar(
+                            context,
+                            'Notification permission was not granted by this device.',
+                          );
+                        }
+                      },
+                    ),
+                    const Divider(height: 1, indent: 16),
+                    SwitchListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                      ),
+                      title: const Text('Weather alerts'),
+                      subtitle: const Text(
+                        'Important rain, heat and wind changes',
+                      ),
+                      value: controller.weatherAlertNotificationsEnabled,
+                      onChanged: (value) async {
+                        final status = await controller
+                            .setWeatherAlertNotifications(value);
+                        if (context.mounted && value && !status.isAllowed) {
+                          showAppSnackBar(
+                            context,
+                            'Notification permission was not granted by this device.',
+                          );
+                        }
+                      },
+                    ),
+                  ],
+                ),
               ),
-              const Divider(),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Weather alerts'),
-                subtitle: const Text('Important rain, heat and wind changes'),
-                value: controller.notificationsEnabled,
-                onChanged: controller.setNotifications,
-              ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 24),
               const InlineNotice(
                 title: 'Device permission matters',
                 message: 'These preferences do not override notification permission in Android or iPhone Settings.',
@@ -529,11 +687,22 @@ class PrivacyScreen extends StatelessWidget {
               SectionHeader(title: 'Active shared reports'),
               const SizedBox(height: 10),
               if (activeReports.isEmpty)
-                const AppStateView(
-                  kind: AppStateKind.empty,
-                  title: 'No active links',
-                  message: 'Reports you approve will appear here with their expiry and revoke action.',
-                  compact: true,
+                Container(
+                  padding: const EdgeInsets.all(32),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surface,
+                    borderRadius: BorderRadius.circular(AppRadius.medium),
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.outlineVariant
+                          .withValues(alpha: 0.5),
+                    ),
+                  ),
+                  child: const AppStateView(
+                    kind: AppStateKind.empty,
+                    title: 'No active links',
+                    message: 'Reports you approve will appear here with their expiry and revoke action.',
+                    compact: true,
+                  ),
                 )
               else
                 ...activeReports.map(
@@ -682,10 +851,21 @@ class MemoryScreen extends StatelessWidget {
               ),
               const SizedBox(height: 22),
               if (memories.isEmpty)
-                const AppStateView(
-                  kind: AppStateKind.empty,
-                  title: 'No saved facts',
-                  message: 'Facts accepted from future conversations will appear here.',
+                Container(
+                  padding: const EdgeInsets.all(32),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surface,
+                    borderRadius: BorderRadius.circular(AppRadius.medium),
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.outlineVariant
+                          .withValues(alpha: 0.5),
+                    ),
+                  ),
+                  child: const AppStateView(
+                    kind: AppStateKind.empty,
+                    title: 'No saved facts',
+                    message: 'Facts accepted from future conversations will appear here.',
+                  ),
                 )
               else
                 ...memories.map(
@@ -806,10 +986,25 @@ class _ReminderList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (items.isEmpty) {
-      return const AppStateView(
-        kind: AppStateKind.empty,
-        title: 'No reminders here',
-        message: 'Accepted and manually created reminders appear in this list.',
+      return Padding(
+        padding: const EdgeInsets.all(20),
+        child: Container(
+          padding: const EdgeInsets.all(32),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.circular(AppRadius.medium),
+            border: Border.all(
+              color: Theme.of(context).colorScheme.outlineVariant
+                  .withValues(alpha: 0.5),
+            ),
+          ),
+          child: const AppStateView(
+            kind: AppStateKind.empty,
+            title: 'No reminders here',
+            message:
+                'Accepted and manually created reminders appear in this list.',
+          ),
+        ),
       );
     }
     return ListView.separated(
@@ -1098,10 +1293,24 @@ class _ProposalList extends StatelessWidget {
   Widget build(BuildContext context) {
     final pending = items.where((item) => item.status == 'pending').toList();
     if (pending.isEmpty) {
-      return const AppStateView(
-        kind: AppStateKind.empty,
-        title: 'No suggestions waiting',
-        message: 'Saathi can suggest a reminder, but it is scheduled only after you accept it.',
+      return Padding(
+        padding: const EdgeInsets.all(20),
+        child: Container(
+          padding: const EdgeInsets.all(32),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.circular(AppRadius.medium),
+            border: Border.all(
+              color: Theme.of(context).colorScheme.outlineVariant
+                  .withValues(alpha: 0.5),
+            ),
+          ),
+          child: const AppStateView(
+            kind: AppStateKind.empty,
+            title: 'No suggestions waiting',
+            message: 'Saathi can suggest a reminder, but it is scheduled only after you accept it.',
+          ),
+        ),
       );
     }
     return ListView.separated(

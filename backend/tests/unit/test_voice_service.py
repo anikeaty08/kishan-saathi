@@ -152,3 +152,30 @@ async def test_speech_reads_only_owned_assistant_message() -> None:
     with pytest.raises(ApplicationError) as raised:
         await service(chats, provider).speech(FARMER, CHAT, MESSAGE)
     assert raised.value.code == "CHAT_MESSAGE_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_long_speech_is_split_without_storing_audio() -> None:
+    chats = FakeChats()
+    chats.stored_message = StoredMessage(
+        role="assistant",
+        content=("Inspect the lower leaves carefully. " * 140).strip(),
+    )
+    provider = FakeAudioProvider()
+
+    result = await service(chats, provider).speech(FARMER, CHAT, MESSAGE)
+
+    assert len(provider.speech_requests) == 2
+    assert all(len(request.text) <= 3800 for request in provider.speech_requests)
+    assert result.content == b"mp3mp3"
+    assert result.media_type == "audio/mpeg"
+
+
+def test_speech_chunks_preserve_native_script_and_all_text() -> None:
+    text = ("पत्तियों को ध्यान से देखें। " * 220).strip()
+
+    chunks = VoiceService._speech_chunks(text)
+
+    assert len(chunks) > 1
+    assert all(len(chunk) <= 3800 for chunk in chunks)
+    assert " ".join(chunks) == text

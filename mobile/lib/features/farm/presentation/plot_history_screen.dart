@@ -250,7 +250,22 @@ class _FilterPanel extends StatelessWidget {
       ('crop_stage', 'Crop stages', LucideIcons.sprout),
       ('crop_cycle', 'Crop cycles', LucideIcons.refreshCw),
     ];
-    return Card(
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(AppRadius.medium),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.outlineVariant
+              .withValues(alpha: 0.5),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -358,25 +373,44 @@ class _HistoryEventTile extends StatelessWidget {
     };
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
-      child: Card(
-        child: ListTile(
-          onTap: route == null ? null : () => context.push(route),
-          leading: CircleAvatar(
-            backgroundColor: _categoryColor(event.category)
-                .withValues(alpha: 0.12),
-            child: Icon(
-              _categoryIcon(event.category),
-              color: _categoryColor(event.category),
-              size: 19,
+      child: Container(
+        decoration: BoxDecoration(
+          color: Theme.of(context).cardColor,
+          borderRadius: BorderRadius.circular(AppRadius.medium),
+          border: Border.all(
+            color: Theme.of(context).colorScheme.outlineVariant
+                .withValues(alpha: 0.5),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
             ),
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Material(
+          type: MaterialType.transparency,
+          child: ListTile(
+            onTap: route == null ? null : () => context.push(route),
+            leading: CircleAvatar(
+              backgroundColor: _categoryColor(event.category)
+                  .withValues(alpha: 0.12),
+              child: Icon(
+                _categoryIcon(event.category),
+                color: _categoryColor(event.category),
+                size: 19,
+              ),
+            ),
+            title: Text(event.title),
+            subtitle: Text(
+              context.strings.formatDateTime(event.occurredAt.toLocal()),
+            ),
+            trailing: route == null
+                ? null
+                : const Icon(LucideIcons.chevronRight, size: 18),
           ),
-          title: Text(event.title),
-          subtitle: Text(
-            context.strings.formatDateTime(event.occurredAt.toLocal()),
-          ),
-          trailing: route == null
-              ? null
-              : const Icon(LucideIcons.chevronRight, size: 18),
         ),
       ),
     );

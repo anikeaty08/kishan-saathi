@@ -39,8 +39,6 @@ void main() {
     final config = AppConfig(
       apiBaseUri: Uri.parse('http://localhost:8000'),
       awsRegion: 'ap-south-1',
-      cognitoUserPoolId: '',
-      cognitoAppClientId: '',
       environment: 'test',
     );
 
@@ -67,6 +65,7 @@ void main() {
 
   test('preview activity preserves crop and farmer-selected time', () async {
     final controller = await createTestController();
+    seedTestFarmData(controller);
     final occurredAt = DateTime(2026, 8, 12, 7, 30);
     final result = await controller.addActivity(
       plotId: 'plot-1',
@@ -101,7 +100,7 @@ void main() {
       final weather = await controller.loadPlotWeather('plot-1');
 
       expect(weather.forecast, hasLength(7));
-      expect(weather.current.humidity, inInclusiveRange(0, 100));
+      expect(weather.current?.humidity, inInclusiveRange(0, 100));
       expect(controller.plotWeather['plot-1'], same(weather));
     },
   );
@@ -110,6 +109,7 @@ void main() {
     'plot history filters activity records without losing pagination',
     () async {
       final controller = await createTestController();
+      seedTestFarmData(controller);
       await controller.loadPlotTimeline('plot-1');
       final page = await controller.fetchPlotTimeline(
         'plot-1',
@@ -157,6 +157,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     final controller = await createTestController();
+    seedTestFarmData(controller);
     await controller.loadPlotTimeline('plot-1');
     await tester.pumpWidget(
       _screen(controller, const PlotHistoryScreen(plotId: 'plot-1')),
@@ -179,6 +180,7 @@ void main() {
       addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
 
       final controller = await createTestController();
+      seedTestFarmData(controller);
       await tester.pumpWidget(
         _screen(controller, const EditPlotScreen(plotId: 'plot-1')),
       );

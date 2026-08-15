@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
@@ -11,6 +12,7 @@ class AppShell extends StatelessWidget {
   final StatefulNavigationShell navigationShell;
 
   void _select(int index) {
+    HapticFeedback.selectionClick();
     navigationShell.goBranch(
       index,
       initialLocation: index == navigationShell.currentIndex,
@@ -20,10 +22,26 @@ class AppShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final destinations = [
-      _Destination(context.tr('home'), LucideIcons.house),
-      _Destination(context.tr('farm'), LucideIcons.sprout),
-      _Destination(context.tr('scan'), LucideIcons.scanLine),
-      _Destination(context.tr('saathi'), LucideIcons.messageCircle),
+      _Destination(
+        context.tr('home'),
+        LucideIcons.house,
+        LucideIcons.housePlug,
+      ),
+      _Destination(
+        context.tr('farm'),
+        LucideIcons.sprout,
+        LucideIcons.treeDeciduous,
+      ),
+      _Destination(
+        context.tr('scan'),
+        LucideIcons.scanLine,
+        LucideIcons.scanSearch,
+      ),
+      _Destination(
+        context.tr('saathi'),
+        LucideIcons.messageCircle,
+        LucideIcons.messageCircleMore,
+      ),
     ];
     return PopScope<void>(
       canPop: navigationShell.currentIndex == 0,
@@ -48,7 +66,7 @@ class AppShell extends StatelessWidget {
                       .map(
                         (item) => NavigationDestination(
                           icon: Icon(item.icon),
-                          selectedIcon: Icon(item.icon, fill: 1),
+                          selectedIcon: Icon(item.selectedIcon),
                           label: item.label,
                           tooltip: item.label,
                         ),
@@ -75,7 +93,7 @@ class AppShell extends StatelessWidget {
                         .map(
                           (item) => NavigationRailDestination(
                             icon: Icon(item.icon),
-                            selectedIcon: Icon(item.icon, fill: 1),
+                            selectedIcon: Icon(item.selectedIcon),
                             label: Text(item.label),
                             padding: const EdgeInsets.symmetric(vertical: 4),
                           ),
@@ -95,7 +113,8 @@ class AppShell extends StatelessWidget {
 }
 
 class _Destination {
-  const _Destination(this.label, this.icon);
+  const _Destination(this.label, this.icon, this.selectedIcon);
   final String label;
   final IconData icon;
+  final IconData selectedIcon;
 }

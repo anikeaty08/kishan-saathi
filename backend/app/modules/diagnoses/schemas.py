@@ -144,6 +144,7 @@ class ProgressionComparisonResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
+    comparison_id: UUID
     case_id: UUID
     earlier_assessment_id: UUID
     later_assessment_id: UUID

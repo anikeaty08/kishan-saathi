@@ -101,7 +101,16 @@ class DiagnosisService:
             raise ApplicationError(code="SCAN_IMAGES_REQUIRED", status_code=422)
         if len(images) > self._settings.max_diagnosis_images:
             raise ApplicationError(code="SCAN_TOO_MANY_IMAGES", status_code=413)
-        case = await self._case(farmer_id, case_id, for_update=True)
+        # Read without a row lock. Image preprocessing, private-object upload and
+        # inference are external/CPU-heavy work and must not hold a DB lock.
+        case = await self._case(farmer_id, case_id)
+        if await self._repository.image_count(farmer_id, case_id) + len(images) > (
+            self._settings.max_diagnosis_case_images
+        ):
+            raise ApplicationError(code="SCAN_CASE_IMAGE_LIMIT_REACHED", status_code=409)
+        # End the read transaction before storage and inference. The case is
+        # locked and the invariant rechecked immediately before persistence.
+        await self._repository.commit()
         return await self._process(
             farmer_id,
             case=case,
@@ -281,6 +290,7 @@ class DiagnosisService:
                     )
                 )
             inference = await self._inference.diagnose(
+                farmer_id=farmer_id,
                 images=tuple(image.content for image in prepared),
                 plant_name=case.plant_name,
             )
@@ -339,6 +349,10 @@ class DiagnosisService:
             if locked_case is None:
                 raise ApplicationError(code="DIAGNOSIS_CASE_NOT_FOUND", status_code=404)
             case = locked_case
+            if await self._repository.image_count(farmer_id, case.id) + len(new_images) > (
+                self._settings.max_diagnosis_case_images
+            ):
+                raise ApplicationError(code="SCAN_CASE_IMAGE_LIMIT_REACHED", status_code=409)
         existing_assessment = await self._repository.get_active_assessment(farmer_id, case.id)
         primary = combined_predictions[0]
         should_activate = (
@@ -348,6 +362,10 @@ class DiagnosisService:
             await self._repository.deactivate_assessments(farmer_id, case.id)
         if is_new_case:
             self._repository.add(case)
+            # These models carry scalar UUID foreign keys rather than ORM
+            # relationships, so PostgreSQL must see the parent row before the
+            # dependent assessment and image rows are flushed.
+            await self._repository.flush()
         for image in new_images:
             self._repository.add(image)
         assessment = DiagnosisAssessment(
@@ -363,6 +381,10 @@ class DiagnosisService:
             is_active=should_activate,
         )
         self._repository.add(assessment)
+        # Predictions reference both the assessment and (for per-image
+        # evidence) the new image rows. Persist those parents first instead of
+        # relying on unit-of-work relationship ordering that is not present.
+        await self._repository.flush()
         for rank, prediction in enumerate(combined_predictions, start=1):
             self._repository.add(
                 self._prediction_model(assessment.id, None, "combined", rank, prediction)

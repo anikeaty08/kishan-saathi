@@ -3,10 +3,13 @@
 from app.core.config import Settings
 from app.integrations.audio.openai_audio import OpenAIAudioProvider
 from app.integrations.audio.provider import AudioProvider, UnavailableAudioProvider
+from app.integrations.auth.accounts import AccountAuthProvider, UnavailableAccountAuthProvider
 from app.integrations.auth.cognito import CognitoAuthProvider
+from app.integrations.auth.cognito_accounts import CognitoAccountAuthProvider
 from app.integrations.auth.provider import AuthProvider, UnavailableAuthProvider
 from app.integrations.geocoding.open_meteo import OpenMeteoGeocodingProvider
 from app.integrations.geocoding.provider import GeocodingProvider
+from app.integrations.inference.openai_vision import OpenAILeafInferenceProvider
 from app.integrations.inference.provider import (
     LeafInferenceProvider,
     UnavailableLeafInferenceProvider,
@@ -23,6 +26,7 @@ from app.integrations.progression.provider import (
 from app.integrations.storage.local import LocalObjectStorage
 from app.integrations.storage.provider import ObjectStorageProvider
 from app.integrations.storage.s3 import S3ObjectStorage
+from app.integrations.usage.provider import AIUsageSink
 from app.integrations.weather.open_meteo import OpenMeteoForecastProvider
 from app.integrations.weather.openweather import (
     OpenWeatherCurrentProvider,
@@ -39,6 +43,12 @@ def build_auth_provider(settings: Settings) -> AuthProvider:
     return CognitoAuthProvider(settings)
 
 
+def build_account_auth_provider(settings: Settings) -> AccountAuthProvider:
+    if not settings.cognito_configured:
+        return UnavailableAccountAuthProvider()
+    return CognitoAccountAuthProvider(settings)
+
+
 def build_object_storage(settings: Settings) -> ObjectStorageProvider:
     """Select local development storage or private production S3."""
 
@@ -47,16 +57,18 @@ def build_object_storage(settings: Settings) -> ObjectStorageProvider:
     return LocalObjectStorage(settings.local_storage_path)
 
 
-def build_leaf_inference_provider(_settings: Settings) -> LeafInferenceProvider:
-    """Fail honestly until the evaluated checkpoint or service is supplied."""
+def build_leaf_inference_provider(settings: Settings) -> LeafInferenceProvider:
+    """Select the temporary vision plugin without changing diagnosis orchestration."""
 
+    if settings.leaf_inference_backend == "openai_vision" and settings.openai_api_key:
+        return OpenAILeafInferenceProvider(settings)
     return UnavailableLeafInferenceProvider()
 
 
-def build_llm_provider(settings: Settings) -> LLMProvider:
+def build_llm_provider(settings: Settings, usage_sink: AIUsageSink | None = None) -> LLMProvider:
     if not settings.openai_api_key:
         return UnavailableLLMProvider()
-    return OpenAIResponsesProvider(settings)
+    return OpenAIResponsesProvider(settings, usage_sink=usage_sink)
 
 
 def build_memory_provider(settings: Settings) -> MemoryProvider:

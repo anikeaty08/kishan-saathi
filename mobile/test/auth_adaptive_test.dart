@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:krishisathi/app/krishisathi_app.dart';
+import 'package:krishisathi/features/onboarding/presentation/onboarding_screens.dart';
+import 'package:krishisathi/features/profile/presentation/profile_screens.dart';
 import 'package:krishisathi/features/shared/presentation/app_controller.dart';
 
 import 'support/test_controller.dart';
@@ -31,7 +33,9 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
-      await tester.pumpWidget(KrishiSathiApp(controller: await _controller()));
+      final controller = await _controller();
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(KrishiSathiApp(controller: controller));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Get started'));
       await tester.pumpAndSettle();
@@ -50,4 +54,82 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('create account collects the farmer name on the auth screen', (
+    tester,
+  ) async {
+    final controller = await _controller();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(KrishiSathiApp(controller: controller));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Get started'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Create account').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Your name'), findsOneWidget);
+    expect(find.byType(TextFormField), findsNWidgets(3));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('pre-auth language setup returns to login, not permissions', (
+    tester,
+  ) async {
+    final controller = await _controller();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(KrishiSathiApp(controller: controller));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Choose your language'));
+    await tester.pumpAndSettle();
+    expect(find.byType(LanguageSetupScreen), findsOneWidget);
+
+    await tester.tap(find.byType(FilledButton).last);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AuthScreen), findsOneWidget);
+    expect(find.byType(PermissionsSetupScreen), findsNothing);
+  });
+
+  testWidgets('changing language keeps the current settings route', (
+    tester,
+  ) async {
+    final controller = await createTestController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(KrishiSathiApp(controller: controller));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Test Farmer'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Language'));
+    await tester.pumpAndSettle();
+    expect(find.byType(LanguageSettingsScreen), findsOneWidget);
+
+    controller
+      ..locale = const Locale('hi')
+      ..notifyListeners();
+    await tester.pump();
+
+    expect(controller.locale.languageCode, 'hi');
+    expect(find.byType(LanguageSettingsScreen), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('an authenticated account without a name must complete profile', (
+    tester,
+  ) async {
+    final controller = await createTestController(
+      live: true,
+      onboardingComplete: false,
+      farmerName: '',
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(KrishiSathiApp(controller: controller));
+    await tester.pumpAndSettle();
+
+    expect(find.text('What should we call you?'), findsOneWidget);
+    expect(find.text('Test Farmer'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }

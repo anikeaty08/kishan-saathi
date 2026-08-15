@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_primary_model: Literal["gpt-5"] = "gpt-5"
     openai_light_model: Literal["gpt-5-mini"] = "gpt-5-mini"
+    leaf_inference_backend: Literal["disabled", "openai_vision"] = "openai_vision"
+    openai_leaf_model: Literal["gpt-5", "gpt-5-mini"] = "gpt-5"
+    openai_leaf_confidence_cap: float = Field(default=0.74, ge=0.1, lt=0.75)
     openai_progression_model: Literal["gpt-5", "gpt-5-mini"] = "gpt-5"
     openai_transcription_model: Literal["gpt-4o-mini-transcribe", "gpt-4o-transcribe"] = (
         "gpt-4o-mini-transcribe"
@@ -52,10 +55,16 @@ class Settings(BaseSettings):
     openai_audio_timeout_seconds: float = Field(default=45.0, gt=5, le=120)
     voice_max_audio_bytes: int = Field(default=10 * 1024 * 1024, ge=1024, le=25 * 1024 * 1024)
     voice_max_transcript_characters: int = Field(default=4000, ge=100, le=12000)
-    voice_max_speech_characters: int = Field(default=4096, ge=100, le=4096)
+    voice_max_speech_characters: int = Field(default=12000, ge=100, le=20000)
     voice_transcriptions_per_minute: int = Field(default=6, ge=1, le=60)
     voice_speech_requests_per_minute: int = Field(default=12, ge=1, le=120)
     progression_requests_per_minute: int = Field(default=4, ge=1, le=60)
+    diagnosis_requests_per_minute: int = Field(default=6, ge=1, le=60)
+    chat_requests_per_minute: int = Field(default=8, ge=1, le=120)
+    weather_requests_per_minute: int = Field(default=12, ge=1, le=120)
+    auth_requests_per_minute: int = Field(default=10, ge=1, le=120)
+    auth_ip_requests_per_minute: int = Field(default=120, ge=1, le=1000)
+    auth_rate_limit_hmac_key: SecretStr = SecretStr("")
     memory_connections_per_minute: int = Field(default=2, ge=1, le=30)
     paid_provider_max_concurrent_requests: int = Field(default=4, ge=1, le=32)
     mem0_api_key: str = ""
@@ -92,6 +101,9 @@ class Settings(BaseSettings):
         le=250 * 1024 * 1024,
     )
     max_diagnosis_images: int = Field(default=12, ge=1, le=50)
+    max_diagnosis_case_images: int = Field(default=36, ge=2, le=200)
+    diagnosis_capture_future_tolerance_minutes: int = Field(default=10, ge=0, le=1440)
+    diagnosis_capture_max_age_days: int = Field(default=3650, ge=1, le=36500)
     stored_image_max_dimension: int = Field(default=2048, ge=512, le=4096)
     source_image_max_pixels: int = Field(default=25_000_000, ge=1_000_000, le=100_000_000)
     stored_image_jpeg_quality: int = Field(default=90, ge=70, le=95)
@@ -136,6 +148,18 @@ class Settings(BaseSettings):
                 raise ValueError("PRODUCTION_REQUIRES_S3_BUCKET_OWNER")
             if self.s3_endpoint_url:
                 raise ValueError("PRODUCTION_S3_ENDPOINT_OVERRIDE_FORBIDDEN")
+            if not self.cognito_configured:
+                raise ValueError("PRODUCTION_REQUIRES_COGNITO")
+            if len(self.auth_rate_limit_hmac_key.get_secret_value()) < 32:
+                raise ValueError("PRODUCTION_REQUIRES_AUTH_RATE_LIMIT_HMAC_KEY")
+            if not self.openai_api_key.strip():
+                raise ValueError("PRODUCTION_REQUIRES_OPENAI")
+            if self.leaf_inference_backend == "disabled":
+                raise ValueError("PRODUCTION_REQUIRES_LEAF_INFERENCE")
+            if not self.openweather_configured:
+                raise ValueError("PRODUCTION_REQUIRES_OPENWEATHER")
+            if not self.mem0_api_key.strip():
+                raise ValueError("PRODUCTION_REQUIRES_MEM0")
         return self
 
     @property

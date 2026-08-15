@@ -12,6 +12,7 @@ Future<AppController> _controllerFor(
   String locale = 'en',
 }) async {
   final controller = await createTestController(locale: locale);
+  seedTestFarmData(controller);
   addTearDown(() async {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
@@ -116,7 +117,10 @@ void main() {
   testWidgets('renders Urdu with RTL direction', (tester) async {
     final controller = await _controllerFor(tester, locale: 'ur');
     await tester.pumpWidget(KrishiSathiApp(controller: controller));
-    await tester.pumpAndSettle();
+    // Advance the finite launch reveal explicitly. `pumpAndSettle` can wait on
+    // unrelated platform/plugin frames left by earlier adaptive tests.
+    await tester.pump(const Duration(milliseconds: 1200));
+    await tester.pump();
 
     final directionality = tester.widget<Directionality>(
       find
@@ -128,7 +132,7 @@ void main() {
           .first,
     );
     expect(directionality.textDirection, TextDirection.rtl);
-    final urdu = await AppStrings.load(const Locale('ur'));
+    final urdu = AppStrings.cached(const Locale('ur'))!;
     expect(find.text(urdu.text('home')), findsWidgets);
     expect(tester.takeException(), isNull);
   });
@@ -150,7 +154,9 @@ void main() {
     expect(find.text('Your farms'), findsOneWidget);
 
     await tester.tap(find.text('Scan').last);
-    await tester.pumpAndSettle();
+    // The scanner has a deliberate continuous pulse; advance the route
+    // transition without waiting for all animation tickers to become idle.
+    await tester.pump(const Duration(milliseconds: 600));
     expect(find.text('Check a leaf'), findsWidgets);
 
     await tester.tap(find.text('Saathi').last);

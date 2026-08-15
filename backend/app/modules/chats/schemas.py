@@ -79,6 +79,8 @@ class ChatResponse(BaseModel):
     farm_id: UUID | None
     plot_id: UUID | None
     diagnosis_case_id: UUID | None
+    effective_farm_id: UUID | None = None
+    effective_plot_id: UUID | None = None
     title: str
     archived_at: datetime | None
     created_at: datetime

@@ -19,6 +19,9 @@ class ApiClient {
   final SecureTokenStore tokenStore;
   final http.Client _client;
   final bool _ownsClient;
+  Future<AuthTokens?> Function()? tokenRefresher;
+  Future<AuthTokens?> Function()? tokenForceRefresher;
+  Future<void> Function()? sessionExpiredHandler;
   static const _timeout = Duration(seconds: 20);
   static const _uploadTimeout = Duration(seconds: 60);
 
@@ -54,7 +57,7 @@ class ApiClient {
     String path, {
     Map<String, String>? headers,
     bool auth = true,
-  }) async {
+  }) => _withAuthRetry(auth, () async {
     try {
       final response = await _client
           .get(
@@ -68,27 +71,27 @@ class ApiClient {
       return response.bodyBytes;
     } on TimeoutException {
       throw const ApiException(
-        code: 'REQUEST_TIMEOUT',
+        code: 'BACKEND_TIMEOUT',
         message: 'Request timed out',
       );
     } on http.ClientException {
       throw const ApiException(
-        code: 'NETWORK_UNAVAILABLE',
+        code: 'BACKEND_UNREACHABLE',
         message: 'The network request could not be completed',
       );
     } on IOException {
       throw const ApiException(
-        code: 'NETWORK_UNAVAILABLE',
-        message: 'No network connection',
+        code: 'BACKEND_UNREACHABLE',
+        message: 'The backend could not be reached',
       );
     }
-  }
+  });
 
   Future<List<int>> postBytes(
     String path, {
     Map<String, String>? headers,
     bool auth = true,
-  }) async {
+  }) => _withAuthRetry(auth, () async {
     try {
       final response = await _client
           .post(
@@ -104,35 +107,37 @@ class ApiClient {
       rethrow;
     } on TimeoutException {
       throw const ApiException(
-        code: 'REQUEST_TIMEOUT',
+        code: 'BACKEND_TIMEOUT',
         message: 'Audio generation timed out',
       );
     } on http.ClientException {
       throw const ApiException(
-        code: 'NETWORK_UNAVAILABLE',
+        code: 'BACKEND_UNREACHABLE',
         message: 'The network request could not be completed',
       );
     } on IOException {
       throw const ApiException(
-        code: 'NETWORK_UNAVAILABLE',
-        message: 'No network connection',
+        code: 'BACKEND_UNREACHABLE',
+        message: 'The backend could not be reached',
       );
     }
-  }
+  });
 
   Future<Object?> multipart(
     String path, {
     required Map<String, String> fields,
     required List<String> filePaths,
     String fileField = 'images',
-  }) async {
-    final request = http.MultipartRequest('POST', _resolve(path));
-    request.headers.addAll(await _headers(auth: true));
-    request.fields.addAll(fields);
-    for (final filePath in filePaths) {
-      request.files.add(await http.MultipartFile.fromPath(fileField, filePath));
-    }
+  }) => _withAuthRetry(true, () async {
     try {
+      final request = http.MultipartRequest('POST', _resolve(path));
+      request.headers.addAll(await _headers(auth: true));
+      request.fields.addAll(fields);
+      for (final filePath in filePaths) {
+        request.files.add(
+          await http.MultipartFile.fromPath(fileField, filePath),
+        );
+      }
       final streamed = await _client.send(request).timeout(_uploadTimeout);
       final response = await http.Response.fromStream(streamed);
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -141,21 +146,36 @@ class ApiClient {
       return _decode(response);
     } on TimeoutException {
       throw const ApiException(
-        code: 'REQUEST_TIMEOUT',
+        code: 'BACKEND_TIMEOUT',
         message: 'Upload timed out',
       );
     } on http.ClientException {
       throw const ApiException(
-        code: 'NETWORK_UNAVAILABLE',
+        code: 'BACKEND_UNREACHABLE',
         message: 'The network request could not be completed',
+      );
+    } on FileSystemException {
+      throw const ApiException(
+        code: 'UPLOAD_FILE_UNAVAILABLE',
+        message: 'A selected file is no longer available',
       );
     } on IOException {
       throw const ApiException(
-        code: 'NETWORK_UNAVAILABLE',
-        message: 'No network connection',
+        code: 'BACKEND_UNREACHABLE',
+        message: 'The backend could not be reached',
+      );
+    } on FormatException {
+      throw const ApiException(
+        code: 'INVALID_RESPONSE',
+        message: 'The server response could not be read',
+      );
+    } on TypeError {
+      throw const ApiException(
+        code: 'INVALID_RESPONSE',
+        message: 'The server response could not be read',
       );
     }
-  }
+  });
 
   Future<Object?> _send(
     String method,
@@ -164,13 +184,13 @@ class ApiClient {
     Object? body,
     Map<String, String>? headers,
     required bool auth,
-  }) async {
-    final request = http.Request(method, _resolve(path, query));
-    request.headers.addAll(await _headers(auth: auth, extra: headers));
-    if (body != null) {
-      request.body = jsonEncode(body);
-    }
+  }) => _withAuthRetry(auth, () async {
     try {
+      final request = http.Request(method, _resolve(path, query));
+      request.headers.addAll(await _headers(auth: auth, extra: headers));
+      if (body != null) {
+        request.body = jsonEncode(body);
+      }
       final streamed = await _client.send(request).timeout(_timeout);
       final response = await http.Response.fromStream(streamed);
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -181,24 +201,71 @@ class ApiClient {
       rethrow;
     } on TimeoutException {
       throw const ApiException(
-        code: 'REQUEST_TIMEOUT',
+        code: 'BACKEND_TIMEOUT',
         message: 'Request timed out',
       );
     } on http.ClientException {
       throw const ApiException(
-        code: 'NETWORK_UNAVAILABLE',
+        code: 'BACKEND_UNREACHABLE',
         message: 'The network request could not be completed',
       );
     } on IOException {
       throw const ApiException(
-        code: 'NETWORK_UNAVAILABLE',
-        message: 'No network connection',
+        code: 'BACKEND_UNREACHABLE',
+        message: 'The backend could not be reached',
       );
     } on FormatException {
       throw const ApiException(
         code: 'INVALID_RESPONSE',
         message: 'The server response could not be read',
       );
+    } on TypeError {
+      throw const ApiException(
+        code: 'INVALID_RESPONSE',
+        message: 'The server response could not be read',
+      );
+    }
+  });
+
+  Future<T> _withAuthRetry<T>(bool auth, Future<T> Function() request) async {
+    try {
+      return await request();
+    } on ApiException catch (error) {
+      if (!auth || !error.isUnauthorized || tokenForceRefresher == null) {
+        rethrow;
+      }
+      AuthTokens? refreshed;
+      try {
+        refreshed = await tokenForceRefresher!();
+      } on ApiException {
+        await sessionExpiredHandler?.call();
+        throw const ApiException(
+          code: 'AUTH_SESSION_EXPIRED',
+          message: 'Sign in again to continue',
+          statusCode: 401,
+        );
+      }
+      if (refreshed == null) {
+        await sessionExpiredHandler?.call();
+        throw const ApiException(
+          code: 'AUTH_REQUIRED',
+          message: 'Authentication is required',
+          statusCode: 401,
+        );
+      }
+      try {
+        return await request();
+      } on ApiException catch (retryError) {
+        if (retryError.isUnauthorized) {
+          await sessionExpiredHandler?.call();
+          throw const ApiException(
+            code: 'AUTH_SESSION_EXPIRED',
+            message: 'Sign in again to continue',
+            statusCode: 401,
+          );
+        }
+        rethrow;
+      }
     }
   }
 
@@ -212,13 +279,23 @@ class ApiClient {
       ...?extra,
     };
     if (auth) {
-      final tokens = await tokenStore.read();
+      var tokens = await tokenStore.read();
       if (tokens == null) {
         throw const ApiException(
           code: 'AUTH_REQUIRED',
           message: 'Authentication is required',
           statusCode: 401,
         );
+      }
+      if (tokens.needsRefresh && tokenRefresher != null) {
+        tokens = await tokenRefresher!();
+        if (tokens == null) {
+          throw const ApiException(
+            code: 'AUTH_REQUIRED',
+            message: 'Authentication is required',
+            statusCode: 401,
+          );
+        }
       }
       headers['Authorization'] = 'Bearer ${tokens.accessToken}';
     }
@@ -268,6 +345,8 @@ class ApiClient {
         }
       }
     } on FormatException {
+      // Preserve the status-derived error for non-JSON provider responses.
+    } on TypeError {
       // Preserve the status-derived error for non-JSON provider responses.
     }
     return ApiException(

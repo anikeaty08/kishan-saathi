@@ -1,4 +1,11 @@
 abstract final class ApiEndpoints {
+  static const authSignUp = '/api/v1/auth/sign-up';
+  static const authConfirm = '/api/v1/auth/confirm';
+  static const authResend = '/api/v1/auth/resend';
+  static const authSignIn = '/api/v1/auth/sign-in';
+  static const authRefresh = '/api/v1/auth/refresh';
+  static const authPasswordReset = '/api/v1/auth/password-reset';
+  static const authPasswordResetConfirm = '/api/v1/auth/password-reset/confirm';
   static const live = '/health/live';
   static const ready = '/health/ready';
   static const me = '/api/v1/me';

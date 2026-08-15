@@ -12,8 +12,10 @@ import '../../../core/models/app_models.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_endpoints.dart';
 import '../../../core/network/api_exception.dart';
-import '../../../core/network/cognito_auth_service.dart';
+import '../../../core/network/account_auth_service.dart';
 import '../../../core/network/token_store.dart';
+import '../../../core/permissions/app_permission_service.dart';
+import '../../../core/storage/private_local_store.dart';
 import '../../farm/data/farm_repository.dart';
 import '../../farm/data/location_repository.dart';
 import '../../farm/data/timeline_repository.dart';
@@ -43,14 +45,27 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     required this.memoryRepository,
     required this.timelineRepository,
     required this.scanQueueRepository,
-  }) : authService = CognitoAuthService(config: config, tokenStore: tokenStore);
+    required this.privateLocalStore,
+    required this.permissionService,
+  }) : authService = AccountAuthService(
+         apiClient: apiClient,
+         tokenStore: tokenStore,
+       ) {
+    apiClient.tokenRefresher = authService.refreshIfNeeded;
+    apiClient.tokenForceRefresher = authService.refreshSession;
+    apiClient.sessionExpiredHandler = _expireSession;
+  }
 
   static const _localeKey = 'preferred_language';
-  static const _nameKey = 'farmer_name';
+  static const _legacyNameKey = 'farmer_name';
   static const _onboardingKey = 'onboarding_complete';
   static const _previewKey = 'preview_mode';
   static const _themeKey = 'theme_mode';
   static const _notificationsKey = 'notifications_enabled';
+  static const _farmReminderNotificationsKey =
+      'farm_reminder_notifications_enabled';
+  static const _weatherAlertNotificationsKey =
+      'weather_alert_notifications_enabled';
   static const _locationKey = 'location_enabled';
   static const _cameraKey = 'camera_enabled';
   static const _areaUnitKey = 'preferred_area_unit';
@@ -71,10 +86,14 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   final MemoryRepository memoryRepository;
   final TimelineRepository timelineRepository;
   final ScanQueueRepository scanQueueRepository;
-  final CognitoAuthService authService;
+  final PrivateLocalStore privateLocalStore;
+  final AppPermissionService permissionService;
+  final AccountAuthService authService;
+  final ValueNotifier<int> navigationRefresh = ValueNotifier<int>(0);
   final _uuid = const Uuid();
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
   bool _processingQueuedScans = false;
+  bool _initializingSession = false;
   bool _observingLifecycle = false;
   AppLifecycleState? _appLifecycleState;
 
@@ -83,42 +102,42 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   bool previewMode = false;
   bool isAuthenticated = false;
   bool notificationsEnabled = true;
+  bool farmReminderNotificationsEnabled = true;
+  bool weatherAlertNotificationsEnabled = true;
   bool locationEnabled = true;
   bool cameraEnabled = true;
+  AppPermissionState notificationPermission = AppPermissionState.denied;
+  AppPermissionState locationPermission = AppPermissionState.denied;
+  AppPermissionState cameraPermission = AppPermissionState.denied;
   bool busy = false;
   ThemeMode themeMode = ThemeMode.system;
   String preferredAreaUnit = 'acre';
   Locale locale = const Locale('en');
-  String farmerName = 'Anike';
+  String farmerName = '';
   ApiException? lastError;
 
-  WeatherSnapshot? weather = WeatherSnapshot(
-    temperature: 26,
-    conditionCode: 'partly_cloudy',
-    rainChance: 42,
-    humidity: 71,
-    windKph: 12,
-    fetchedAt: DateTime.now().subtract(const Duration(minutes: 18)),
-  );
-  List<FarmModel> farms = List.of(DemoData.farms);
-  List<FarmReminder> reminders = List.of(DemoData.reminders);
+  WeatherSnapshot? weather;
+  List<FarmModel> farms = const [];
+  List<FarmReminder> reminders = const [];
   List<ReminderProposalModel> reminderProposals = const [];
-  List<DiagnosisCaseModel> diagnoses = List.of(DemoData.diagnoses);
-  List<ChatThreadModel> chats = List.of(DemoData.chats);
+  List<DiagnosisCaseModel> diagnoses = const [];
+  List<ChatThreadModel> chats = const [];
   final Map<String, Set<String>> _activeChatTurnIds = {};
   final Map<String, Timer> _chatTurnPollers = {};
   final Map<String, int> _chatTurnPollFailures = {};
   final Set<String> _refreshingChatTurns = {};
   final Map<String, int?> _chatNextBeforeSequence = {};
   final Set<String> _loadingOlderChatIds = {};
-  List<MemoryFactModel> memories = List.of(DemoData.memories);
+  final Map<String, String> _chatDrafts = {};
+  List<MemoryFactModel> memories = const [];
   List<DiagnosisReportModel> diagnosisReports = const [];
   List<QueuedScanModel> queuedScans = const [];
   final Map<String, List<TimelineEventModel>> plotTimelines = {};
   final Map<String, PlotWeatherModel> plotWeather = {};
 
   AppLanguage get selectedLanguage => AppLanguage.byCode(locale.languageCode);
-  bool get canUseLiveServices => isAuthenticated && config.isCognitoConfigured;
+  bool get hasFarmerName => farmerName.trim().isNotEmpty;
+  bool get canUseLiveServices => isAuthenticated || _initializingSession;
   FarmModel? farmById(String id) => farms.cast<FarmModel?>().firstWhere(
     (farm) => farm?.id == id,
     orElse: () => null,
@@ -139,17 +158,60 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       _observingLifecycle = true;
     }
     locale = Locale(preferences.getString(_localeKey) ?? 'en');
-    farmerName = preferences.getString(_nameKey) ?? 'Anike';
+    farmerName = '';
+    final legacyDraftKeys = preferences.getKeys().where(
+      (key) => key.startsWith(_chatDraftPrefix),
+    );
+    await Future.wait([
+      preferences.remove(_legacyNameKey),
+      // Remove private values written by earlier beta builds before these
+      // fields moved into encrypted platform storage.
+      ...legacyDraftKeys.map(preferences.remove),
+    ]);
+    final storedDrafts = await privateLocalStore.readPrefix(_chatDraftPrefix);
+    _chatDrafts
+      ..clear()
+      ..addEntries(
+        storedDrafts.entries.map(
+          (entry) => MapEntry(
+            entry.key.substring(_chatDraftPrefix.length),
+            entry.value,
+          ),
+        ),
+      );
     onboardingComplete = preferences.getBool(_onboardingKey) ?? false;
-    previewMode = preferences.getBool(_previewKey) ?? false;
+    previewMode =
+        config.enablePreviewMode && (preferences.getBool(_previewKey) ?? false);
+    if (!config.enablePreviewMode) {
+      await preferences.setBool(_previewKey, false);
+    }
     themeMode = switch (preferences.getString(_themeKey)) {
       'light' => ThemeMode.light,
       'dark' => ThemeMode.dark,
       _ => ThemeMode.system,
     };
-    notificationsEnabled = preferences.getBool(_notificationsKey) ?? true;
-    locationEnabled = preferences.getBool(_locationKey) ?? true;
-    cameraEnabled = preferences.getBool(_cameraKey) ?? true;
+    notificationPermission = await permissionService.status(
+      AppPermissionKind.notifications,
+    );
+    locationPermission = await permissionService.status(
+      AppPermissionKind.location,
+    );
+    cameraPermission = await permissionService.status(AppPermissionKind.camera);
+    notificationsEnabled =
+        (preferences.getBool(_notificationsKey) ?? false) &&
+        notificationPermission.isAllowed;
+    farmReminderNotificationsEnabled =
+        notificationsEnabled &&
+        (preferences.getBool(_farmReminderNotificationsKey) ?? true);
+    weatherAlertNotificationsEnabled =
+        notificationsEnabled &&
+        (preferences.getBool(_weatherAlertNotificationsKey) ?? true);
+    locationEnabled =
+        (preferences.getBool(_locationKey) ?? false) &&
+        locationPermission.isAllowed;
+    cameraEnabled =
+        (preferences.getBool(_cameraKey) ?? false) &&
+        cameraPermission.isAllowed;
     preferredAreaUnit = switch (preferences.getString(_areaUnitKey)) {
       'hectare' => 'hectare',
       _ => 'acre',
@@ -165,7 +227,28 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
         isAuthenticated = false;
       }
     }
-    if (!previewMode) {
+    if (!isAuthenticated && !previewMode) {
+      // Never restore a previously completed shell without a valid session.
+      // This prevents stale preview/onboarding preferences from exposing a
+      // non-functional Home or Saathi screen after installing a live build.
+      onboardingComplete = false;
+      await preferences.setBool(_onboardingKey, false);
+    }
+    if (previewMode) {
+      weather = WeatherSnapshot(
+        temperature: 26,
+        conditionCode: 'partly_cloudy',
+        rainChance: 42,
+        humidity: 71,
+        windKph: 12,
+        fetchedAt: DateTime.now().subtract(const Duration(minutes: 18)),
+      );
+      farms = List.of(DemoData.farms);
+      reminders = List.of(DemoData.reminders);
+      diagnoses = List.of(DemoData.diagnoses);
+      chats = List.of(DemoData.chats);
+      memories = List.of(DemoData.memories);
+    } else {
       weather = null;
       farms = const [];
       reminders = const [];
@@ -224,8 +307,15 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> setFarmerName(String value) async {
     final normalized = value.trim();
     if (normalized.isEmpty) return;
-    farmerName = normalized;
-    await preferences.setString(_nameKey, normalized);
+    if (canUseLiveServices) {
+      final payload = await apiClient.patch(
+        ApiEndpoints.me,
+        body: {'name': normalized},
+      );
+      _applyProfile(payload);
+    } else {
+      farmerName = normalized;
+    }
     notifyListeners();
   }
 
@@ -271,14 +361,15 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> completeOnboarding({bool preview = false}) async {
-    onboardingComplete = true;
-    previewMode = preview;
+    final resolvedPreview = preview && config.enablePreviewMode;
+    _setOnboardingComplete(true);
+    previewMode = resolvedPreview;
     await Future.wait([
       preferences.setBool(_onboardingKey, true),
-      preferences.setBool(_previewKey, preview),
+      preferences.setBool(_previewKey, resolvedPreview),
     ]);
     notifyListeners();
-    if (!preview && canUseLiveServices && locationEnabled) {
+    if (!resolvedPreview && canUseLiveServices && locationEnabled) {
       try {
         await refreshCurrentWeather();
       } on ApiException catch (error) {
@@ -289,33 +380,57 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> signIn(String email, String password) async {
     await _guard(() async {
-      await authService.signIn(email: email, password: password);
-      isAuthenticated = true;
-      previewMode = false;
-      onboardingComplete = true;
-      await Future.wait([
-        preferences.setBool(_previewKey, false),
-        preferences.setBool(_onboardingKey, true),
-      ]);
-      await refreshProfile();
-      await refreshFarms();
-      await refreshDiagnoses();
-      await refreshDiagnosisReports();
-      await refreshChats();
-      await refreshReminders();
-      await refreshMemories();
-      await refreshCurrentWeather(requestPermission: false);
+      try {
+        await authService.signIn(email: email, password: password);
+        _initializingSession = true;
+        previewMode = false;
+        final profile = await apiClient.get(ApiEndpoints.me);
+        _applyProfile(profile);
+        await Future.wait([
+          preferences.setBool(_previewKey, false),
+          preferences.setBool(_onboardingKey, onboardingComplete),
+        ]);
+        isAuthenticated = true;
+        _initializingSession = false;
+        await _refreshSignedInData();
+      } catch (_) {
+        await _expireSession();
+        rethrow;
+      }
     });
   }
 
-  Future<bool> signUp(String email, String password) async {
-    return _guardValue(
-      () => authService.signUp(email: email, password: password),
-    );
+  Future<void> _refreshSignedInData() async {
+    final refreshes = <Future<void> Function()>[
+      refreshFarms,
+      refreshDiagnoses,
+      refreshDiagnosisReports,
+      refreshChats,
+      refreshReminders,
+      refreshMemories,
+      () => refreshCurrentWeather(requestPermission: false),
+    ];
+    for (final refresh in refreshes) {
+      try {
+        await refresh();
+      } on ApiException catch (error) {
+        lastError = await _withConnectivityContext(error);
+      }
+    }
+  }
+
+  Future<bool> signUp(String name, String email, String password) async {
+    return _guardValue(() async {
+      return authService.signUp(name: name, email: email, password: password);
+    });
   }
 
   Future<void> confirmSignUp(String email, String code) async {
     await _guard(() => authService.confirmSignUp(email: email, code: code));
+  }
+
+  Future<void> resendSignUpCode(String email) async {
+    await _guard(() => authService.resendSignUpCode(email: email));
   }
 
   Future<void> requestPasswordReset(String email) async {
@@ -337,10 +452,23 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> signOut() async {
+    ApiException? cleanupError;
+    try {
+      await scanQueueRepository.clearAll();
+    } on ApiException catch (error) {
+      cleanupError = error;
+    }
+    await _expireSession();
+    if (cleanupError != null) throw cleanupError;
+  }
+
+  Future<void> _expireSession() async {
     await tokenStore.clear();
+    _initializingSession = false;
     isAuthenticated = false;
+    farmerName = '';
     previewMode = false;
-    onboardingComplete = false;
+    _setOnboardingComplete(false);
     farms = const [];
     reminders = const [];
     reminderProposals = const [];
@@ -349,10 +477,14 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     chats = const [];
     memories = const [];
     weather = null;
+    queuedScans = const [];
     await Future.wait([
       preferences.setBool(_previewKey, false),
       preferences.setBool(_onboardingKey, false),
+      preferences.remove(_legacyNameKey),
+      privateLocalStore.deletePrefix(_chatDraftPrefix),
     ]);
+    _chatDrafts.clear();
     notifyListeners();
   }
 
@@ -360,13 +492,57 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     if (!canUseLiveServices) return;
     await _guard(() async {
       final payload = await apiClient.get(ApiEndpoints.me);
-      if (payload is Map<String, dynamic>) {
-        final name = payload['name'] as String?;
-        final language = payload['preferred_language'] as String?;
-        if (name != null && name.isNotEmpty) farmerName = name;
-        if (language != null) locale = AppLanguage.byCode(language).locale;
-      }
+      _applyProfile(payload);
     });
+  }
+
+  void _applyProfile(Object? payload) {
+    if (payload is! Map<String, dynamic>) {
+      throw const ApiException(
+        code: 'PROFILE_INVALID_RESPONSE',
+        message: 'The profile response could not be read',
+      );
+    }
+    final rawName = payload['name'];
+    final rawLanguage = payload['preferred_language'];
+    final rawAreaUnit = payload['area_unit'];
+    final rawNotifications = payload['notifications_enabled'];
+    final rawOnboarding = payload['onboarding_complete'];
+    if ((rawName != null && rawName is! String) ||
+        (rawLanguage != null && rawLanguage is! String) ||
+        (rawAreaUnit != null && rawAreaUnit is! String) ||
+        (rawNotifications != null && rawNotifications is! bool) ||
+        (rawOnboarding != null && rawOnboarding is! bool)) {
+      throw const ApiException(
+        code: 'PROFILE_INVALID_RESPONSE',
+        message: 'The profile response was incomplete',
+      );
+    }
+    farmerName = (rawName as String?)?.trim() ?? '';
+    final language = rawLanguage as String?;
+    if (language != null) locale = AppLanguage.byCode(language).locale;
+    final areaUnit = rawAreaUnit as String?;
+    if (areaUnit == 'acre' || areaUnit == 'hectare') {
+      preferredAreaUnit = areaUnit!;
+    }
+    final notifications = rawNotifications as bool?;
+    if (notifications != null) {
+      notificationsEnabled = notifications && notificationPermission.isAllowed;
+      if (!notificationsEnabled) {
+        farmReminderNotificationsEnabled = false;
+        weatherAlertNotificationsEnabled = false;
+      }
+    }
+    final serverOnboardingComplete = rawOnboarding as bool? ?? false;
+    // A real name is a required onboarding invariant. Partially-created or
+    // older accounts collect it instead of rendering a fallback identity.
+    _setOnboardingComplete(serverOnboardingComplete && hasFarmerName);
+  }
+
+  void _setOnboardingComplete(bool value) {
+    if (onboardingComplete == value) return;
+    onboardingComplete = value;
+    navigationRefresh.value += 1;
   }
 
   Future<void> refreshFarms() async {
@@ -385,13 +561,12 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
             id: chat.id,
             title: chat.title,
             scope: chat.scope,
-            scopeLabel: _chatScopeLabel(
-              chat.scope,
-              chat.farmId ?? chat.plotId ?? chat.diagnosisCaseId,
-            ),
+            scopeLabel: _chatScopeLabelForThread(chat),
             farmId: chat.farmId,
             plotId: chat.plotId,
             diagnosisCaseId: chat.diagnosisCaseId,
+            effectiveFarmId: chat.effectiveFarmId,
+            effectivePlotId: chat.effectivePlotId,
             archived: chat.archived,
             messages: chat.messages,
           ),
@@ -1191,13 +1366,18 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<DiagnosisCaseModel> submitQueuedScan(QueuedScanModel scan) async {
-    final diagnosis = await submitDiagnosis(
-      imagePaths: scan.imagePaths,
-      cropName: scan.cropName,
-      plotId: scan.plotId,
-    );
-    await removeQueuedScan(scan.id);
-    return diagnosis;
+    final prepared = await scanQueueRepository.prepareForUpload(scan);
+    try {
+      final diagnosis = await submitDiagnosis(
+        imagePaths: prepared.paths,
+        cropName: scan.cropName,
+        plotId: scan.plotId,
+      );
+      await removeQueuedScan(scan.id);
+      return diagnosis;
+    } finally {
+      await scanQueueRepository.disposePrepared(prepared);
+    }
   }
 
   Future<void> _submitQueuedScansWhenOnline() async {
@@ -1315,6 +1495,13 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       caseId: caseId,
       responseLanguage: responseLanguage,
     );
+  }
+
+  Future<List<ProgressionComparisonModel>> loadProgressionHistory(
+    String caseId,
+  ) async {
+    if (!canUseLiveServices) return const [];
+    return diagnosisRepository.loadProgressionHistory(caseId);
   }
 
   Future<DiagnosisCaseModel> linkDiagnosis({
@@ -1485,6 +1672,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
               farmId: command.farmId,
               plotId: command.plotId,
               diagnosisCaseId: command.diagnosisCaseId,
+              effectiveFarmId: command.farmId,
+              effectivePlotId: command.plotId,
               messages: const [],
             );
       final hydrated = chat.scopeLabel == null && label != null
@@ -1496,6 +1685,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
               farmId: chat.farmId,
               plotId: chat.plotId,
               diagnosisCaseId: chat.diagnosisCaseId,
+              effectiveFarmId: chat.effectiveFarmId,
+              effectivePlotId: chat.effectivePlotId,
               archived: chat.archived,
               messages: chat.messages,
             )
@@ -1510,6 +1701,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     if (!canUseLiveServices) return;
     final loaded = await _guardValue(() => chatRepository.loadChat(chatId));
     final index = chats.indexWhere((item) => item.id == chatId);
+    final previousLabel = index < 0 ? null : chats[index].scopeLabel;
     final localPending = index < 0
         ? const <ChatMessageModel>[]
         : chats[index].messages
@@ -1527,6 +1719,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
               !serverKeys.contains(message.idempotencyKey)),
     );
     final hydrated = loaded.copyWith(
+      scopeLabel: _chatScopeLabelForThread(loaded) ?? previousLabel,
       messages: [...loaded.messages, ...pending],
     );
     final firstSequence = loaded.messages
@@ -1588,8 +1781,11 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     final normalized = text.trim();
     if (normalized.isEmpty) return;
     if (!canUseLiveServices) {
-      sendPreviewMessage(threadId, normalized);
-      return;
+      throw const ApiException(
+        code: 'AUTHENTICATION_REQUIRED',
+        message: 'Sign in to send a message',
+        statusCode: 401,
+      );
     }
     final index = chats.indexWhere((chat) => chat.id == threadId);
     if (index < 0) {
@@ -2067,7 +2263,12 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
           ? farmById(targetId)?.name
           : plotById(targetId)?.name;
       chats = [...chats]
-        ..[index] = chats[index].copyWith(scopeLabel: label ?? targetType);
+        ..[index] = chats[index].copyWith(
+          scopeLabel: label ?? targetType,
+          effectiveFarmId: targetType == 'farm' ? targetId : null,
+          effectivePlotId: targetType == 'plot' ? targetId : null,
+          replaceEffectiveScope: true,
+        );
       notifyListeners();
       await refreshMemories();
     });
@@ -2081,36 +2282,13 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       final index = chats.indexWhere((chat) => chat.id == chatId);
       if (index < 0) return;
       chats = [...chats]
-        ..[index] = chats[index].copyWith(clearScopeLabel: true);
+        ..[index] = chats[index].copyWith(
+          clearScopeLabel: true,
+          replaceEffectiveScope: true,
+        );
       notifyListeners();
       await refreshMemories();
     });
-  }
-
-  void sendPreviewMessage(String threadId, String text) {
-    final index = chats.indexWhere((chat) => chat.id == threadId);
-    if (index < 0 || text.trim().isEmpty) return;
-    final thread = chats[index];
-    final messages = [
-      ...thread.messages,
-      ChatMessageModel(
-        id: _uuid.v4(),
-        author: ChatAuthor.farmer,
-        text: text.trim(),
-        sentAt: DateTime.now(),
-        failed: !canUseLiveServices,
-      ),
-      if (!canUseLiveServices)
-        ChatMessageModel(
-          id: _uuid.v4(),
-          author: ChatAuthor.system,
-          text: 'Live Saathi is not connected in preview mode. This message was not sent.',
-          sentAt: DateTime.now(),
-          failed: true,
-        ),
-    ];
-    chats = [...chats]..[index] = thread.copyWith(messages: messages);
-    notifyListeners();
   }
 
   Future<void> _updateChat(
@@ -2135,7 +2313,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
               archived: archived,
             )
           : current.copyWith(title: title, archived: archived);
-      chats = [...chats]..[index] = updated;
+      chats = [...chats]
+        ..[index] = updated.copyWith(
+          scopeLabel: _chatScopeLabelForThread(updated) ?? current.scopeLabel,
+        );
       notifyListeners();
     });
   }
@@ -2154,44 +2335,121 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     };
   }
 
+  String? _chatScopeLabelForThread(ChatThreadModel chat) {
+    if (chat.scope == 'scan') {
+      return _chatScopeLabel('scan', chat.diagnosisCaseId);
+    }
+    if (chat.effectivePlotId != null) {
+      return _chatScopeLabel('plot', chat.effectivePlotId);
+    }
+    if (chat.effectiveFarmId != null) {
+      return _chatScopeLabel('farm', chat.effectiveFarmId);
+    }
+    return _chatScopeLabel(
+      chat.scope,
+      chat.farmId ?? chat.plotId ?? chat.diagnosisCaseId,
+    );
+  }
+
   Future<void> deleteMemory(String id) async {
     if (canUseLiveServices) await memoryRepository.delete(id);
     memories = memories.where((memory) => memory.id != id).toList();
     notifyListeners();
   }
 
-  void setNotifications(bool value) {
-    notificationsEnabled = value;
-    unawaited(preferences.setBool(_notificationsKey, value));
+  Future<AppPermissionState> setNotifications(bool value) async {
+    notificationPermission = value
+        ? await permissionService.request(AppPermissionKind.notifications)
+        : await permissionService.status(AppPermissionKind.notifications);
+    notificationsEnabled = value && notificationPermission.isAllowed;
+    if (!notificationsEnabled) {
+      farmReminderNotificationsEnabled = false;
+      weatherAlertNotificationsEnabled = false;
+    }
+    await Future.wait([
+      preferences.setBool(_notificationsKey, notificationsEnabled),
+      if (!notificationsEnabled)
+        preferences.setBool(_farmReminderNotificationsKey, false),
+      if (!notificationsEnabled)
+        preferences.setBool(_weatherAlertNotificationsKey, false),
+    ]);
     notifyListeners();
+    return notificationPermission;
   }
 
-  void setLocationEnabled(bool value) {
-    locationEnabled = value;
-    unawaited(preferences.setBool(_locationKey, value));
-    if (!value) {
+  Future<AppPermissionState> setFarmReminderNotifications(bool value) async {
+    final status = value
+        ? await _ensureNotificationPermission()
+        : notificationPermission;
+    farmReminderNotificationsEnabled = value && status.isAllowed;
+    await preferences.setBool(
+      _farmReminderNotificationsKey,
+      farmReminderNotificationsEnabled,
+    );
+    notifyListeners();
+    return status;
+  }
+
+  Future<AppPermissionState> setWeatherAlertNotifications(bool value) async {
+    final status = value
+        ? await _ensureNotificationPermission()
+        : notificationPermission;
+    weatherAlertNotificationsEnabled = value && status.isAllowed;
+    await preferences.setBool(
+      _weatherAlertNotificationsKey,
+      weatherAlertNotificationsEnabled,
+    );
+    notifyListeners();
+    return status;
+  }
+
+  Future<AppPermissionState> _ensureNotificationPermission() async {
+    if (notificationPermission.isAllowed) return notificationPermission;
+    notificationPermission = await permissionService.request(
+      AppPermissionKind.notifications,
+    );
+    notificationsEnabled = notificationPermission.isAllowed;
+    await preferences.setBool(_notificationsKey, notificationsEnabled);
+    return notificationPermission;
+  }
+
+  Future<AppPermissionState> setLocationEnabled(bool value) async {
+    locationPermission = value
+        ? await permissionService.request(AppPermissionKind.location)
+        : await permissionService.status(AppPermissionKind.location);
+    locationEnabled = value && locationPermission.isAllowed;
+    await preferences.setBool(_locationKey, locationEnabled);
+    if (!locationEnabled) {
       weather = null;
     } else if (canUseLiveServices) {
       unawaited(_refreshWeatherSilently());
     }
     notifyListeners();
+    return locationPermission;
   }
 
-  void setCameraEnabled(bool value) {
-    cameraEnabled = value;
-    unawaited(preferences.setBool(_cameraKey, value));
+  Future<AppPermissionState> setCameraEnabled(bool value) async {
+    cameraPermission = value
+        ? await permissionService.request(AppPermissionKind.camera)
+        : await permissionService.status(AppPermissionKind.camera);
+    cameraEnabled = value && cameraPermission.isAllowed;
+    await preferences.setBool(_cameraKey, cameraEnabled);
     notifyListeners();
+    return cameraPermission;
   }
 
-  String chatDraft(String chatId) =>
-      preferences.getString('$_chatDraftPrefix$chatId') ?? '';
+  Future<bool> openAppPermissionSettings() => permissionService.openSettings();
+
+  String chatDraft(String chatId) => _chatDrafts[chatId] ?? '';
 
   Future<void> saveChatDraft(String chatId, String value) async {
     final key = '$_chatDraftPrefix$chatId';
     if (value.trim().isEmpty) {
-      await preferences.remove(key);
+      _chatDrafts.remove(chatId);
+      await privateLocalStore.delete(key);
     } else {
-      await preferences.setString(key, value);
+      _chatDrafts[chatId] = value;
+      await privateLocalStore.write(key, value);
     }
   }
 
@@ -2211,8 +2469,9 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     try {
       await action();
     } on ApiException catch (error) {
-      lastError = error;
-      rethrow;
+      final normalized = await _withConnectivityContext(error);
+      lastError = normalized;
+      throw normalized;
     } finally {
       busy = false;
       notifyListeners();
@@ -2226,12 +2485,39 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     try {
       return await action();
     } on ApiException catch (error) {
-      lastError = error;
-      rethrow;
+      final normalized = await _withConnectivityContext(error);
+      lastError = normalized;
+      throw normalized;
     } finally {
       busy = false;
       notifyListeners();
     }
+  }
+
+  Future<ApiException> _withConnectivityContext(ApiException error) async {
+    const endpointFailures = {
+      'AUTH_PROVIDER_TIMEOUT',
+      'AUTH_PROVIDER_UNREACHABLE',
+      'BACKEND_TIMEOUT',
+      'BACKEND_UNREACHABLE',
+    };
+    if (!endpointFailures.contains(error.code)) return error;
+    try {
+      final connectivity = await Connectivity().checkConnectivity();
+      if (connectivity.every((item) => item == ConnectivityResult.none)) {
+        return ApiException(
+          code: 'NETWORK_UNAVAILABLE',
+          message: 'No active network connection',
+          statusCode: error.statusCode,
+          requestId: error.requestId,
+          details: error.details,
+        );
+      }
+    } on Exception {
+      // Preserve the endpoint-specific failure when platform connectivity
+      // status itself is unavailable.
+    }
+    return error;
   }
 
   @override
@@ -2244,6 +2530,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       WidgetsBinding.instance.removeObserver(this);
     }
     unawaited(_connectivitySubscription?.cancel());
+    navigationRefresh.dispose();
     apiClient.dispose();
     super.dispose();
   }

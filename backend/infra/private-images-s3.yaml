@@ -5,6 +5,13 @@ Parameters:
   BucketName:
     Type: String
     Description: Globally unique private bucket name
+  WorkloadServicePrincipal:
+    Type: String
+    Default: ecs-tasks.amazonaws.com
+    AllowedValues:
+      - ecs-tasks.amazonaws.com
+      - tasks.apprunner.amazonaws.com
+    Description: AWS service that assumes the backend image-access role
 
 Resources:
   FarmerImageBucket:
@@ -55,12 +62,41 @@ Resources:
               Bool:
                 aws:SecureTransport: false
 
+  BackendImageWorkloadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: !Ref WorkloadServicePrincipal
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: PrivateFarmerImageAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ObjectAccess
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub "${FarmerImageBucket.Arn}/private/*"
+              - Sid: BoundedBucketProbe
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt FarmerImageBucket.Arn
+                Condition:
+                  StringLike:
+                    s3:prefix: "private/*"
+
 Outputs:
   BucketName:
     Value: !Ref FarmerImageBucket
   BucketArn:
     Value: !GetAtt FarmerImageBucket.Arn
-  ApplicationRolePolicy:
-    Description: Add these actions to the backend workload role for the private prefix only
-    Value: !Sub >-
-      {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":"${FarmerImageBucket.Arn}/private/*"}]}
+  BackendImageWorkloadRoleArn:
+    Description: Least-privilege role for the backend compute service
+    Value: !GetAtt BackendImageWorkloadRole.Arn

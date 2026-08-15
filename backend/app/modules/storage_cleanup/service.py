@@ -40,13 +40,27 @@ class ObjectCleanupService:
 
         for job_id in job_ids:
             job = await self._session.scalar(
-                select(ObjectDeletionJob).where(ObjectDeletionJob.id == job_id).with_for_update()
+                select(ObjectDeletionJob).where(ObjectDeletionJob.id == job_id)
             )
             if job is None:
                 continue
+            owner_id = job.owner_id
+            object_key = job.object_key
+            reason = job.reason
+            # Release the database transaction before remote object deletion.
+            # S3/local deletion is idempotent; the durable row remains the
+            # source of retry state until a short final transaction removes it.
+            await self._session.commit()
             try:
-                await self._storage.delete_private(owner_id=job.owner_id, key=job.object_key)
+                await self._storage.delete_private(owner_id=owner_id, key=object_key)
             except Exception as exc:
+                job = await self._session.scalar(
+                    select(ObjectDeletionJob)
+                    .where(ObjectDeletionJob.id == job_id)
+                    .with_for_update()
+                )
+                if job is None:
+                    continue
                 job.attempts += 1
                 job.last_attempted_at = datetime.now(tz=UTC)
                 job.last_error_type = type(exc).__name__
@@ -59,11 +73,18 @@ class ObjectCleanupService:
                 self._logger.warning(
                     "object_cleanup.deletion_failed",
                     job_id=str(job.id),
-                    reason=job.reason,
+                    reason=reason,
                     attempts=job.attempts,
                     error_type=type(exc).__name__,
                 )
             else:
+                job = await self._session.scalar(
+                    select(ObjectDeletionJob)
+                    .where(ObjectDeletionJob.id == job_id)
+                    .with_for_update()
+                )
+                if job is None:
+                    continue
                 await self._session.delete(job)
                 await self._session.commit()
 

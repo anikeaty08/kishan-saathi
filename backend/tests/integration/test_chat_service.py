@@ -524,12 +524,21 @@ async def test_chat_filters_resolve_connections_and_current_diagnosis_scope() ->
                 include_archived=False,
                 plot_id=old_plot.id,
             )
+            general_detail = await service.get_chat(FARMER, general.id)
     finally:
         await engine.dispose()
 
     assert {item.id for item in new_plot_chats} == {general.id, scan.id}
     assert {item.id for item in new_farm_chats} == {general.id, scan.id}
     assert old_plot_chats == []
+    assert {
+        item.id: (item.effective_farm_id, item.effective_plot_id) for item in new_plot_chats
+    } == {
+        general.id: (None, new_plot.id),
+        scan.id: (new_farm.id, new_plot.id),
+    }
+    assert general_detail.effective_farm_id is None
+    assert general_detail.effective_plot_id == new_plot.id
 
 
 def _chat_service(session: AsyncSession, llm: CapturingLLM | None = None) -> ChatService:

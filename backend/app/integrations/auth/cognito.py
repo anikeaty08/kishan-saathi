@@ -128,11 +128,19 @@ class CognitoAuthProvider:
         if not all(isinstance(value, str) and value for value in (username, subject, email)):
             raise ApplicationError(code="AUTH_IDENTITY_INVALID", status_code=502)
 
+        raw_name = attributes.get("name")
+        if raw_name is not None and not isinstance(raw_name, str):
+            raise ApplicationError(code="AUTH_IDENTITY_INVALID", status_code=502)
+        name = " ".join(raw_name.split()) if raw_name else None
+        if name is not None and len(name) > 100:
+            raise ApplicationError(code="AUTH_IDENTITY_INVALID", status_code=502)
+
         return ExternalIdentity(
             subject=subject,
             username=username,
             email=email,
             email_verified=attributes.get("email_verified", "false").lower() == "true",
+            name=name or None,
         )
 
     async def close(self) -> None:

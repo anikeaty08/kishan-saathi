@@ -64,10 +64,15 @@ uv run mypy app
 uv run pytest
 ```
 
-Important current limitation: the leaf inference plugin fails with the explicit
-`LEAF_MODEL_NOT_CONFIGURED` code until the evaluated model artifact or service
-is supplied. Specific chemical treatment instructions are intentionally blocked
-without an approved authoritative source.
+Leaf inference is selected through `LEAF_INFERENCE_BACKEND`. The temporary
+`openai_vision` plugin keeps output inside the immutable 89-class PlantWild
+manifest, preserves per-image evidence, uses `store=false`, and caps confidence
+below the application's high-confidence threshold because it has not been
+calibrated on the held-out test set. Set the backend to `disabled` to return
+`LEAF_MODEL_NOT_CONFIGURED`. The evaluated DINOv2/ConvNeXt adapter will replace
+this plugin without changing the diagnosis API or lifecycle. Specific chemical
+treatment instructions are intentionally blocked without an approved
+authoritative source.
 
 ## Private image storage
 

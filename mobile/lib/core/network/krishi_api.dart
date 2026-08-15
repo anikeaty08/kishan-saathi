@@ -114,6 +114,14 @@ class KrishiApi {
     ApiEndpoints.diagnosisProgression(id),
     body: {'response_language': responseLanguage},
   );
+  Future<Object?> diagnosisProgressionHistory(
+    String id, {
+    required int limit,
+    required int offset,
+  }) => client.get(
+    ApiEndpoints.diagnosisProgression(id),
+    query: {'limit': '$limit', 'offset': '$offset'},
+  );
   Future<Object?> diagnosisImages(String id) =>
       client.get(ApiEndpoints.diagnosisImages(id));
   Future<List<int>> diagnosisImage(String id, String imageId) =>

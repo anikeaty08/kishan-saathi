@@ -163,14 +163,22 @@ class ReportService:
         ]
 
     async def revoke(self, farmer_id: UUID, report_id: UUID) -> DiagnosisReportResponse:
-        report = await self._repository.get(farmer_id, report_id)
+        report = await self._repository.get(farmer_id, report_id, for_update=True)
         if report is None:
             raise ApplicationError(code="REPORT_NOT_FOUND", status_code=404)
         if report.status != "revoked":
+            images = await self._repository.list_images(report.id)
+            jobs = [
+                self._cleanup.enqueue(farmer_id, image.object_key, "report_revoked")
+                for image in images
+            ]
+            for image in images:
+                await self._repository.delete_image(image)
             report.status = "revoked"
             report.revoked_at = datetime.now(tz=UTC)
             await self._repository.commit()
             await self._repository.refresh(report)
+            await self._cleanup.process([job.id for job in jobs])
         return await self._response(report)
 
     async def public(self, report_id: UUID, token: str) -> PublicDiagnosisReport:

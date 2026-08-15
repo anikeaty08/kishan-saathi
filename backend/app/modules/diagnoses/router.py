@@ -1,6 +1,6 @@
 """Authenticated multi-image leaf diagnosis API."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from uuid import UUID
 
@@ -46,6 +46,7 @@ async def create_diagnosis(
     farmer_id: FarmerId,
     service: Service,
     settings: AppSettings,
+    limiter: Annotated[PaidOperationRateLimiter, Depends(get_paid_operation_rate_limiter)],
     images: Annotated[list[UploadFile], File()],
     captured_at: Annotated[list[datetime] | None, Form()] = None,
     plant_name: Annotated[str | None, Form(min_length=1, max_length=100)] = None,
@@ -54,12 +55,13 @@ async def create_diagnosis(
     crop_id: Annotated[UUID | None, Form()] = None,
 ) -> DiagnosisCaseResponse:
     incoming = await _read_images(images, captured_at, settings)
-    return await service.create_case(
-        farmer_id,
-        images=incoming,
-        plant_name=plant_name.strip() if plant_name else None,
-        link=DiagnosisLink(farm_id=farm_id, plot_id=plot_id, crop_id=crop_id),
-    )
+    async with limiter.request(farmer_id, "diagnosis"):
+        return await service.create_case(
+            farmer_id,
+            images=incoming,
+            plant_name=plant_name.strip() if plant_name else None,
+            link=DiagnosisLink(farm_id=farm_id, plot_id=plot_id, crop_id=crop_id),
+        )
 
 
 @router.post("/{case_id}/retakes", response_model=DiagnosisCaseResponse)
@@ -68,11 +70,13 @@ async def add_retakes(
     farmer_id: FarmerId,
     service: Service,
     settings: AppSettings,
+    limiter: Annotated[PaidOperationRateLimiter, Depends(get_paid_operation_rate_limiter)],
     images: Annotated[list[UploadFile], File()],
     captured_at: Annotated[list[datetime] | None, Form()] = None,
 ) -> DiagnosisCaseResponse:
     incoming = await _read_images(images, captured_at, settings)
-    return await service.add_retakes(farmer_id, case_id, incoming)
+    async with limiter.request(farmer_id, "diagnosis"):
+        return await service.add_retakes(farmer_id, case_id, incoming)
 
 
 @router.get("", response_model=list[DiagnosisCaseResponse])
@@ -116,6 +120,20 @@ async def compare_diagnosis_progression(
 
     async with limiter.request(farmer_id, "progression"):
         return await service.compare(farmer_id, case_id, selection)
+
+
+@router.get(
+    "/{case_id}/progression",
+    response_model=list[ProgressionComparisonResponse],
+)
+async def progression_history(
+    case_id: UUID,
+    farmer_id: FarmerId,
+    service: ProgressionService,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[ProgressionComparisonResponse]:
+    return await service.history(farmer_id, case_id, limit=limit, offset=offset)
 
 
 @router.get("/{case_id}/assessments", response_model=list[AssessmentHistoryResponse])
@@ -232,7 +250,17 @@ async def _read_images(
                 raise ApplicationError(code="SCAN_UPLOAD_TOO_LARGE", status_code=413)
             timestamp = captured_at[index] if captured_at else datetime.now(tz=UTC)
             if timestamp.tzinfo is None:
-                timestamp = timestamp.replace(tzinfo=UTC)
+                raise ApplicationError(
+                    code="SCAN_IMAGE_TIMESTAMP_TIMEZONE_REQUIRED", status_code=422
+                )
+            timestamp = timestamp.astimezone(UTC)
+            now = datetime.now(tz=UTC)
+            if timestamp > now + timedelta(
+                minutes=settings.diagnosis_capture_future_tolerance_minutes
+            ):
+                raise ApplicationError(code="SCAN_IMAGE_TIMESTAMP_IN_FUTURE", status_code=422)
+            if timestamp < now - timedelta(days=settings.diagnosis_capture_max_age_days):
+                raise ApplicationError(code="SCAN_IMAGE_TIMESTAMP_TOO_OLD", status_code=422)
             incoming.append(IncomingImage(content=content, captured_or_uploaded_at=timestamp))
     finally:
         for upload in uploads:

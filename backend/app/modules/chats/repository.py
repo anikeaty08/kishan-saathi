@@ -94,6 +94,56 @@ class ChatRepository:
         )
         return list(result)
 
+    async def effective_scope_ids(
+        self,
+        farmer_id: UUID,
+        chats: list[ChatSession],
+    ) -> dict[UUID, tuple[UUID | None, UUID | None]]:
+        """Resolve the current farm/plot context for chat transport responses."""
+
+        if not chats:
+            return {}
+        chat_ids = [chat.id for chat in chats]
+        connections = list(
+            await self.session.scalars(
+                select(ChatMemoryConnection).where(
+                    ChatMemoryConnection.farmer_id == farmer_id,
+                    ChatMemoryConnection.chat_id.in_(chat_ids),
+                )
+            )
+        )
+        connection_by_chat = {connection.chat_id: connection for connection in connections}
+        case_ids = [chat.diagnosis_case_id for chat in chats if chat.diagnosis_case_id is not None]
+        cases = (
+            list(
+                await self.session.scalars(
+                    select(DiagnosisCase).where(
+                        DiagnosisCase.farmer_id == farmer_id,
+                        DiagnosisCase.id.in_(case_ids),
+                    )
+                )
+            )
+            if case_ids
+            else []
+        )
+        case_by_id = {case.id: case for case in cases}
+
+        resolved: dict[UUID, tuple[UUID | None, UUID | None]] = {}
+        for chat in chats:
+            case = (
+                case_by_id.get(chat.diagnosis_case_id)
+                if chat.diagnosis_case_id is not None
+                else None
+            )
+            connection = connection_by_chat.get(chat.id)
+            if case is not None:
+                resolved[chat.id] = (case.farm_id, case.plot_id)
+            elif connection is not None:
+                resolved[chat.id] = (connection.farm_id, connection.plot_id)
+            else:
+                resolved[chat.id] = (chat.farm_id, chat.plot_id)
+        return resolved
+
     async def messages_page(
         self,
         farmer_id: UUID,

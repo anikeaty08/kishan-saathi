@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter
 
+from app.modules.auth.router import router as auth_router
 from app.modules.chats.router import router as chats_router
 from app.modules.diagnoses.router import router as diagnoses_router
 from app.modules.farms.router import router as farms_router
@@ -20,6 +21,7 @@ api_router = APIRouter()
 api_router.include_router(health_router)
 
 versioned_api_router = APIRouter()
+versioned_api_router.include_router(auth_router)
 versioned_api_router.include_router(users_router)
 versioned_api_router.include_router(farms_router)
 versioned_api_router.include_router(diagnoses_router)

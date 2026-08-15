@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -14,6 +13,9 @@ import '../../../core/network/api_exception.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/ui/app_ui.dart';
 import '../../shared/presentation/app_controller.dart';
+import 'assistant_rich_text.dart';
+import 'chat_composer.dart';
+import 'live_voice_screen.dart';
 import 'voice_composer_controller.dart';
 
 class SaathiScreen extends StatefulWidget {
@@ -33,7 +35,7 @@ class _SaathiScreenState extends State<SaathiScreen> {
     final visibleChats = controller.chats
         .where((chat) {
           if (chat.archived != _showArchived) return false;
-          return _scope == 'all' || chat.scope == _scope;
+          return _scope == 'all' || chat.contextScope == _scope;
         })
         .toList(growable: false);
     return Scaffold(
@@ -60,149 +62,264 @@ class _SaathiScreenState extends State<SaathiScreen> {
         bottom: false,
         child: AppContent(
           maxWidth: 980,
+          padding: EdgeInsets.zero,
           child: ListView(
             key: const PageStorageKey('saathi-list'),
-            padding: const EdgeInsets.only(top: 8, bottom: 110),
+            padding: const EdgeInsets.only(bottom: 110),
             children: [
-              ImageBand(
-                asset: 'assets/images/crop_maize.jpg',
-                height: 210,
-                alignment: const Alignment(0, -0.2),
+              _SaathiHeroStage(onStartChat: () => context.push('/saathi/new')),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Spacer(),
-                    Row(
-                      children: [
-                        Container(
-                          width: 42,
-                          height: 42,
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(
-                              AppRadius.medium,
+                    const SizedBox(height: 26),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          for (final filter
+                              in const <(String, String, IconData)>[
+                                ('all', 'All', LucideIcons.layoutList),
+                                (
+                                  'general',
+                                  'General',
+                                  LucideIcons.messageCircle,
+                                ),
+                                ('farm', 'Farm', LucideIcons.warehouse),
+                                ('plot', 'Plot', LucideIcons.sprout),
+                                ('scan', 'Leaf checks', LucideIcons.scanLine),
+                              ]) ...[
+                            FilterChip(
+                              avatar: Icon(filter.$3, size: 15),
+                              label: Text(filter.$2),
+                              selected: _scope == filter.$1,
+                              onSelected: (_) =>
+                                  setState(() => _scope = filter.$1),
                             ),
-                          ),
-                          child: const Icon(
-                            LucideIcons.messageCircle,
-                            color: AppColors.forest,
+                            const SizedBox(width: 7),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    SectionHeader(
+                      title: _showArchived
+                          ? 'Archived conversations'
+                          : 'Recent conversations',
+                      action: FilledButton.tonalIcon(
+                        onPressed: () => context.push('/saathi/new'),
+                        icon: const Icon(LucideIcons.plus, size: 18),
+                        label: Text(context.tr('newChat')),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    if (visibleChats.isEmpty)
+                      Card(
+                        child: AppStateView(
+                          kind: AppStateKind.empty,
+                          title: _showArchived
+                              ? 'No archived conversations'
+                              : 'No matching conversations',
+                          message: _showArchived
+                              ? 'Chats you archive will remain available here.'
+                              : 'Choose another filter or start a general, farm, plot or leaf-check chat.',
+                          actionLabel: _showArchived
+                              ? null
+                              : context.tr('newChat'),
+                          onAction: _showArchived
+                              ? null
+                              : () => context.push('/saathi/new'),
+                        ),
+                      )
+                    else
+                      ...visibleChats.map((chat) => _ChatRow(chat: chat)),
+                    if (!_showArchived) ...[
+                      const SizedBox(height: 26),
+                      Text(
+                        'Good questions to ask',
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      const SizedBox(height: 12),
+                      for (final prompt in [
+                        'What should I do before rain?',
+                        'Why are lower leaves yellow?',
+                        'Plan this week\'s field work',
+                      ]) ...[
+                        _PromptTile(
+                          prompt: prompt,
+                          onTap: () => context.push(
+                            '/saathi/new?prompt=${Uri.encodeComponent(prompt)}',
                           ),
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            context.tr('saathiTitle'),
-                            style: Theme.of(context).textTheme.headlineMedium
-                                ?.copyWith(color: Colors.white),
-                          ),
-                        ),
+                        const SizedBox(height: 8),
                       ],
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      context.tr('saathiBody'),
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Colors.white.withValues(alpha: 0.9),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (!controller.canUseLiveServices) ...[
-                const SizedBox(height: 16),
-                InlineNotice(
-                  title: context.tr('chatOffline'),
-                  message: 'Existing sample conversations are available. New messages are not sent in preview mode.',
-                  icon: LucideIcons.cloudOff,
-                  color: AppColors.amber,
-                ),
-              ],
-              const SizedBox(height: 26),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    for (final filter in const <(String, String, IconData)>[
-                      ('all', 'All', LucideIcons.layoutList),
-                      ('general', 'General', LucideIcons.messageCircle),
-                      ('farm', 'Farm', LucideIcons.warehouse),
-                      ('plot', 'Plot', LucideIcons.sprout),
-                      ('scan', 'Leaf checks', LucideIcons.scanLine),
-                    ]) ...[
-                      FilterChip(
-                        avatar: Icon(filter.$3, size: 15),
-                        label: Text(filter.$2),
-                        selected: _scope == filter.$1,
-                        onSelected: (_) => setState(() => _scope = filter.$1),
-                      ),
-                      const SizedBox(width: 7),
                     ],
                   ],
                 ),
               ),
-              const SizedBox(height: 18),
-              SectionHeader(
-                title: _showArchived
-                    ? 'Archived conversations'
-                    : 'Recent conversations',
-                action: FilledButton.tonalIcon(
-                  onPressed: () => context.push('/saathi/new'),
-                  icon: const Icon(LucideIcons.plus, size: 18),
-                  label: Text(context.tr('newChat')),
-                ),
-              ),
-              const SizedBox(height: 12),
-              if (visibleChats.isEmpty)
-                AppStateView(
-                  kind: AppStateKind.empty,
-                  title: _showArchived
-                      ? 'No archived conversations'
-                      : 'No matching conversations',
-                  message: _showArchived
-                      ? 'Chats you archive will remain available here.'
-                      : 'Choose another filter or start a general, farm, plot or leaf-check chat.',
-                  actionLabel: _showArchived ? null : context.tr('newChat'),
-                  onAction: _showArchived
-                      ? null
-                      : () => context.push('/saathi/new'),
-                )
-              else
-                ...visibleChats.map((chat) => _ChatRow(chat: chat)),
-              if (!_showArchived) ...[
-                const SizedBox(height: 26),
-                Text(
-                  'Good questions to ask',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children:
-                      [
-                            'What should I do before rain?',
-                            'Why are lower leaves yellow?',
-                            'Plan this week’s field work',
-                          ]
-                          .map(
-                            (prompt) => ActionChip(
-                              avatar: const Icon(
-                                LucideIcons.sparkles,
-                                size: 16,
-                              ),
-                              label: Text(prompt),
-                              onPressed: () => context.push(
-                                '/saathi/new?prompt=${Uri.encodeComponent(prompt)}',
-                              ),
-                            ),
-                          )
-                          .toList(),
-                ),
-              ],
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+class _SaathiHeroStage extends StatelessWidget {
+  const _SaathiHeroStage({required this.onStartChat});
+
+  final VoidCallback onStartChat;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final inset = constraints.maxWidth >= 600;
+        final textScale = MediaQuery.textScalerOf(context).scale(1);
+        final visualBreathingRoom =
+            (inset ? 58.0 : 42.0) - ((textScale - 1).clamp(0.0, 1.0) * 26);
+        final radius = BorderRadius.circular(inset ? AppRadius.hero : 0);
+        final stage = ClipRRect(
+          borderRadius: radius,
+          child: SizedBox(
+            key: const ValueKey('saathi-hero-stage'),
+            width: double.infinity,
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: Image.asset(
+                    'assets/images/crop_maize.jpg',
+                    fit: BoxFit.cover,
+                    alignment: const AlignmentDirectional(-0.58, -0.15),
+                    semanticLabel: 'Healthy crop rows in warm morning light with a farmer in the field',
+                    errorBuilder: (_, _, _) => Image.asset(
+                      'assets/images/auth_field_hero.webp',
+                      fit: BoxFit.cover,
+                      alignment: Alignment.center,
+                    ),
+                  ),
+                ),
+                const Positioned.fill(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        stops: [0, 0.42, 1],
+                        colors: [
+                          Color(0x26112417),
+                          Color(0x70112417),
+                          Color(0xF20A190F),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: inset ? 350 : 330),
+                  child: Padding(
+                    padding: EdgeInsets.all(inset ? 28 : 20),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 11,
+                            vertical: 7,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xB2132619),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.24),
+                            ),
+                          ),
+                          child: Wrap(
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            spacing: 7,
+                            runSpacing: 3,
+                            children: [
+                              const Icon(
+                                LucideIcons.sparkles,
+                                color: AppColors.amber,
+                                size: 15,
+                              ),
+                              Text(
+                                'Your field companion',
+                                style: Theme.of(context).textTheme.labelMedium
+                                    ?.copyWith(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        SizedBox(height: visualBreathingRoom),
+                        Container(
+                          width: 42,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: AppColors.amber,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 590),
+                          child: Text(
+                            context.tr('saathiTitle'),
+                            style: Theme.of(context).textTheme.headlineLarge
+                                ?.copyWith(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                  shadows: const [
+                                    Shadow(
+                                      color: Color(0x66000000),
+                                      blurRadius: 16,
+                                    ),
+                                  ],
+                                ),
+                          ),
+                        ),
+                        const SizedBox(height: 7),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 620),
+                          child: Text(
+                            context.tr('saathiBody'),
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(
+                                  color: Colors.white.withValues(alpha: 0.86),
+                                  height: 1.45,
+                                ),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        FilledButton.icon(
+                          onPressed: onStartChat,
+                          icon: const Icon(LucideIcons.messageCircle, size: 18),
+                          label: Text(context.tr('newChat')),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: AppColors.forest,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+        if (!inset) return stage;
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+          child: stage,
+        );
+      },
     );
   }
 }
@@ -216,81 +333,95 @@ class _ChatRow extends StatelessWidget {
     final latest = chat.messages.lastOrNull;
     return Padding(
       padding: const EdgeInsets.only(bottom: 9),
-      child: Card(
-        child: InkWell(
-          borderRadius: BorderRadius.circular(AppRadius.medium),
-          onTap: () => context.push('/saathi/chat/${chat.id}'),
-          child: Padding(
-            padding: const EdgeInsets.all(15),
-            child: Row(
-              children: [
-                Container(
-                  width: 46,
-                  height: 46,
-                  decoration: BoxDecoration(
-                    color: AppColors.leaf.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(AppRadius.medium),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          borderRadius: BorderRadius.circular(AppRadius.large),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.ink.withValues(alpha: 0.04),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(AppRadius.large),
+            onTap: () => context.push('/saathi/chat/${chat.id}'),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Container(
+                    width: 46,
+                    height: 46,
+                    decoration: BoxDecoration(
+                      color: AppColors.leaf.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(AppRadius.medium),
+                    ),
+                    child: Icon(
+                      switch (chat.contextScope) {
+                        'farm' => LucideIcons.warehouse,
+                        'plot' => LucideIcons.sprout,
+                        'scan' => LucideIcons.scanLine,
+                        _ => LucideIcons.messageCircle,
+                      },
+                      color: AppColors.forest,
+                      size: 21,
+                    ),
                   ),
-                  child: Icon(
-                    switch (chat.scope) {
-                      'farm' => LucideIcons.warehouse,
-                      'plot' => LucideIcons.sprout,
-                      'scan' => LucideIcons.scanLine,
-                      _ => LucideIcons.messageCircle,
-                    },
-                    color: AppColors.forest,
-                    size: 21,
-                  ),
-                ),
-                const SizedBox(width: 13),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              chat.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.titleMedium,
+                  const SizedBox(width: 13),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                chat.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.titleMedium,
+                              ),
                             ),
-                          ),
-                          if (latest != null)
-                            Text(
-                              context.strings.formatShortDate(latest.sentAt),
-                              style: Theme.of(context).textTheme.labelSmall
-                                  ?.copyWith(color: AppColors.mutedInk),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        latest?.text ?? 'No messages yet',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.bodySmall
-                            ?.copyWith(color: AppColors.mutedInk),
-                      ),
-                      if (chat.scopeLabel != null) ...[
-                        const SizedBox(height: 7),
-                        Text(
-                          chat.scopeLabel!,
-                          style: Theme.of(context).textTheme.labelSmall
-                              ?.copyWith(color: AppColors.leaf),
+                            if (latest != null)
+                              Text(
+                                context.strings.formatShortDate(latest.sentAt),
+                                style: Theme.of(context).textTheme.labelSmall
+                                    ?.copyWith(color: AppColors.mutedInk),
+                              ),
+                          ],
                         ),
+                        const SizedBox(height: 8),
+                        Text(
+                          latest?.text ?? 'No messages yet',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: AppColors.mutedInk),
+                        ),
+                        if (chat.scopeLabel != null) ...[
+                          const SizedBox(height: 7),
+                          Text(
+                            chat.scopeLabel!,
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(color: AppColors.leaf),
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
-                ),
-                const SizedBox(width: 6),
-                const Icon(
-                  LucideIcons.chevronRight,
-                  size: 20,
-                  color: AppColors.mutedInk,
-                ),
-              ],
+                  const SizedBox(width: 6),
+                  const Icon(
+                    LucideIcons.chevronRight,
+                    size: 20,
+                    color: AppColors.mutedInk,
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -373,6 +504,14 @@ class _NewChatScreenState extends State<NewChatScreen> {
         controller.diagnoses.map((item) => (item.id, item.cropName)).toList(),
       _ => <(String, String)>[],
     };
+    final selectedContextId = contextItems.any((item) => item.$1 == _contextId)
+        ? _contextId
+        : null;
+    if (_contextId != null && selectedContextId == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _contextId != null) setState(() => _contextId = null);
+      });
+    }
     return Scaffold(
       appBar: AppBar(title: Text(context.tr('newChat'))),
       body: SafeArea(
@@ -423,24 +562,28 @@ class _NewChatScreenState extends State<NewChatScreen> {
                   _contextId = null;
                 }),
               ),
-              if (contextItems.isNotEmpty) ...[
+              if (_scope != 'general') ...[
                 const SizedBox(height: 16),
-                DropdownButtonFormField<String>(
-                  initialValue: _contextId,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Choose context',
+                if (contextItems.isEmpty)
+                  _MissingChatContext(scope: _scope)
+                else
+                  DropdownButtonFormField<String>(
+                    initialValue: selectedContextId,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      labelText:
+                          'Choose ${_scope == 'scan' ? 'leaf check' : _scope}',
+                    ),
+                    items: contextItems
+                        .map(
+                          (item) => DropdownMenuItem(
+                            value: item.$1,
+                            child: Text(item.$2),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) => setState(() => _contextId = value),
                   ),
-                  items: contextItems
-                      .map(
-                        (item) => DropdownMenuItem(
-                          value: item.$1,
-                          child: Text(item.$2),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (value) => setState(() => _contextId = value),
-                ),
               ],
               const SizedBox(height: 22),
               TextField(
@@ -464,18 +607,73 @@ class _NewChatScreenState extends State<NewChatScreen> {
                       )
                     : Text(context.tr('send')),
               ),
-              if (!controller.canUseLiveServices) ...[
-                const SizedBox(height: 14),
-                InlineNotice(
-                  title: context.tr('chatOffline'),
-                  message: 'Preview conversations stay on this device and are clearly marked as not sent.',
-                  icon: LucideIcons.cloudOff,
-                  color: AppColors.amber,
-                ),
-              ],
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _MissingChatContext extends StatelessWidget {
+  const _MissingChatContext({required this.scope});
+
+  final String scope;
+
+  @override
+  Widget build(BuildContext context) {
+    final (icon, title, message, action, route) = switch (scope) {
+      'farm' => (
+        LucideIcons.warehouse,
+        'No farm available',
+        'Create a farm first, then return here to connect this conversation.',
+        'Create farm',
+        '/farm/add',
+      ),
+      'plot' => (
+        LucideIcons.sprout,
+        'No plot available',
+        'Add a plot inside a farm before starting a plot conversation.',
+        'Open farms',
+        '/farm',
+      ),
+      _ => (
+        LucideIcons.scanLine,
+        'No leaf check available',
+        'Complete a leaf check first so Saathi can use its result safely.',
+        'Start leaf check',
+        '/scan',
+      ),
+    };
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.mineral,
+        borderRadius: BorderRadius.circular(AppRadius.large),
+        border: Border.all(color: AppColors.leaf.withValues(alpha: 0.18)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: AppColors.forest, size: 22),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: 4),
+                Text(message, style: Theme.of(context).textTheme.bodySmall),
+                const SizedBox(height: 10),
+                TextButton.icon(
+                  onPressed: () => context.push(route),
+                  icon: const Icon(LucideIcons.arrowUpRight, size: 16),
+                  label: Text(action),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -615,13 +813,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   }
 
   Future<void> _readMessage(ChatMessageModel message) async {
-    final languageTag = Localizations.localeOf(context).toLanguageTag();
     try {
       final usedAiVoice = await _voice.toggleSpeech(
         chatId: widget.chatId,
         messageId: message.id,
-        fallbackText: message.text,
-        languageTag: languageTag,
       );
       if (usedAiVoice && mounted && _voice.speakingMessageId != null) {
         showAppSnackBar(context, context.tr('voiceAiDisclosure'));
@@ -678,6 +873,21 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
   Future<void> _cancelRecording() async {
     await _voice.cancelRecording();
+  }
+
+  Future<void> _openLiveVoice() async {
+    if (!_controller.canUseLiveServices) {
+      showAppSnackBar(context, context.tr('error.VOICE_REQUIRES_CONNECTION'));
+      return;
+    }
+    await _voice.stopSpeech();
+    if (!mounted) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (_) => LiveVoiceScreen(chatId: widget.chatId),
+      ),
+    );
   }
 
   void _setFeedback(ChatMessageModel message, bool helpful) {
@@ -954,13 +1164,14 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                 ),
               )
             else
-              _FloatingComposer(
+              ChatComposer(
                 controller: _message,
                 focusNode: _messageFocus,
                 onAttach: () => _openAttachmentMenu(chat),
                 voiceState: _voice.state,
                 voiceElapsed: _voice.elapsed,
                 onVoice: _toggleRecording,
+                onLiveVoice: _openLiveVoice,
                 onCancelVoice: _cancelRecording,
                 onSend: _send,
               ),
@@ -1735,60 +1946,63 @@ class _LinkedScanCard extends StatelessWidget {
       color: Theme.of(context).brightness == Brightness.dark
           ? AppColors.darkSurface
           : const Color(0xFFEAF1E5),
-      borderRadius: BorderRadius.circular(18),
+      borderRadius: BorderRadius.circular(14),
       child: InkWell(
         key: const ValueKey('linked-scan-card'),
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(14),
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: SizedBox.square(
-                  dimension: 64,
-                  child: _DiagnosisThumbnail(diagnosis: diagnosis),
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: AppColors.leaf.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  LucideIcons.scanLine,
+                  color: AppColors.forest,
+                  size: 20,
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Linked leaf check',
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: AppColors.leaf,
-                        fontWeight: FontWeight.w700,
-                      ),
+                      '${diagnosis.cropName} · ${prediction?.name ?? 'Possible issue'}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.labelLarge,
                     ),
                     const SizedBox(height: 3),
-                    Text(
-                      '${diagnosis.cropName} · ${prediction?.name ?? 'Possible issue'}',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 4),
                     Wrap(
-                      spacing: 8,
-                      runSpacing: 6,
+                      spacing: 6,
+                      runSpacing: 3,
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         Text(
-                          '${prediction?.confidenceLabel ?? diagnosis.confidenceLabel} confidence',
-                          style: Theme.of(context).textTheme.bodySmall
+                          'Linked leaf check',
+                          style: Theme.of(context).textTheme.labelSmall
                               ?.copyWith(color: AppColors.mutedInk),
                         ),
+                        Container(
+                          width: 3,
+                          height: 3,
+                          decoration: const BoxDecoration(
+                            color: AppColors.mutedInk,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
                         Text(
-                          'View result',
-                          style: Theme.of(context).textTheme.labelMedium
-                              ?.copyWith(
-                                color: AppColors.forest,
-                                fontWeight: FontWeight.w800,
-                              ),
+                          '${prediction?.confidenceLabel ?? diagnosis.confidenceLabel} confidence',
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(color: AppColors.leaf),
                         ),
                       ],
                     ),
@@ -1800,28 +2014,6 @@ class _LinkedScanCard extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _DiagnosisThumbnail extends StatelessWidget {
-  const _DiagnosisThumbnail({required this.diagnosis});
-
-  final DiagnosisCaseModel diagnosis;
-
-  @override
-  Widget build(BuildContext context) {
-    final localPath = diagnosis.imagePath;
-    if (localPath != null && File(localPath).existsSync()) {
-      return Image.file(File(localPath), fit: BoxFit.cover);
-    }
-    return Image.asset(
-      diagnosis.imageAsset,
-      fit: BoxFit.cover,
-      errorBuilder: (_, _, _) => const ColoredBox(
-        color: Color(0xFFDCE8D5),
-        child: Icon(LucideIcons.leaf, color: AppColors.forest),
       ),
     );
   }
@@ -1885,11 +2077,12 @@ class _MessageEntry extends StatelessWidget {
       alignment: AlignmentDirectional.centerEnd,
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxWidth: math.min(520, MediaQuery.sizeOf(context).width * 0.82),
+          maxWidth: math.min(440, MediaQuery.sizeOf(context).width * 0.78),
         ),
         child: Container(
-          margin: const EdgeInsets.only(bottom: 18),
-          padding: const EdgeInsets.fromLTRB(16, 12, 14, 8),
+          key: ValueKey('farmer-message-${message.id}'),
+          margin: const EdgeInsets.only(bottom: 14),
+          padding: const EdgeInsets.fromLTRB(14, 10, 12, 7),
           decoration: const BoxDecoration(
             color: AppColors.forest,
             borderRadius: BorderRadiusDirectional.only(
@@ -1986,6 +2179,7 @@ class _AssistantResponse extends StatelessWidget {
   Widget build(BuildContext context) {
     final reply = message.structuredReply;
     return Padding(
+      key: ValueKey('saathi-response-${message.id}'),
       padding: const EdgeInsets.only(bottom: 26),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2005,16 +2199,9 @@ class _AssistantResponse extends StatelessWidget {
             const SizedBox(height: 10),
           ],
           if (reply == null)
-            SelectableText(
-              message.text,
-              style: Theme.of(context).textTheme.bodyLarge,
-            )
+            AssistantRichText(message.text, prominent: true)
           else ...[
-            SelectableText(
-              reply.shortAnswer,
-              style: Theme.of(context).textTheme.bodyLarge
-                  ?.copyWith(fontSize: 17, height: 1.5),
-            ),
+            AssistantRichText(reply.shortAnswer, prominent: true),
             if (reply.nextSteps.isNotEmpty) ...[
               const SizedBox(height: 20),
               Text(
@@ -2032,7 +2219,7 @@ class _AssistantResponse extends StatelessWidget {
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 6),
-              SelectableText(section.body),
+              AssistantRichText(section.body),
             ],
             if (reply.retakeAdvice case final advice?) ...[
               const SizedBox(height: 14),
@@ -2102,7 +2289,7 @@ class _AssistantResponse extends StatelessWidget {
 }
 
 String _chatScopeCaption(ChatThreadModel chat) {
-  final scope = switch (chat.scope) {
+  final scope = switch (chat.contextScope) {
     'scan' => 'Scan context',
     'plot' => 'Plot context',
     'farm' => 'Farm context',
@@ -2144,7 +2331,7 @@ class _NumberedStep extends StatelessWidget {
           Expanded(
             child: Padding(
               padding: const EdgeInsets.only(top: 3),
-              child: Text(text),
+              child: AssistantRichText(text),
             ),
           ),
         ],
@@ -2184,7 +2371,7 @@ class _CollapsibleSection extends StatelessWidget {
           if (text case final body?)
             Align(
               alignment: AlignmentDirectional.centerStart,
-              child: SelectableText(body),
+              child: AssistantRichText(body),
             ),
           for (final value in values)
             Padding(
@@ -2200,7 +2387,7 @@ class _CollapsibleSection extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 9),
-                  Expanded(child: Text(value)),
+                  Expanded(child: AssistantRichText(value)),
                 ],
               ),
             ),
@@ -2248,7 +2435,7 @@ class _CautionSection extends StatelessWidget {
             for (final value in values)
               Padding(
                 padding: const EdgeInsetsDirectional.only(start: 25, top: 6),
-                child: Text(value),
+                child: AssistantRichText(value),
               ),
           ],
         ),
@@ -2308,192 +2495,6 @@ class _AssistantActions extends StatelessWidget {
           label: Text(speaking ? 'Stop' : 'Read aloud'),
         ),
       ],
-    );
-  }
-}
-
-class _FloatingComposer extends StatelessWidget {
-  const _FloatingComposer({
-    required this.controller,
-    required this.focusNode,
-    required this.onAttach,
-    required this.voiceState,
-    required this.voiceElapsed,
-    required this.onVoice,
-    required this.onCancelVoice,
-    required this.onSend,
-  });
-
-  final TextEditingController controller;
-  final FocusNode focusNode;
-  final VoidCallback onAttach;
-  final VoiceComposerState voiceState;
-  final Duration voiceElapsed;
-  final VoidCallback onVoice;
-  final VoidCallback onCancelVoice;
-  final VoidCallback onSend;
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      top: false,
-      minimum: const EdgeInsets.fromLTRB(12, 6, 12, 10),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 720),
-          child: Material(
-            elevation: 8,
-            shadowColor: Colors.black.withValues(alpha: 0.12),
-            color: Theme.of(context).colorScheme.surface,
-            borderRadius: BorderRadius.circular(28),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(6, 5, 5, 5),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  AnimatedSwitcher(
-                    duration: MediaQuery.disableAnimationsOf(context)
-                        ? Duration.zero
-                        : const Duration(milliseconds: 180),
-                    child: voiceState == VoiceComposerState.idle
-                        ? const SizedBox.shrink()
-                        : _VoiceComposerStatus(
-                            key: ValueKey(voiceState),
-                            state: voiceState,
-                            elapsed: voiceElapsed,
-                            onCancel: onCancelVoice,
-                          ),
-                  ),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      IconButton(
-                        tooltip: 'Add leaf photos',
-                        onPressed: voiceState == VoiceComposerState.idle
-                            ? onAttach
-                            : null,
-                        icon: const Icon(LucideIcons.plus),
-                      ),
-                      Expanded(
-                        child: TextField(
-                          key: const ValueKey('chat-composer'),
-                          controller: controller,
-                          focusNode: focusNode,
-                          minLines: 1,
-                          maxLines: 5,
-                          textCapitalization: TextCapitalization.sentences,
-                          decoration: InputDecoration(
-                            hintText: context.tr('askHint'),
-                            filled: false,
-                            border: InputBorder.none,
-                            enabledBorder: InputBorder.none,
-                            focusedBorder: InputBorder.none,
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 11,
-                            ),
-                          ),
-                          enabled: voiceState == VoiceComposerState.idle,
-                          onSubmitted: (_) => onSend(),
-                        ),
-                      ),
-                      if (voiceState != VoiceComposerState.idle &&
-                          voiceState != VoiceComposerState.recording)
-                        const Padding(
-                          padding: EdgeInsets.all(12),
-                          child: SizedBox.square(
-                            dimension: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2.2),
-                          ),
-                        )
-                      else
-                        IconButton(
-                          key: const ValueKey('chat-voice-button'),
-                          tooltip: voiceState == VoiceComposerState.recording
-                              ? context.tr('voiceStop')
-                              : context.tr('voiceStart'),
-                          onPressed: onVoice,
-                          color: voiceState == VoiceComposerState.recording
-                              ? AppColors.amber
-                              : AppColors.forest,
-                          icon: Icon(
-                            voiceState == VoiceComposerState.recording
-                                ? LucideIcons.square
-                                : LucideIcons.mic,
-                          ),
-                        ),
-                      IconButton.filled(
-                        tooltip: context.tr('send'),
-                        onPressed: voiceState == VoiceComposerState.idle
-                            ? onSend
-                            : null,
-                        icon: const Icon(LucideIcons.arrowUp, size: 20),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _VoiceComposerStatus extends StatelessWidget {
-  const _VoiceComposerStatus({
-    super.key,
-    required this.state,
-    required this.elapsed,
-    required this.onCancel,
-  });
-
-  final VoiceComposerState state;
-  final Duration elapsed;
-  final VoidCallback onCancel;
-
-  @override
-  Widget build(BuildContext context) {
-    final recording = state == VoiceComposerState.recording;
-    final minutes = elapsed.inMinutes.toString().padLeft(2, '0');
-    final seconds = (elapsed.inSeconds % 60).toString().padLeft(2, '0');
-    return Semantics(
-      liveRegion: true,
-      label: recording
-          ? context.tr('voiceRecording', {'time': '$minutes:$seconds'})
-          : context.tr('voiceTranscribing'),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 4, 4, 0),
-        child: Row(
-          children: [
-            Container(
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(
-                color: AppColors.amber,
-                shape: BoxShape.circle,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                recording
-                    ? context.tr('voiceRecording', {
-                        'time': '$minutes:$seconds',
-                      })
-                    : context.tr('voiceTranscribing'),
-                style: Theme.of(context).textTheme.labelLarge,
-              ),
-            ),
-            if (recording)
-              TextButton(
-                onPressed: onCancel,
-                child: Text(context.tr('cancel')),
-              ),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -2594,6 +2595,53 @@ class _ThinkingIndicatorState extends State<_ThinkingIndicator>
               ),
             ],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PromptTile extends StatelessWidget {
+  const _PromptTile({required this.prompt, required this.onTap});
+  final String prompt;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(AppRadius.medium),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppRadius.medium),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppRadius.medium),
+            border: Border.all(color: AppColors.divider),
+          ),
+          child: Row(
+            children: [
+              const Icon(
+                LucideIcons.sparkles,
+                size: 16,
+                color: AppColors.amber,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  prompt,
+                  style: Theme.of(context).textTheme.bodyMedium
+                      ?.copyWith(fontWeight: FontWeight.w500),
+                ),
+              ),
+              const Icon(
+                LucideIcons.arrowRight,
+                size: 16,
+                color: AppColors.mutedInk,
+              ),
+            ],
+          ),
         ),
       ),
     );

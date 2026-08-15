@@ -10,6 +10,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -69,6 +70,7 @@ class Reminder(Base):
             "recurrence_days IS NULL OR recurrence_days >= 1",
             name="ck_reminders_recurrence",
         ),
+        UniqueConstraint("proposal_id", name="uq_reminders_proposal_id"),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -83,7 +85,6 @@ class Reminder(Base):
         ForeignKey("reminder_proposals.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
-        unique=True,
     )
     chat_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("chat_sessions.id", ondelete="SET NULL"), nullable=True, index=True

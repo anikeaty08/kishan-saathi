@@ -16,6 +16,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/ui/app_ui.dart';
 import '../../../core/ui/crop_visuals.dart';
 import '../../shared/presentation/app_controller.dart';
+import '../../saathi/data/chat_scope_policy.dart';
 
 class FarmScreen extends StatelessWidget {
   const FarmScreen({super.key});
@@ -109,7 +110,7 @@ class _FarmMap extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final mappable = farms
-        .where((farm) => farm.mapLatitude != null && farm.mapLongitude != null)
+        .expand((farm) => farm.plots.map((plot) => (farm: farm, plot: plot)))
         .toList(growable: false);
     if (mappable.isEmpty) {
       return AppStateView(
@@ -123,7 +124,12 @@ class _FarmMap extends StatelessWidget {
         compact: true,
       );
     }
-    final first = mappable.first;
+    final center = LatLng(
+      mappable.fold<double>(0, (sum, item) => sum + item.plot.latitude) /
+          mappable.length,
+      mappable.fold<double>(0, (sum, item) => sum + item.plot.longitude) /
+          mappable.length,
+    );
     return Padding(
       padding: const EdgeInsetsDirectional.only(start: 2, end: 2, bottom: 2),
       child: ClipRRect(
@@ -132,8 +138,8 @@ class _FarmMap extends StatelessWidget {
           children: [
             FlutterMap(
               options: MapOptions(
-                initialCenter: LatLng(first.mapLatitude!, first.mapLongitude!),
-                initialZoom: 12.5,
+                initialCenter: center,
+                initialZoom: mappable.length == 1 ? 14 : 11.5,
                 interactionOptions: const InteractionOptions(
                   flags:
                       InteractiveFlag.pinchZoom |
@@ -153,15 +159,19 @@ class _FarmMap extends StatelessWidget {
                 MarkerLayer(
                   markers: mappable
                       .map(
-                        (farm) => Marker(
-                          point: LatLng(farm.mapLatitude!, farm.mapLongitude!),
+                        (item) => Marker(
+                          point: LatLng(
+                            item.plot.latitude,
+                            item.plot.longitude,
+                          ),
                           width: 52,
                           height: 52,
                           child: Semantics(
-                            label: farm.name,
+                            label: '${item.farm.name}, ${item.plot.name}',
                             button: true,
                             child: GestureDetector(
-                              onTap: () => context.push('/farm/${farm.id}'),
+                              onTap: () =>
+                                  context.push('/plot/${item.plot.id}'),
                               child: Container(
                                 decoration: BoxDecoration(
                                   color: AppColors.forest,
@@ -540,7 +550,7 @@ class _PlotRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
-    final crop = plot.crops.firstOrNull;
+    final crop = plot.crops.where((crop) => crop.isActive).firstOrNull;
     return Card(
       child: InkWell(
         borderRadius: BorderRadius.circular(AppRadius.medium),
@@ -694,19 +704,20 @@ class _PlotDetailScreenState extends State<PlotDetailScreen> {
         ),
       );
     }
-    final crop = plot.crops.firstOrNull;
+    final crop = plot.crops.where((crop) => crop.isActive).firstOrNull;
     final timeline = controller.plotTimelines[plot.id] ?? const [];
     final plotWeather = controller.plotWeather[plot.id];
     final plotDiagnoses = controller.diagnoses
         .where((diagnosis) => diagnosis.plotId == plot.id)
         .toList(growable: false);
     final plotChats = controller.chats
-        .where((chat) {
-          if (chat.plotId == plot.id) return true;
-          final diagnosisId = chat.diagnosisCaseId;
-          return diagnosisId != null &&
-              plotDiagnoses.any((diagnosis) => diagnosis.id == diagnosisId);
-        })
+        .where(
+          (chat) => ChatScopePolicy.belongsToPlot(
+            chat,
+            plot.id,
+            diagnosisIds: plotDiagnoses.map((item) => item.id).toSet(),
+          ),
+        )
         .toList(growable: false);
     final plotReminders = controller.reminders
         .where((reminder) => reminder.plotId == plot.id)
@@ -1031,6 +1042,7 @@ class _PlotWeatherSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tomorrow = weather.forecast.length > 1 ? weather.forecast[1] : null;
+    final current = weather.current;
     return Card(
       color: const Color(0xFFE8F2F5),
       child: Padding(
@@ -1044,7 +1056,10 @@ class _PlotWeatherSummary extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    weather.current.conditionLabel ?? 'Current conditions',
+                    current?.conditionLabel ??
+                        (current == null
+                            ? 'Current conditions unavailable'
+                            : 'Current conditions'),
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   const SizedBox(height: 3),
@@ -1059,7 +1074,7 @@ class _PlotWeatherSummary extends StatelessWidget {
               ),
             ),
             Text(
-              '${weather.current.temperature.round()}°',
+              current == null ? '—' : '${current.temperature.round()}°',
               style: Theme.of(context).textTheme.headlineMedium
                   ?.copyWith(color: AppColors.forest),
             ),

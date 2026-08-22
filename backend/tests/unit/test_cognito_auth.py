@@ -46,6 +46,7 @@ def _settings() -> Settings:
     return Settings(
         _env_file=None,
         app_env="test",
+        aws_region="ap-south-1",
         cognito_user_pool_id=POOL_ID,
         cognito_app_client_id=CLIENT_ID,
     )

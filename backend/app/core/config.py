@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     database_pool_size: int = Field(default=10, ge=1, le=100)
     database_max_overflow: int = Field(default=10, ge=0, le=100)
 
-    aws_region: str = "ap-south-1"
+    aws_region: str = "ap-northeast-1"
     cognito_user_pool_id: str = ""
     cognito_app_client_id: str = ""
     cognito_jwks_cache_seconds: int = Field(default=3600, ge=60, le=86400)

@@ -16,7 +16,7 @@ class AppConfig {
       apiBaseUri: Uri.parse(apiBaseUrl),
       awsRegion: const String.fromEnvironment(
         'AWS_REGION',
-        defaultValue: 'ap-south-1',
+        defaultValue: 'ap-northeast-1',
       ),
       environment: const String.fromEnvironment(
         'APP_ENV',

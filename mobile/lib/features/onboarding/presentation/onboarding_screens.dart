@@ -161,18 +161,6 @@ class _WelcomeContent extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            child: TextButton(
-              onPressed: () => context.push('/onboarding/language'),
-              style: TextButton.styleFrom(
-                minimumSize: const Size.fromHeight(44),
-                foregroundColor: Colors.white.withValues(alpha: 0.75),
-              ),
-              child: Text(context.tr('chooseLanguage')),
-            ),
-          ),
         ],
       ),
     );
@@ -195,22 +183,40 @@ class _AuthScreenState extends State<AuthScreen> {
   bool _obscure = true;
 
   Future<bool> _showEmailConfirmation() async {
+    final cachedEmail = _emailController.text.trim();
+    final cachedPassword = _passwordController.text;
     final confirmed = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (context) =>
-          _SignUpConfirmationSheet(email: _emailController.text.trim()),
+      builder: (context) => _SignUpConfirmationSheet(email: cachedEmail),
     );
-    if ((confirmed ?? false) && mounted) {
-      setState(() => _createAccount = false);
-      showAppSnackBar(
-        context,
-        'Email confirmed. Sign in to continue.',
-        success: true,
-      );
+    if (!(confirmed ?? false) || !mounted) return confirmed ?? false;
+    // Auto sign-in after OTP confirmation so the user doesn't have to
+    // manually switch tabs and tap Sign In again.
+    final controller = context.read<AppController>();
+    try {
+      await controller.signIn(cachedEmail, cachedPassword);
+      if (!mounted) return true;
+      if (controller.onboardingComplete) {
+        context.go('/home');
+      } else if (controller.hasFarmerName) {
+        context.go('/onboarding/language');
+      } else {
+        context.go('/onboarding/profile');
+      }
+    } on ApiException {
+      // Auto sign-in failed silently — fallback to the old manual flow.
+      if (mounted) {
+        setState(() => _createAccount = false);
+        showAppSnackBar(
+          context,
+          'Email confirmed. Sign in to continue.',
+          success: true,
+        );
+      }
     }
-    return confirmed ?? false;
+    return true;
   }
 
   @override
@@ -258,10 +264,12 @@ class _AuthScreenState extends State<AuthScreen> {
       }
     } on ApiException catch (error) {
       if (!mounted) return;
-      if (error.code == 'AUTH_EMAIL_UNCONFIRMED' ||
-          error.code == 'AUTH_ACCOUNT_EXISTS') {
+      if (error.code == 'AUTH_EMAIL_UNCONFIRMED') {
         await _showEmailConfirmation();
         return;
+      }
+      if (error.code == 'AUTH_INCORRECT_CREDENTIALS') {
+        _passwordController.clear();
       }
       showAppSnackBar(context, context.localizedError(error));
     }
@@ -426,7 +434,11 @@ class _AuthScreenState extends State<AuthScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            _createAccount ? 'Create your private farmer account.' : 'Welcome back. Your farm records stay private to your account.',
+            context.tr(
+              _createAccount
+                  ? 'createPrivateAccountBody'
+                  : 'welcomeBackPrivateBody',
+            ),
             style: Theme.of(context).textTheme.bodyLarge
                 ?.copyWith(color: Colors.white.withValues(alpha: 0.76)),
           ),
@@ -479,7 +491,7 @@ class _AuthScreenState extends State<AuthScreen> {
               labelText: context.tr('password'),
               prefixIcon: const Icon(LucideIcons.lockKeyhole, size: 20),
               suffixIcon: IconButton(
-                tooltip: _obscure ? 'Show password' : 'Hide password',
+                tooltip: context.tr(_obscure ? 'showPassword' : 'hidePassword'),
                 onPressed: () => setState(() => _obscure = !_obscure),
                 icon: Icon(
                   _obscure ? LucideIcons.eye : LucideIcons.eyeOff,
@@ -675,9 +687,9 @@ class _SignUpConfirmationSheetState extends State<_SignUpConfirmationSheet> {
                 keyboardType: TextInputType.number,
                 textInputAction: TextInputAction.done,
                 autofillHints: const [AutofillHints.oneTimeCode],
-                decoration: const InputDecoration(
-                  labelText: 'Confirmation code',
-                  prefixIcon: Icon(LucideIcons.badgeCheck),
+                decoration: InputDecoration(
+                  labelText: context.tr('confirmationCode'),
+                  prefixIcon: const Icon(LucideIcons.badgeCheck),
                 ),
                 validator: (value) => (value?.trim().length ?? 0) < 4
                     ? 'Enter the code from your email.'
@@ -694,7 +706,7 @@ class _SignUpConfirmationSheetState extends State<_SignUpConfirmationSheet> {
                           dimension: 22,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('Confirm email'),
+                      : Text(context.tr('confirmEmail')),
                 ),
               ),
               Align(
@@ -707,7 +719,7 @@ class _SignUpConfirmationSheetState extends State<_SignUpConfirmationSheet> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(LucideIcons.refreshCw, size: 17),
-                  label: const Text('Resend confirmation code'),
+                  label: Text(context.tr('resendConfirmationCode')),
                 ),
               ),
             ],
@@ -754,7 +766,14 @@ class _PasswordRecoverySheetState extends State<_PasswordRecoverySheet> {
     try {
       if (!_codeSent) {
         await context.read<AppController>().requestPasswordReset(_email.text);
-        if (mounted) setState(() => _codeSent = true);
+        if (mounted) {
+          setState(() => _codeSent = true);
+          showAppSnackBar(
+            context,
+            'Recovery code sent to your email.',
+            success: true,
+          );
+        }
         return;
       }
       await context.read<AppController>().confirmPasswordReset(
@@ -792,7 +811,7 @@ class _PasswordRecoverySheetState extends State<_PasswordRecoverySheet> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                _codeSent ? 'Set a new password' : 'Reset your password',
+                context.tr(_codeSent ? 'setNewPassword' : 'resetYourPassword'),
                 style: Theme.of(context).textTheme.headlineMedium,
               ),
               const SizedBox(height: 8),
@@ -809,9 +828,9 @@ class _PasswordRecoverySheetState extends State<_PasswordRecoverySheet> {
                 enabled: !_codeSent && !busy,
                 keyboardType: TextInputType.emailAddress,
                 autofillHints: const [AutofillHints.email],
-                decoration: const InputDecoration(
-                  labelText: 'Email address',
-                  prefixIcon: Icon(LucideIcons.mail),
+                decoration: InputDecoration(
+                  labelText: context.tr('email'),
+                  prefixIcon: const Icon(LucideIcons.mail),
                 ),
                 validator: (value) {
                   final normalized = value?.trim() ?? '';
@@ -826,9 +845,9 @@ class _PasswordRecoverySheetState extends State<_PasswordRecoverySheet> {
                   controller: _code,
                   keyboardType: TextInputType.number,
                   autofillHints: const [AutofillHints.oneTimeCode],
-                  decoration: const InputDecoration(
-                    labelText: 'Recovery code',
-                    prefixIcon: Icon(LucideIcons.badgeCheck),
+                  decoration: InputDecoration(
+                    labelText: context.tr('recoveryCode'),
+                    prefixIcon: const Icon(LucideIcons.badgeCheck),
                   ),
                   validator: (value) => (value?.trim().length ?? 0) < 4
                       ? 'Enter the code from your email.'
@@ -840,10 +859,12 @@ class _PasswordRecoverySheetState extends State<_PasswordRecoverySheet> {
                   obscureText: _obscure,
                   autofillHints: const [AutofillHints.newPassword],
                   decoration: InputDecoration(
-                    labelText: 'New password',
+                    labelText: context.tr('newPassword'),
                     prefixIcon: const Icon(LucideIcons.lockKeyhole),
                     suffixIcon: IconButton(
-                      tooltip: _obscure ? 'Show password' : 'Hide password',
+                      tooltip: context.tr(
+                        _obscure ? 'showPassword' : 'hidePassword',
+                      ),
                       onPressed: () => setState(() => _obscure = !_obscure),
                       icon: Icon(
                         _obscure ? LucideIcons.eye : LucideIcons.eyeOff,
@@ -865,7 +886,9 @@ class _PasswordRecoverySheetState extends State<_PasswordRecoverySheet> {
                           dimension: 22,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : Text(_codeSent ? 'Update password' : 'Send code'),
+                      : Text(
+                          context.tr(_codeSent ? 'updatePassword' : 'sendCode'),
+                        ),
                 ),
               ),
               if (_codeSent)
@@ -874,7 +897,7 @@ class _PasswordRecoverySheetState extends State<_PasswordRecoverySheet> {
                     onPressed: busy
                         ? null
                         : () => setState(() => _codeSent = false),
-                    child: const Text('Use a different email'),
+                    child: Text(context.tr('useDifferentEmail')),
                   ),
                 ),
             ],
@@ -949,13 +972,19 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
                 width: double.infinity,
                 child: FilledButton(
                   onPressed: () async {
-                    await context.read<AppController>().setFarmerName(
-                      _nameController.text,
-                    );
-                    if (context.mounted) {
-                      context.push(
-                        '/onboarding/language?preview=${widget.preview}',
+                    try {
+                      await context.read<AppController>().setFarmerName(
+                        _nameController.text,
                       );
+                      if (context.mounted) {
+                        context.push(
+                          '/onboarding/language?preview=${widget.preview}',
+                        );
+                      }
+                    } on ApiException catch (error) {
+                      if (context.mounted) {
+                        showAppSnackBar(context, context.localizedError(error));
+                      }
                     }
                   },
                   child: Text(context.tr('continue')),
@@ -1120,6 +1149,10 @@ class PermissionsSetupScreen extends StatelessWidget {
         enabled,
       ),
       AppPermissionKind.camera => await controller.setCameraEnabled(enabled),
+      AppPermissionKind.microphone =>
+        enabled
+            ? await controller.requestMicrophonePermission()
+            : controller.microphonePermission,
       AppPermissionKind.notifications => await controller.setNotifications(
         enabled,
       ),
@@ -1135,18 +1168,16 @@ class PermissionsSetupScreen extends StatelessWidget {
     final openSettings = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Permission blocked'),
-        content: const Text(
-          'This permission is blocked by the device. Open system Settings to enable it.',
-        ),
+        title: Text(context.tr('permissionBlocked')),
+        content: Text(context.tr('permissionBlockedBody')),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Not now'),
+            child: Text(context.tr('notNow')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Open Settings'),
+            child: Text(context.tr('openSettings')),
           ),
         ],
       ),

@@ -91,7 +91,7 @@ async def test_every_protected_operation_fails_closed_without_bearer_token() -> 
             assert response.status_code == 401, (method, path, response.text)
             assert response.json()["error"]["code"] == "AUTH_TOKEN_REQUIRED", (method, path)
 
-    assert len(protected) == 77
+    assert len(protected) == 76
 
 
 @pytest.mark.asyncio
@@ -123,4 +123,4 @@ async def test_every_public_operation_is_reachable_without_bearer_authentication
         if operation[1].startswith("/api/v1/auth/")
     ]
     assert len(auth_operations) == 7
-    assert len(_operations(application)) == 88
+    assert len(_operations(application)) == 87

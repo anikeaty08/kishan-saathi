@@ -65,7 +65,7 @@ class ChatComposer extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       IconButton(
-                        tooltip: 'Add leaf photos',
+                        tooltip: context.tr('addLeafPhotos'),
                         onPressed: voiceState == VoiceComposerState.idle
                             ? onAttach
                             : null,
@@ -107,7 +107,7 @@ class ChatComposer extends StatelessWidget {
                         if (voiceState == VoiceComposerState.idle)
                           IconButton(
                             key: const ValueKey('chat-live-voice-button'),
-                            tooltip: 'Voice conversation with Saathi',
+                            tooltip: context.tr('voiceConversationWithSaathi'),
                             onPressed: onLiveVoice,
                             color: AppColors.forest,
                             icon: const Icon(LucideIcons.audioLines),

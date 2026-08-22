@@ -103,8 +103,10 @@ class PlotUpdate(BaseModel):
         required_non_null = {"name", "latitude", "longitude"}
         if any(getattr(self, field) is None for field in self.model_fields_set & required_non_null):
             raise ValueError("PLOT_REQUIRED_FIELD_NULL")
-        if bool({"area_value", "area_unit"} & self.model_fields_set) and (
-            self.area_value is None or self.area_unit is None
+        area_fields = {"area_value", "area_unit"}
+        if self.model_fields_set & area_fields and (
+            not area_fields <= self.model_fields_set
+            or (self.area_value is None) != (self.area_unit is None)
         ):
             raise ValueError("PLOT_AREA_INCOMPLETE")
         return self

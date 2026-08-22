@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter/widgets.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:krishisathi/core/localization/app_language.dart';
 import 'package:krishisathi/core/localization/app_strings.dart';
@@ -23,8 +26,19 @@ void main() {
 
   test('every language has a complete bundled offline catalog', () async {
     final english = await AppStrings.load(const Locale('en'));
+    final englishCatalog = jsonDecode(
+      await rootBundle.loadString('lib/l10n/app_en.arb'),
+    ) as Map<String, dynamic>;
+    final englishKeys = englishCatalog.keys
+        .where((key) => !key.startsWith('@'))
+        .toSet();
     for (final language in AppLanguage.supported) {
       final strings = await AppStrings.load(language.locale);
+      final catalog = jsonDecode(
+        await rootBundle.loadString('lib/l10n/app_${language.code}.arb'),
+      ) as Map<String, dynamic>;
+      final keys = catalog.keys.where((key) => !key.startsWith('@')).toSet();
+      expect(keys, englishKeys, reason: language.code);
       expect(strings.text('appName'), isNotEmpty);
       expect(strings.text('error.SCAN_IMAGE_TOO_SMALL'), isNotEmpty);
       expect(strings.text('month.long.8'), isNotEmpty);
@@ -81,6 +95,50 @@ void main() {
 
       expect(message, isNotEmpty);
       expect(message, isNot('raw provider exception'));
+    },
+  );
+
+  test(
+    'new authentication errors stay in the selected native script',
+    () async {
+      final hindi = await AppStrings.load(const Locale('hi'));
+      final urdu = await AppStrings.load(const Locale('ur'));
+      final santali = await AppStrings.load(const Locale('sat'));
+      final invalidCode = hindi.apiError(
+        const ApiException(
+          code: 'AUTH_CONFIRMATION_CODE_INVALID',
+          message: 'raw provider exception',
+          statusCode: 400,
+        ),
+      );
+      final duplicate = hindi.apiError(
+        const ApiException(
+          code: 'AUTH_ACCOUNT_EXISTS',
+          message: 'raw provider exception',
+          statusCode: 409,
+        ),
+      );
+      final profileFailure = hindi.apiError(
+        const ApiException(
+          code: 'AUTH_SIGN_IN_PROFILE_FAILED',
+          message: 'raw provider exception',
+          statusCode: 401,
+        ),
+      );
+
+      expect(RegExp(r'[\u0900-\u097F]').hasMatch(invalidCode), isTrue);
+      expect(RegExp(r'[\u0900-\u097F]').hasMatch(duplicate), isTrue);
+      expect(RegExp(r'[\u0900-\u097F]').hasMatch(profileFailure), isTrue);
+      expect(
+        RegExp(r'[\u0600-\u06FF]')
+            .hasMatch(urdu.text('error.AUTH_CONFIRMATION_CODE_INVALID')),
+        isTrue,
+      );
+      expect(
+        RegExp(r'[\u1C50-\u1C7F]')
+            .hasMatch(santali.text('error.AUTH_CONFIRMATION_CODE_INVALID')),
+        isTrue,
+      );
     },
   );
 }

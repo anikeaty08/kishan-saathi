@@ -89,15 +89,17 @@ class _PlotHistoryScreenState extends State<PlotHistoryScreen> {
     if (plot == null) {
       return Scaffold(
         appBar: AppBar(),
-        body: const AppStateView(
+        body: AppStateView(
           kind: AppStateKind.error,
-          title: 'Plot not found',
-          message: 'This plot may have been removed.',
+          title: context.tr('plotNotFound'),
+          message: context.tr('plotRemovedBody'),
         ),
       );
     }
     return Scaffold(
-      appBar: AppBar(title: Text('${plot.name} history')),
+      appBar: AppBar(
+        title: Text(context.tr('namedPlotHistory', {'plot': plot.name})),
+      ),
       body: SafeArea(
         top: false,
         child: AppContent(
@@ -137,12 +139,12 @@ class _PlotHistoryScreenState extends State<PlotHistoryScreen> {
                 ),
               ),
               if (_loading)
-                const SliverFillRemaining(
+                SliverFillRemaining(
                   hasScrollBody: false,
                   child: AppStateView(
                     kind: AppStateKind.loading,
-                    title: 'Loading plot history',
-                    message: 'Combining leaf checks, chats and field records.',
+                    title: context.tr('loadingPlotHistory'),
+                    message: context.tr('loadingPlotHistoryBody'),
                   ),
                 )
               else if (_error != null && _items.isEmpty)
@@ -150,19 +152,19 @@ class _PlotHistoryScreenState extends State<PlotHistoryScreen> {
                   hasScrollBody: false,
                   child: AppStateView(
                     kind: AppStateKind.error,
-                    title: 'History could not be loaded',
+                    title: context.tr('historyLoadFailed'),
                     message: _error!.message,
                     actionLabel: context.tr('retry'),
                     onAction: () => _load(reset: true),
                   ),
                 )
               else if (_items.isEmpty)
-                const SliverFillRemaining(
+                SliverFillRemaining(
                   hasScrollBody: false,
                   child: AppStateView(
                     kind: AppStateKind.empty,
-                    title: 'No matching history',
-                    message: 'Try clearing a filter, or add a leaf check, conversation, reminder or field activity.',
+                    title: context.tr('noMatchingHistory'),
+                    message: context.tr('noMatchingHistoryBody'),
                   ),
                 )
               else
@@ -186,7 +188,9 @@ class _PlotHistoryScreenState extends State<PlotHistoryScreen> {
                                   )
                                 : const Icon(LucideIcons.chevronsDown),
                             label: Text(
-                              _loadingMore ? 'Loading…' : 'Load older records',
+                              context.tr(
+                                _loadingMore ? 'loading' : 'loadOlderRecords',
+                              ),
                             ),
                           ),
                         ),
@@ -282,7 +286,10 @@ class _FilterPanel extends StatelessWidget {
                 if (selectedCategories.isNotEmpty ||
                     cropId != null ||
                     dates != null)
-                  TextButton(onPressed: onClear, child: const Text('Clear')),
+                  TextButton(
+                    onPressed: onClear,
+                    child: Text(context.tr('clear')),
+                  ),
               ],
             ),
             const SizedBox(height: 8),
@@ -306,14 +313,14 @@ class _FilterPanel extends StatelessWidget {
               builder: (context, constraints) {
                 final crop = DropdownButtonFormField<String?>(
                   initialValue: cropId,
-                  decoration: const InputDecoration(
-                    labelText: 'Crop',
-                    prefixIcon: Icon(LucideIcons.wheat),
+                  decoration: InputDecoration(
+                    labelText: context.tr('crop'),
+                    prefixIcon: const Icon(LucideIcons.wheat),
                   ),
                   items: [
-                    const DropdownMenuItem<String?>(
+                    DropdownMenuItem<String?>(
                       value: null,
-                      child: Text('All crops'),
+                      child: Text(context.tr('allCrops')),
                     ),
                     ...plot.crops.map(
                       (item) => DropdownMenuItem<String?>(

@@ -1,16 +1,26 @@
 """Typed language-model provider contracts."""
 
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Protocol
+from typing import Any, Literal, Protocol
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.errors import ApplicationError
-from app.integrations.llm.safety import reject_specific_treatment
+
+
+class ChatRiskReason(StrEnum):
+    ROUTINE = "routine"
+    SCAN_CONTEXT = "scan_context"
+    DIAGNOSIS_OR_SYMPTOMS = "diagnosis_or_symptoms"
+    TREATMENT_SAFETY = "treatment_safety"
+    FARM_OR_PLOT_CONTEXT = "farm_or_plot_context"
+    URGENT_OR_AMBIGUOUS = "urgent_or_ambiguous"
+    UNCERTAIN = "uncertain"
+    OUT_OF_SCOPE = "out_of_scope"
 
 
 class LLMTask(StrEnum):
@@ -39,19 +49,33 @@ class ReminderProposalDraft(BaseModel):
         return normalized
 
 
+class TreatmentType(StrEnum):
+    CULTURAL = "cultural"
+    BIOLOGICAL = "biological"
+    CHEMICAL = "chemical"
+
+
 class TreatmentGuidance(BaseModel):
-    """General safety guidance until an authoritative local treatment source exists."""
+    """Typed treatment details released only after backend context validation."""
 
     model_config = ConfigDict(extra="forbid")
 
-    safety_precautions: list[str] = Field(default_factory=list, max_length=8)
-    consult_local_approved_guidance: bool = True
+    treatment_type: TreatmentType
+    active_ingredient: str | None = Field(default=None, min_length=1, max_length=300)
+    dosage: str | None = Field(default=None, min_length=1, max_length=300)
+    application_method: str = Field(min_length=1, max_length=1000)
+    frequency: str | None = Field(default=None, min_length=1, max_length=500)
+    safety_precautions: list[str] = Field(min_length=1, max_length=8)
+    consult_local_approved_guidance: Literal[True]
+    weather_considered: Literal[True]
 
-    @field_validator("safety_precautions", mode="after")
-    @classmethod
-    def reject_prescriptive_precautions(cls, values: list[str]) -> list[str]:
-        reject_specific_treatment(values)
-        return values
+    @model_validator(mode="after")
+    def require_complete_chemical_guidance(self) -> "TreatmentGuidance":
+        if self.treatment_type is TreatmentType.CHEMICAL and not all(
+            (self.active_ingredient, self.dosage, self.frequency)
+        ):
+            raise ValueError("CHEMICAL_TREATMENT_DETAILS_REQUIRED")
+        return self
 
 
 class ReplyCertainty(StrEnum):
@@ -104,6 +128,7 @@ class DiagnosisDiscussion(BaseModel):
 class AssistantReply(BaseModel):
     """Structured farmer-facing response from the LLM."""
 
+    category: ChatRiskReason = ChatRiskReason.UNCERTAIN
     short_answer: str = Field(min_length=1, max_length=3000)
     disposition: ReplyDisposition = ReplyDisposition.IN_SCOPE
     answer_sections: list[AnswerSection] = Field(default_factory=list, max_length=6)
@@ -121,8 +146,7 @@ class AssistantReply(BaseModel):
     reminder_proposal: ReminderProposalDraft | None = None
 
     @model_validator(mode="after")
-    def reject_prescriptive_visible_text(self) -> "AssistantReply":
-        reject_specific_treatment(self)
+    def validate_reply_shape(self) -> "AssistantReply":
         if self.certainty is ReplyCertainty.INSUFFICIENT_IMAGE_QUALITY and not self.retake_advice:
             raise ValueError("RETAKE_ADVICE_REQUIRED")
         if self.disposition is ReplyDisposition.OUT_OF_SCOPE:
@@ -170,17 +194,6 @@ class ChatRiskClassification(BaseModel):
     reason_code: "ChatRiskReason"
 
 
-class ChatRiskReason(StrEnum):
-    ROUTINE = "routine"
-    SCAN_CONTEXT = "scan_context"
-    DIAGNOSIS_OR_SYMPTOMS = "diagnosis_or_symptoms"
-    TREATMENT_SAFETY = "treatment_safety"
-    FARM_OR_PLOT_CONTEXT = "farm_or_plot_context"
-    URGENT_OR_AMBIGUOUS = "urgent_or_ambiguous"
-    UNCERTAIN = "uncertain"
-    OUT_OF_SCOPE = "out_of_scope"
-
-
 @dataclass(frozen=True, slots=True)
 class LLMTool:
     """A narrowly scoped backend function the provider may let the model request."""
@@ -198,6 +211,7 @@ class LLMRequest:
     farmer_id: UUID
     tools: tuple[LLMTool, ...] = ()
     allow_diagnosis: bool = False
+    allow_specific_treatment: bool = False
     required_disposition: ReplyDisposition | None = None
 
 
@@ -206,6 +220,17 @@ class LLMResult:
     reply: AssistantReply
     provider_response_id: str
     model: str
+    policy_reviewed: bool
+
+
+class LLMStreamResult(BaseModel):
+    """Validated completion metadata carried by the final stream event."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reply: AssistantReply
+    provider_response_id: str = Field(min_length=1, max_length=255)
+    model: str = Field(min_length=1, max_length=100)
     policy_reviewed: bool
 
 
@@ -219,6 +244,10 @@ class MemoryExtractionRequest:
 
 class LLMProvider(Protocol):
     async def respond(self, request: LLMRequest, *, model: str) -> LLMResult: ...
+
+    def respond_stream(
+        self, request: LLMRequest, *, model: str
+    ) -> AsyncIterator[dict[str, Any]]: ...
 
     async def extract_memories(
         self, request: MemoryExtractionRequest, *, model: str
@@ -239,6 +268,13 @@ class UnavailableLLMProvider:
     async def respond(self, request: LLMRequest, *, model: str) -> LLMResult:
         del request, model
         raise ApplicationError(code="LLM_NOT_CONFIGURED", status_code=503)
+
+    async def respond_stream(
+        self, request: LLMRequest, *, model: str
+    ) -> AsyncIterator[dict[str, Any]]:
+        del request, model
+        raise ApplicationError(code="LLM_NOT_CONFIGURED", status_code=503)
+        yield {}
 
     async def extract_memories(
         self, request: MemoryExtractionRequest, *, model: str

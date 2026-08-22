@@ -5,6 +5,7 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../../core/localization/app_strings.dart';
 import '../../../core/theme/app_theme.dart';
 
 class LeafCameraScreen extends StatefulWidget {
@@ -175,9 +176,9 @@ class _LeafCameraScreenState extends State<LeafCameraScreen>
       if (mounted) setState(() => _torchEnabled = next);
     } on CameraException {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Torch is unavailable on this camera.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(context.tr('torchUnavailable'))));
     }
   }
 
@@ -407,20 +408,22 @@ class _CameraChrome extends StatelessWidget {
           child: Row(
             children: [
               _CameraIconButton(
-                tooltip: 'Close camera',
+                tooltip: context.tr('closeCamera'),
                 onPressed: onClose,
                 icon: LucideIcons.x,
               ),
               const Spacer(),
               _CameraIconButton(
-                tooltip: torchEnabled ? 'Turn torch off' : 'Turn torch on',
+                tooltip: context.tr(
+                  torchEnabled ? 'turnTorchOff' : 'turnTorchOn',
+                ),
                 onPressed: errorMessage == null ? onTorch : null,
                 icon: torchEnabled ? LucideIcons.zap : LucideIcons.zapOff,
               ),
               if (canSwitch) ...[
                 const SizedBox(width: 8),
                 _CameraIconButton(
-                  tooltip: 'Switch camera',
+                  tooltip: context.tr('switchCamera'),
                   onPressed: errorMessage == null ? onSwitch : null,
                   icon: LucideIcons.switchCamera,
                 ),
@@ -457,7 +460,7 @@ class _CameraChrome extends StatelessWidget {
                     foregroundColor: Colors.white,
                     side: const BorderSide(color: Colors.white54),
                   ),
-                  child: const Text('Try again'),
+                  child: Text(context.tr('retry')),
                 ),
               ],
             ),
@@ -482,7 +485,7 @@ class _CameraChrome extends StatelessWidget {
         const SizedBox(height: 22),
         Semantics(
           button: true,
-          label: 'Take leaf photo',
+          label: context.tr('takeLeafPhoto'),
           child: GestureDetector(
             onTap: !initializing && errorMessage == null && !capturing
                 ? onCapture

@@ -58,25 +58,7 @@ class HomeScreen extends StatelessWidget {
                           farms: controller.farms,
                           pendingReminders: pendingReminders,
                         );
-                        final weatherCard = _PersonalWeatherCard(
-                          name: controller.farmerName,
-                          weather: weather,
-                          locationEnabled: controller.locationEnabled,
-                          onRefresh: () async {
-                            try {
-                              await context
-                                  .read<AppController>()
-                                  .refreshCurrentWeather();
-                            } on ApiException catch (error) {
-                              if (context.mounted) {
-                                showAppSnackBar(
-                                  context,
-                                  context.localizedError(error),
-                                );
-                              }
-                            }
-                          },
-                        );
+
                         final tasksCard = _TodayTaskCard(
                           reminders: pendingReminders,
                         );
@@ -107,8 +89,6 @@ class HomeScreen extends StatelessWidget {
                                     farmsCard,
                                     const SizedBox(height: 18),
                                     tasksCard,
-                                    const SizedBox(height: 18),
-                                    weatherCard,
                                   ],
                                 ),
                               ),
@@ -150,8 +130,6 @@ class HomeScreen extends StatelessWidget {
                                     farmsCard,
                                     const SizedBox(height: 18),
                                     tasksCard,
-                                    const SizedBox(height: 18),
-                                    weatherCard,
                                   ],
                                 ),
                               ),
@@ -206,7 +184,7 @@ class _ScanHero extends StatelessWidget {
                 'assets/images/leaf_healthy.jpg',
                 fit: BoxFit.cover,
                 alignment: const Alignment(0.12, -0.08),
-                semanticLabel: 'Healthy green crop leaf ready to scan',
+                semanticLabel: context.tr('healthyLeafScanImage'),
                 errorBuilder: (_, _, _) => Image.asset(
                   'assets/images/crop_tomato.jpg',
                   fit: BoxFit.cover,
@@ -283,23 +261,36 @@ class _ScanHero extends StatelessWidget {
                     SizedBox(height: visualBreathingRoom),
                     const _HeroText(onImage: true),
                     const SizedBox(height: 20),
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
+                    Row(
                       children: [
-                        _HeroShortcut(
-                          icon: LucideIcons.messageCircle,
-                          title: 'Ask Saathi',
-                          subtitle: 'Crop advice',
-                          onTap: () => context.go('/saathi'),
-                          onImage: true,
+                        Expanded(
+                          child: _HeroShortcut(
+                            icon: LucideIcons.scanLine,
+                            title: context.tr('startScan'),
+                            subtitle: context.tr('checkHealth'),
+                            onTap: () => context.go('/scan'),
+                            onImage: true,
+                          ),
                         ),
-                        _HeroShortcut(
-                          icon: LucideIcons.warehouse,
-                          title: 'My farms',
-                          subtitle: 'Plots and crops',
-                          onTap: () => context.go('/farm'),
-                          onImage: true,
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _HeroShortcut(
+                            icon: LucideIcons.messageCircle,
+                            title: context.tr('askSaathi'),
+                            subtitle: context.tr('cropAdvice'),
+                            onTap: () => context.go('/saathi'),
+                            onImage: true,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _HeroShortcut(
+                            icon: LucideIcons.warehouse,
+                            title: context.tr('yourFarms'),
+                            subtitle: context.tr('plots'),
+                            onTap: () => context.go('/farm'),
+                            onImage: true,
+                          ),
                         ),
                       ],
                     ),
@@ -474,20 +465,6 @@ class _HeroText extends StatelessWidget {
             height: 1.42,
           ),
         ),
-        const SizedBox(height: 18),
-        FilledButton.icon(
-          onPressed: () => context.go('/scan'),
-          icon: const Icon(LucideIcons.scanLine, size: 19),
-          label: const Text('Start scan'),
-          style: FilledButton.styleFrom(
-            backgroundColor: onImage ? Colors.white : AppColors.forest,
-            foregroundColor: onImage ? AppColors.forest : Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(18),
-            ),
-          ),
-        ),
       ],
     );
   }
@@ -507,7 +484,7 @@ class _WeatherChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final label = weather == null
-        ? (locationEnabled ? 'Weather' : 'Location off')
+        ? context.tr(locationEnabled ? 'weather' : 'locationOff')
         : '${weather!.temperature.round()}°';
     final caption = weather == null ? 'Home' : _shortCondition(weather!);
     return InkWell(
@@ -581,68 +558,61 @@ class _HeroShortcut extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ConstrainedBox(
-      constraints: const BoxConstraints(minWidth: 146, maxWidth: 210),
-      child: Material(
-        color: onImage
-            ? Colors.black.withValues(alpha: 0.32)
-            : Theme.of(context).brightness == Brightness.dark
-            ? Colors.white.withValues(alpha: 0.06)
-            : Colors.white.withValues(alpha: 0.72),
+    return Material(
+      color: onImage
+          ? Colors.black.withValues(alpha: 0.32)
+          : Theme.of(context).brightness == Brightness.dark
+          ? Colors.white.withValues(alpha: 0.06)
+          : Colors.white.withValues(alpha: 0.72),
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        onTap: onTap,
         borderRadius: BorderRadius.circular(20),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(20),
-          child: Padding(
-            padding: const EdgeInsets.all(13),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: onImage
-                        ? Colors.white.withValues(alpha: 0.14)
-                        : AppColors.leaf.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Icon(
-                    icon,
-                    color: onImage ? Colors.white : AppColors.forest,
-                    size: 18,
-                  ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: onImage
+                      ? Colors.white.withValues(alpha: 0.14)
+                      : AppColors.leaf.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(14),
                 ),
-                const SizedBox(width: 11),
-                Flexible(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                          color: onImage ? Colors.white : _strongInk(context),
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        subtitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: onImage
-                              ? Colors.white.withValues(alpha: 0.72)
-                              : _mutedInk(context),
-                        ),
-                      ),
-                    ],
-                  ),
+                child: Icon(
+                  icon,
+                  color: onImage ? Colors.white : AppColors.forest,
+                  size: 18,
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: onImage ? Colors.white : _strongInk(context),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: onImage
+                      ? Colors.white.withValues(alpha: 0.72)
+                      : _mutedInk(context),
+                  fontSize: 10,
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -665,7 +635,7 @@ class _ContinueScanCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _SectionTitle(
-            title: 'Continue',
+            title: context.tr('continue'),
             actionLabel: 'View all',
             onAction: () => context.go('/scan'),
           ),
@@ -707,14 +677,14 @@ class _ContinueScanCard extends StatelessWidget {
               FilledButton.tonalIcon(
                 onPressed: () => context.push('/scan/result/${diagnosis.id}'),
                 icon: const Icon(LucideIcons.eye, size: 17),
-                label: const Text('View result'),
+                label: Text(context.tr('viewResult')),
               ),
               OutlinedButton.icon(
                 onPressed: () => context.push(
                   '/saathi/new?scope=scan&context=${Uri.encodeComponent(diagnosis.id)}',
                 ),
                 icon: const Icon(LucideIcons.messageCircle, size: 17),
-                label: const Text('Ask Saathi'),
+                label: Text(context.tr('askSaathi')),
               ),
             ],
           ),
@@ -1011,144 +981,6 @@ class _ReminderTile extends StatelessWidget {
   }
 }
 
-class _PersonalWeatherCard extends StatelessWidget {
-  const _PersonalWeatherCard({
-    required this.name,
-    required this.weather,
-    required this.locationEnabled,
-    required this.onRefresh,
-  });
-
-  final String name;
-  final WeatherSnapshot? weather;
-  final bool locationEnabled;
-  final Future<void> Function() onRefresh;
-
-  @override
-  Widget build(BuildContext context) {
-    final current = weather;
-    return _HomeSurface(
-      child: InkWell(
-        onTap: () => context.push('/weather'),
-        borderRadius: BorderRadius.circular(22),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _SectionTitle(
-              title: name.trim().isEmpty
-                  ? 'Today’s weather'
-                  : '$name’s weather',
-              actionLabel: 'View',
-            ),
-            const SizedBox(height: 12),
-            if (current == null)
-              _WeatherEmptyLine(
-                locationEnabled: locationEnabled,
-                onRefresh: onRefresh,
-              )
-            else
-              Row(
-                children: [
-                  Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: AppColors.sky.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(18),
-                    ),
-                    child: Icon(
-                      _conditionIcon(current),
-                      color: AppColors.sky,
-                      size: 22,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '${current.temperature.round()}° · ${_conditionText(current)}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(color: _strongInk(context)),
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          'Phone location · ${context.strings.formatTime(current.fetchedAt)}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(color: _mutedInk(context)),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const Icon(
-                    LucideIcons.chevronRight,
-                    size: 18,
-                    color: AppColors.mutedInk,
-                  ),
-                ],
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _WeatherEmptyLine extends StatelessWidget {
-  const _WeatherEmptyLine({
-    required this.locationEnabled,
-    required this.onRefresh,
-  });
-
-  final bool locationEnabled;
-  final Future<void> Function() onRefresh;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            AppColors.sky.withValues(alpha: 0.2),
-            AppColors.sky.withValues(alpha: 0.05),
-          ],
-        ),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        children: [
-          const Icon(LucideIcons.cloudSun, color: AppColors.sky, size: 48),
-          const SizedBox(height: 12),
-          Text(
-            locationEnabled
-                ? 'Load today’s phone weather.'
-                : 'Turn on location to show phone weather.',
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyMedium
-                ?.copyWith(color: _strongInk(context)),
-          ),
-          const SizedBox(height: 16),
-          FilledButton.icon(
-            onPressed: locationEnabled ? onRefresh : null,
-            icon: const Icon(LucideIcons.refreshCw, size: 16),
-            label: const Text('Fetch Live Weather'),
-            style: FilledButton.styleFrom(
-              backgroundColor: AppColors.sky,
-              foregroundColor: Colors.white,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _HomeSurface extends StatelessWidget {
   const _HomeSurface({required this.child});
 
@@ -1258,9 +1090,6 @@ String _confidenceText(String value) => switch (value.toLowerCase()) {
   'medium' => 'medium confidence',
   _ => 'low confidence',
 };
-
-String _conditionText(WeatherSnapshot weather) =>
-    weather.conditionLabel ?? _shortCondition(weather);
 
 String _shortCondition(WeatherSnapshot weather) {
   final value = (weather.conditionLabel ?? weather.conditionCode)

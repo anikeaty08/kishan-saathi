@@ -1,5 +1,7 @@
 """OpenAI Audio API adapter with neutral application failures."""
 
+from collections.abc import AsyncIterator
+
 import openai
 from openai import AsyncOpenAI
 
@@ -11,6 +13,7 @@ from app.integrations.audio.provider import (
     AudioTranscriptionResult,
     SpeechSynthesisRequest,
     SpeechSynthesisResult,
+    SpeechSynthesisStream,
 )
 
 
@@ -77,6 +80,42 @@ class OpenAIAudioProvider(AudioProvider):
             raise ApplicationError(code="VOICE_AUDIO_EMPTY", status_code=502)
         return SpeechSynthesisResult(
             content=content,
+            media_type="audio/mpeg",
+            model=self._speech_model,
+            voice=self._speech_voice,
+        )
+
+    async def synthesize_stream(self, request: SpeechSynthesisRequest) -> SpeechSynthesisStream:
+        async def content() -> AsyncIterator[bytes]:
+            try:
+                async with self._client.audio.speech.with_streaming_response.create(
+                    model=self._speech_model,
+                    voice=self._speech_voice,
+                    input=request.text,
+                    response_format="mp3",
+                ) as response:
+                    emitted = False
+                    async for chunk in response.iter_bytes(chunk_size=64 * 1024):
+                        if chunk:
+                            emitted = True
+                            yield chunk
+                    if not emitted:
+                        raise ApplicationError(code="VOICE_AUDIO_EMPTY", status_code=502)
+            except openai.AuthenticationError as exc:
+                raise ApplicationError(code="VOICE_AUTHENTICATION_FAILED", status_code=503) from exc
+            except (
+                openai.APITimeoutError,
+                openai.APIConnectionError,
+                openai.RateLimitError,
+            ) as exc:
+                raise ApplicationError(
+                    code="VOICE_TEMPORARILY_UNAVAILABLE", status_code=503
+                ) from exc
+            except openai.APIError as exc:
+                raise ApplicationError(code="VOICE_PROVIDER_FAILED", status_code=502) from exc
+
+        return SpeechSynthesisStream(
+            content=content(),
             media_type="audio/mpeg",
             model=self._speech_model,
             voice=self._speech_voice,

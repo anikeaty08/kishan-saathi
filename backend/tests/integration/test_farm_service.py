@@ -18,6 +18,7 @@ from app.modules.farms.schemas import (
     CropUpdate,
     FarmCreate,
     PlotCreate,
+    PlotUpdate,
 )
 from app.modules.farms.service import FarmService
 from app.modules.users.models import FarmerProfile
@@ -63,7 +64,21 @@ async def test_farm_plot_crop_and_activity_lifecycle_is_owner_scoped() -> None:
                     latitude=Decimal("19.076000"),
                     longitude=Decimal("72.877700"),
                     location_label="Mumbai",
+                    area_value=Decimal("2.5"),
+                    area_unit="acre",
+                    soil_notes="Loamy",
+                    irrigation_details="Drip",
                     crops=[CropCreate(name="Tomato", stage="vegetative")],
+                ),
+            )
+            cleared_plot = await service.update_plot(
+                FARMER_A,
+                plot.id,
+                PlotUpdate(
+                    area_value=None,
+                    area_unit=None,
+                    soil_notes=None,
+                    irrigation_details=None,
                 ),
             )
             crop = plot.crops[0]
@@ -103,6 +118,10 @@ async def test_farm_plot_crop_and_activity_lifecycle_is_owner_scoped() -> None:
 
     assert updated_crop.stage == "flowering"
     assert renamed_crop.name == "Cherry Tomato"
+    assert cleared_plot.area_value is None
+    assert cleared_plot.area_unit is None
+    assert cleared_plot.soil_notes is None
+    assert cleared_plot.irrigation_details is None
     assert hidden.value.code == "PLOT_NOT_FOUND"
     assert blocked.value.code == "FARM_HAS_LINKED_DATA"
     assert crop_blocked.value.code == "CROP_HAS_LINKED_DATA"

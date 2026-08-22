@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:krishisathi/core/network/api_client.dart';
 import 'package:krishisathi/features/saathi/presentation/voice_audio_playback.dart';
 import 'package:krishisathi/features/saathi/presentation/voice_audio_recorder.dart';
 import 'package:krishisathi/features/saathi/presentation/voice_composer_controller.dart';
@@ -9,7 +11,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test('stop during speech download prevents stale audio playback', () async {
-    final pending = Completer<List<int>>();
+    final pending = Completer<AuthenticatedResource>();
     final playback = _FakePlayback();
     final controller = VoiceComposerController(
       transcribe: (_, _) async => 'unused',
@@ -24,7 +26,7 @@ void main() {
     expect(controller.speakingMessageId, 'one');
 
     await controller.stopSpeech();
-    pending.complete([1, 2, 3]);
+    pending.complete(_speechSource('one'));
 
     expect(await start, isFalse);
     expect(playback.played, isEmpty);
@@ -32,12 +34,13 @@ void main() {
   });
 
   test('switching messages cannot let the older download win', () async {
-    final first = Completer<List<int>>();
+    final first = Completer<AuthenticatedResource>();
     final playback = _FakePlayback();
     final controller = VoiceComposerController(
       transcribe: (_, _) async => 'unused',
-      loadSpeech: (_, messageId) =>
-          messageId == 'one' ? first.future : Future.value([2]),
+      loadSpeech: (_, messageId) => messageId == 'one'
+          ? first.future
+          : Future.value(_speechSource('two')),
       recorder: _FakeRecorder(),
       playback: playback,
     );
@@ -47,12 +50,10 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     final newStart = controller.toggleSpeech(chatId: 'chat', messageId: 'two');
     expect(await newStart, isTrue);
-    first.complete([1]);
+    first.complete(_speechSource('one'));
 
     expect(await oldStart, isFalse);
-    expect(playback.played, [
-      [2],
-    ]);
+    expect(playback.played, [Uri.parse('https://example.test/two.mp3')]);
     expect(controller.speakingMessageId, 'two');
   });
 
@@ -61,7 +62,7 @@ void main() {
     final playback = _FakePlayback();
     final controller = VoiceComposerController(
       transcribe: (_, _) async => 'unused',
-      loadSpeech: (_, _) async => const [],
+      loadSpeech: (_, _) async => _speechSource('unused'),
       recorder: recorder,
       playback: playback,
       temporaryPath: () async => 'voice-test.m4a',
@@ -82,13 +83,14 @@ void main() {
 
 class _FakePlayback implements VoiceAudioPlayback {
   final StreamController<void> _completion = StreamController.broadcast();
-  final List<List<int>> played = [];
+  final List<Uri> played = [];
 
   @override
   Stream<void> get onComplete => _completion.stream;
 
   @override
-  Future<void> play(List<int> bytes) async => played.add(List.of(bytes));
+  Future<void> play(AuthenticatedResource source) async =>
+      played.add(source.uri);
 
   @override
   Future<void> stop() async {}
@@ -96,6 +98,11 @@ class _FakePlayback implements VoiceAudioPlayback {
   @override
   Future<void> dispose() => _completion.close();
 }
+
+AuthenticatedResource _speechSource(String id) => AuthenticatedResource(
+  uri: Uri.parse('https://example.test/$id.mp3'),
+  headers: const {'Authorization': 'Bearer test'},
+);
 
 class _FakeRecorder implements VoiceAudioRecorder {
   @override
@@ -106,6 +113,9 @@ class _FakeRecorder implements VoiceAudioRecorder {
 
   @override
   Future<void> start(String path) async {}
+
+  @override
+  Future<Stream<Uint8List>> startStream() async => const Stream.empty();
 
   @override
   Future<String?> stop() async => null;
@@ -127,6 +137,9 @@ class _BlockingRecorder implements VoiceAudioRecorder {
     started.complete();
     await allowStart.future;
   }
+
+  @override
+  Future<Stream<Uint8List>> startStream() async => const Stream.empty();
 
   @override
   Future<String?> stop() async {

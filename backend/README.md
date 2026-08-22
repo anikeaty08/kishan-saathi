@@ -32,7 +32,7 @@ The API exposes:
 
 Saathi voice uses bounded request-based audio. The mobile app records a temporary
 message, the authenticated backend transcribes it, and the farmer reviews the
-transcript before sending it through the normal durable chat queue. Typed and
+transcript before sending it through the direct streaming chat path. Typed and
 spoken questions therefore use the same owner-scoped history, farm/plot/scan
 context, memory, tools, and safety validation. Read-aloud is generated only from
 an existing owned assistant message; arbitrary client-authored text cannot use the
@@ -47,14 +47,12 @@ cannot alter or replace that result. Owner checks, image-quality
 gates, bounded image counts/bytes, typed output validation, and `store=false`
 are enforced before a response is returned.
 
-Chat sends use durable ordered turns. `POST /api/v1/chats/{chat_id}/messages`
-returns `202` with a queued turn, while the background worker processes only
-the earliest turn in each chat. Different chats can run concurrently. Clients
-poll `GET /api/v1/chats/{chat_id}/turns/{turn_id}` and may explicitly retry a
-terminal failed turn with `POST .../{turn_id}/retry`; the same idempotency key
-never creates a duplicate farmer message or paid LLM call. Assistant content is
-stored both as natural farmer-facing text and as the validated structured reply
-used by the mobile UI.
+Chat sends execute directly on the request path. The mobile client uses
+`POST /api/v1/chats/{chat_id}/messages/stream` and renders NDJSON token events
+as they arrive; `POST /api/v1/chats/{chat_id}/messages` remains the direct JSON
+contract for non-streaming clients. There is no chat worker, polling contract,
+or queue fallback. Completed sends are persisted atomically, and the same
+idempotency key replays the stored result without duplicating messages.
 
 Run checks with:
 
@@ -63,6 +61,20 @@ uv run ruff check app tests
 uv run mypy app
 uv run pytest
 ```
+
+Run the real authenticated chat and speech smoke test against a running API with:
+
+```powershell
+$env:SMOKE_EMAIL = "farmer@example.com"
+$env:SMOKE_PASSWORD = Read-Host "Cognito password"
+uv run python scripts/authenticated_chat_smoke.py
+Remove-Item Env:SMOKE_EMAIL, Env:SMOKE_PASSWORD
+```
+
+The smoke test verifies token-by-token NDJSON delivery, atomic message ordering,
+absence of the former queue route, and audio generation from an owned assistant
+message. It prints timings and assertion results without printing chat content,
+tokens, or credentials, then deletes its temporary chat.
 
 Leaf inference is selected through `LEAF_INFERENCE_BACKEND`. The temporary
 `openai_vision` plugin keeps output inside the immutable 89-class PlantWild

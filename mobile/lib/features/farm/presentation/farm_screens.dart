@@ -67,7 +67,9 @@ class FarmScreen extends StatelessWidget {
                         if (index == 0) {
                           return SectionHeader(
                             title: context.tr('yourFarms'),
-                            subtitle: '${controller.farms.length} active',
+                            subtitle: context.tr('activeCount', {
+                              'count': controller.farms.length,
+                            }),
                           );
                         }
                         return _FarmListItem(farm: controller.farms[index - 1]);
@@ -115,8 +117,8 @@ class _FarmMap extends StatelessWidget {
     if (mappable.isEmpty) {
       return AppStateView(
         kind: AppStateKind.empty,
-        title: 'No plot locations yet',
-        message: 'Add a plot and confirm its map pointer to see it here.',
+        title: context.tr('noPlotLocationsYet'),
+        message: context.tr('noPlotLocationsBody'),
         actionLabel: farms.length == 1 ? context.tr('addPlot') : null,
         onAction: farms.length == 1
             ? () => context.push('/farm/${farms.first.id}/plot/add')
@@ -333,7 +335,7 @@ class FarmDetailScreen extends StatelessWidget {
         body: AppStateView(
           kind: AppStateKind.error,
           title: context.tr('errorTitle'),
-          message: 'This farm could not be found.',
+          message: context.tr('farmCouldNotBeFound'),
         ),
       );
     }
@@ -344,7 +346,7 @@ class FarmDetailScreen extends StatelessWidget {
           title: Text(farm.name),
           actions: [
             PopupMenuButton<String>(
-              tooltip: 'Farm actions',
+              tooltip: context.tr('farmActions'),
               onSelected: (value) {
                 if (value == 'edit') {
                   context.push('/farm/${farm.id}/edit');
@@ -527,8 +529,8 @@ class _PlotsTab extends StatelessWidget {
     if (farm.plots.isEmpty) {
       return AppStateView(
         kind: AppStateKind.empty,
-        title: 'No plots yet',
-        message: 'Add a plot with at least one crop to start its timeline.',
+        title: context.tr('noPlotsYet'),
+        message: context.tr('noPlotsBody'),
         actionLabel: context.tr('addPlot'),
         onAction: () => context.push('/farm/${farm.id}/plot/add'),
       );
@@ -617,11 +619,10 @@ class _FarmActivitiesTab extends StatelessWidget {
             .toList()
           ..sort((a, b) => b.$2.occurredAt.compareTo(a.$2.occurredAt));
     if (items.isEmpty) {
-      return const AppStateView(
+      return AppStateView(
         kind: AppStateKind.empty,
-        title: 'No activity recorded',
-        message:
-            'Irrigation, nutrition, spraying and field notes will appear here.',
+        title: context.tr('noActivityRecorded'),
+        message: context.tr('noActivityRecordedBody'),
       );
     }
     return ListView.separated(
@@ -697,10 +698,10 @@ class _PlotDetailScreenState extends State<PlotDetailScreen> {
     if (plot == null) {
       return Scaffold(
         appBar: AppBar(),
-        body: const AppStateView(
+        body: AppStateView(
           kind: AppStateKind.error,
-          title: 'Plot not found',
-          message: 'This plot may have been removed.',
+          title: context.tr('plotNotFound'),
+          message: context.tr('plotRemovedBody'),
         ),
       );
     }
@@ -802,7 +803,7 @@ class _PlotDetailScreenState extends State<PlotDetailScreen> {
               else if (_weatherError != null)
                 AppStateView(
                   kind: AppStateKind.error,
-                  title: 'Plot weather is unavailable',
+                  title: context.tr('plotWeatherUnavailable'),
                   message: _weatherError!.message,
                   actionLabel: context.tr('retry'),
                   onAction: () async {
@@ -818,16 +819,16 @@ class _PlotDetailScreenState extends State<PlotDetailScreen> {
                   compact: true,
                 )
               else
-                const AppStateView(
+                AppStateView(
                   kind: AppStateKind.loading,
-                  title: 'Loading plot weather',
-                  message: 'Reading current conditions and forecast.',
+                  title: context.tr('loadingPlotWeather'),
+                  message: context.tr('loadingPlotWeatherBody'),
                   compact: true,
                 ),
               const SizedBox(height: 24),
               SectionHeader(
-                title: 'Plot records',
-                subtitle: 'Everything connected to this field',
+                title: context.tr('plotRecords'),
+                subtitle: context.tr('plotRecordsBody'),
               ),
               const SizedBox(height: 10),
               LayoutBuilder(
@@ -842,7 +843,7 @@ class _PlotDetailScreenState extends State<PlotDetailScreen> {
                       _PlotRecordCard(
                         width: width,
                         icon: LucideIcons.scanLine,
-                        label: 'Leaf checks',
+                        label: context.tr('leafChecks'),
                         count: plotDiagnoses.length,
                         onTap: () => plotDiagnoses.isEmpty
                             ? context.go('/scan?plot=${plot.id}')
@@ -853,7 +854,7 @@ class _PlotDetailScreenState extends State<PlotDetailScreen> {
                       _PlotRecordCard(
                         width: width,
                         icon: LucideIcons.messagesSquare,
-                        label: 'Chats',
+                        label: context.tr('chats'),
                         count: plotChats.length,
                         onTap: () => plotChats.isEmpty
                             ? context.push(
@@ -866,14 +867,14 @@ class _PlotDetailScreenState extends State<PlotDetailScreen> {
                       _PlotRecordCard(
                         width: width,
                         icon: LucideIcons.bell,
-                        label: 'Reminders',
+                        label: context.tr('reminders'),
                         count: plotReminders.length,
                         onTap: () => context.push('/reminders'),
                       ),
                       _PlotRecordCard(
                         width: width,
                         icon: LucideIcons.clipboardCheck,
-                        label: 'Activities',
+                        label: context.tr('activities'),
                         count: plot.activities.length,
                         onTap: () => context.push('/plot/${plot.id}/history'),
                       ),
@@ -887,15 +888,15 @@ class _PlotDetailScreenState extends State<PlotDetailScreen> {
                 action: TextButton.icon(
                   onPressed: () => context.push('/plot/${plot.id}/crops'),
                   icon: const Icon(LucideIcons.settings2, size: 18),
-                  label: const Text('Manage'),
+                  label: Text(context.tr('manage')),
                 ),
               ),
               const SizedBox(height: 10),
               if (plot.crops.isEmpty)
-                const AppStateView(
+                AppStateView(
                   kind: AppStateKind.empty,
-                  title: 'No crops recorded',
-                  message: 'Add the current crop cycle for this plot.',
+                  title: context.tr('noCropsRecorded'),
+                  message: context.tr('noCropsRecordedBody'),
                   compact: true,
                 )
               else
@@ -948,7 +949,7 @@ class _PlotDetailScreenState extends State<PlotDetailScreen> {
               else if (_timelineError != null)
                 AppStateView(
                   kind: AppStateKind.error,
-                  title: 'Timeline could not be loaded',
+                  title: context.tr('timelineLoadFailed'),
                   message: _timelineError!.message,
                   actionLabel: 'Try again',
                   onAction: () {
@@ -961,10 +962,10 @@ class _PlotDetailScreenState extends State<PlotDetailScreen> {
                   compact: true,
                 )
               else if (timeline.isEmpty)
-                const AppStateView(
+                AppStateView(
                   kind: AppStateKind.empty,
-                  title: 'No plot history yet',
-                  message: 'Leaf checks, conversations, reminders, crop changes and field activities will appear here.',
+                  title: context.tr('noPlotHistoryYet'),
+                  message: context.tr('noPlotHistoryBody'),
                   compact: true,
                 )
               else
@@ -1186,10 +1187,10 @@ class ManageCropsScreen extends StatelessWidget {
     if (plot == null) {
       return Scaffold(
         appBar: AppBar(),
-        body: const AppStateView(
+        body: AppStateView(
           kind: AppStateKind.error,
-          title: 'Plot not found',
-          message: 'This plot may have been removed.',
+          title: context.tr('plotNotFound'),
+          message: context.tr('plotRemovedBody'),
         ),
       );
     }
@@ -1199,7 +1200,7 @@ class ManageCropsScreen extends StatelessWidget {
         return a.name.compareTo(b.name);
       });
     return Scaffold(
-      appBar: AppBar(title: const Text('Crop cycles')),
+      appBar: AppBar(title: Text(context.tr('cropCycles'))),
       body: SafeArea(
         top: false,
         child: AppContent(
@@ -1207,9 +1208,9 @@ class ManageCropsScreen extends StatelessWidget {
           child: ListView(
             padding: const EdgeInsets.only(top: 8, bottom: 100),
             children: [
-              const InlineNotice(
-                title: 'Each plot can have multiple crops',
-                message: 'Keep active and previous crop cycles here. Closing a cycle preserves its history.',
+              InlineNotice(
+                title: context.tr('multipleCropsHelp'),
+                message: context.tr('multipleCropsHelpBody'),
                 icon: LucideIcons.sprout,
                 color: AppColors.leaf,
               ),
@@ -1217,8 +1218,8 @@ class ManageCropsScreen extends StatelessWidget {
               if (crops.isEmpty)
                 AppStateView(
                   kind: AppStateKind.empty,
-                  title: 'No crop cycles',
-                  message: 'Add the first crop grown in this plot.',
+                  title: context.tr('noCropCycles'),
+                  message: context.tr('noCropCyclesBody'),
                   actionLabel: 'Add crop',
                   onAction: () => _editCrop(context, plot),
                 )
@@ -1271,24 +1272,24 @@ class ManageCropsScreen extends StatelessWidget {
                                 onSelected: (action) =>
                                     _act(context, plot, crop, action),
                                 itemBuilder: (_) => [
-                                  const PopupMenuItem(
+                                  PopupMenuItem(
                                     value: 'edit',
-                                    child: Text('Edit details'),
+                                    child: Text(context.tr('editDetails')),
                                   ),
                                   if (crop.isActive) ...[
-                                    const PopupMenuItem(
+                                    PopupMenuItem(
                                       value: 'stage',
-                                      child: Text('Update stage'),
+                                      child: Text(context.tr('updateStage')),
                                     ),
-                                    const PopupMenuItem(
+                                    PopupMenuItem(
                                       value: 'close',
-                                      child: Text('Close crop cycle'),
+                                      child: Text(context.tr('closeCropCycle')),
                                     ),
                                   ],
                                   const PopupMenuDivider(),
-                                  const PopupMenuItem(
+                                  PopupMenuItem(
                                     value: 'delete',
-                                    child: Text('Delete crop'),
+                                    child: Text(context.tr('deleteCrop')),
                                   ),
                                 ],
                               ),
@@ -1317,7 +1318,7 @@ class ManageCropsScreen extends StatelessWidget {
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _editCrop(context, plot),
         icon: const Icon(LucideIcons.plus),
-        label: const Text('Add crop'),
+        label: Text(context.tr('addCrop')),
       ),
     );
   }
@@ -1362,12 +1363,12 @@ class ManageCropsScreen extends StatelessWidget {
     final value = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text('Update ${crop.name} stage'),
+        title: Text(context.tr('updateCropStage', {'crop': crop.name})),
         content: TextField(
           controller: stage,
           autofocus: true,
           textCapitalization: TextCapitalization.words,
-          decoration: const InputDecoration(labelText: 'Current stage'),
+          decoration: InputDecoration(labelText: context.tr('currentStage')),
         ),
         actions: [
           TextButton(
@@ -1404,10 +1405,8 @@ class ManageCropsScreen extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text('Close ${crop.name} cycle?'),
-        content: const Text(
-          'The crop remains in history. New stage updates stop after the cycle is closed.',
-        ),
+        title: Text(context.tr('closeNamedCropCycle', {'crop': crop.name})),
+        content: Text(context.tr('closeCropCycleBody')),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
@@ -1415,7 +1414,7 @@ class ManageCropsScreen extends StatelessWidget {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Close cycle'),
+            child: Text(context.tr('closeCycle')),
           ),
         ],
       ),
@@ -1450,7 +1449,7 @@ class ManageCropsScreen extends StatelessWidget {
         await showDialog<void>(
           context: context,
           builder: (context) => AlertDialog(
-            title: const Text('This crop cannot be deleted yet'),
+            title: Text(context.tr('cropCannotDeleteYet')),
             content: Text(
               linked.isEmpty
                   ? 'Remove or unlink the records connected to this crop first.'
@@ -1469,7 +1468,7 @@ class ManageCropsScreen extends StatelessWidget {
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-          title: Text('Delete ${crop.name}?'),
+          title: Text(context.tr('deleteNamedCrop', {'crop': crop.name})),
           content: Text(
             linked.isEmpty
                 ? 'This removes the crop cycle from the plot.'
@@ -1584,7 +1583,7 @@ class _CropEditorSheetState extends State<_CropEditorSheet> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                creating ? 'Add crop cycle' : 'Edit crop details',
+                context.tr(creating ? 'addCropCycle' : 'editCropDetails'),
                 style: Theme.of(context).textTheme.headlineMedium,
               ),
               const SizedBox(height: 18),
@@ -1599,8 +1598,8 @@ class _CropEditorSheetState extends State<_CropEditorSheet> {
               const SizedBox(height: 12),
               TextFormField(
                 controller: _variety,
-                decoration: const InputDecoration(
-                  labelText: 'Variety (optional)',
+                decoration: InputDecoration(
+                  labelText: context.tr('varietyOptional'),
                 ),
                 textCapitalization: TextCapitalization.words,
               ),
@@ -1621,7 +1620,7 @@ class _CropEditorSheetState extends State<_CropEditorSheet> {
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(LucideIcons.calendarDays),
-                title: const Text('Sowing or transplant date'),
+                title: Text(context.tr('sowingOrTransplantDate')),
                 subtitle: Text(
                   _date == null
                       ? 'Optional'
@@ -1630,7 +1629,7 @@ class _CropEditorSheetState extends State<_CropEditorSheet> {
                 trailing: _date == null
                     ? const Icon(LucideIcons.chevronRight)
                     : IconButton(
-                        tooltip: 'Remove date',
+                        tooltip: context.tr('removeDate'),
                         onPressed: () => setState(() => _date = null),
                         icon: const Icon(LucideIcons.x, size: 18),
                       ),
@@ -1713,9 +1712,9 @@ class _AddFarmScreenState extends State<AddFarmScreen> {
                       : null,
                 ),
                 const SizedBox(height: 14),
-                const InlineNotice(
-                  title: 'Start with the farm name',
-                  message: 'Location, crops and weather belong to each plot. You will confirm a map pointer when you add the first plot.',
+                InlineNotice(
+                  title: context.tr('startWithFarmName'),
+                  message: context.tr('startWithFarmNameBody'),
                   icon: LucideIcons.sprout,
                 ),
                 const SizedBox(height: 28),
@@ -1728,7 +1727,9 @@ class _AddFarmScreenState extends State<AddFarmScreen> {
                             final farm = await context
                                 .read<AppController>()
                                 .addFarm(name: _name.text);
-                            if (context.mounted) context.go('/farm/${farm.id}');
+                            if (context.mounted) {
+                              context.pushReplacement('/farm/${farm.id}');
+                            }
                           } on ApiException catch (error) {
                             if (context.mounted) {
                               showAppSnackBar(
@@ -1784,19 +1785,19 @@ class _EditFarmScreenState extends State<EditFarmScreen> {
   @override
   Widget build(BuildContext context) {
     if (_farm == null) {
-      return const Scaffold(
+      return Scaffold(
         body: SafeArea(
           child: AppStateView(
             kind: AppStateKind.error,
-            title: 'Farm not found',
-            message: 'This farm may have been removed.',
+            title: context.tr('farmNotFound'),
+            message: context.tr('farmRemovedBody'),
           ),
         ),
       );
     }
     final busy = context.watch<AppController>().busy;
     return Scaffold(
-      appBar: AppBar(title: const Text('Edit farm')),
+      appBar: AppBar(title: Text(context.tr('editFarm'))),
       body: SafeArea(
         top: false,
         child: AppContent(
@@ -1821,9 +1822,9 @@ class _EditFarmScreenState extends State<EditFarmScreen> {
                   controller: _name,
                   autofocus: true,
                   textCapitalization: TextCapitalization.words,
-                  decoration: const InputDecoration(
-                    labelText: 'Farm name',
-                    prefixIcon: Icon(LucideIcons.sprout),
+                  decoration: InputDecoration(
+                    labelText: context.tr('farmName'),
+                    prefixIcon: const Icon(LucideIcons.sprout),
                   ),
                   validator: (value) => value?.trim().isEmpty ?? true
                       ? 'Farm name is required.'
@@ -1837,7 +1838,7 @@ class _EditFarmScreenState extends State<EditFarmScreen> {
                           dimension: 22,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('Save changes'),
+                      : Text(context.tr('saveChanges')),
                 ),
               ],
             ),
@@ -1926,9 +1927,9 @@ class _AddPlotScreenState extends State<AddPlotScreen> {
                       ?.copyWith(color: AppColors.mutedInk),
                 ),
                 const SizedBox(height: 24),
-                const _FormSectionLabel(
+                _FormSectionLabel(
                   number: '1',
-                  title: 'Plot and map location',
+                  title: context.tr('plotAndMapLocation'),
                 ),
                 const SizedBox(height: 14),
                 TextFormField(
@@ -1947,7 +1948,7 @@ class _AddPlotScreenState extends State<AddPlotScreen> {
                       setState(() => _confirmedLocation = location),
                 ),
                 const SizedBox(height: 28),
-                const _FormSectionLabel(number: '2', title: 'First crop'),
+                _FormSectionLabel(number: '2', title: context.tr('firstCrop')),
                 const SizedBox(height: 14),
                 TextFormField(
                   controller: _crop,
@@ -1964,9 +1965,9 @@ class _AddPlotScreenState extends State<AddPlotScreen> {
                 DropdownButtonFormField<String>(
                   initialValue: _stage,
                   isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Crop stage',
-                    prefixIcon: Icon(LucideIcons.sprout),
+                  decoration: InputDecoration(
+                    labelText: context.tr('cropStage'),
+                    prefixIcon: const Icon(LucideIcons.sprout),
                   ),
                   items:
                       const [
@@ -1992,9 +1993,9 @@ class _AddPlotScreenState extends State<AddPlotScreen> {
                 TextFormField(
                   controller: _variety,
                   textCapitalization: TextCapitalization.words,
-                  decoration: const InputDecoration(
-                    labelText: 'Variety (optional)',
-                    prefixIcon: Icon(LucideIcons.tag),
+                  decoration: InputDecoration(
+                    labelText: context.tr('varietyOptional'),
+                    prefixIcon: const Icon(LucideIcons.tag),
                   ),
                 ),
                 const SizedBox(height: 14),
@@ -2013,9 +2014,9 @@ class _AddPlotScreenState extends State<AddPlotScreen> {
                   ),
                 ),
                 const SizedBox(height: 28),
-                const _FormSectionLabel(
+                _FormSectionLabel(
                   number: '3',
-                  title: 'Field details (optional)',
+                  title: context.tr('fieldDetailsOptional'),
                 ),
                 const SizedBox(height: 14),
                 LayoutBuilder(
@@ -2043,12 +2044,17 @@ class _AddPlotScreenState extends State<AddPlotScreen> {
                     final unitField = DropdownButtonFormField<String>(
                       initialValue: _areaUnit,
                       isExpanded: true,
-                      decoration: const InputDecoration(labelText: 'Unit'),
-                      items: const [
-                        DropdownMenuItem(value: 'acre', child: Text('Acre')),
+                      decoration: InputDecoration(
+                        labelText: context.tr('unit'),
+                      ),
+                      items: [
+                        DropdownMenuItem(
+                          value: 'acre',
+                          child: Text(context.tr('acre')),
+                        ),
                         DropdownMenuItem(
                           value: 'hectare',
-                          child: Text('Hectare'),
+                          child: Text(context.tr('hectare')),
                         ),
                       ],
                       onChanged: (value) {
@@ -2082,7 +2088,7 @@ class _AddPlotScreenState extends State<AddPlotScreen> {
                   maxLines: 2,
                   textCapitalization: TextCapitalization.sentences,
                   decoration: InputDecoration(
-                    labelText: '${context.tr('soilType')} / notes',
+                    labelText: context.tr('soilNotesOptional'),
                     prefixIcon: const Icon(LucideIcons.layers3),
                     alignLabelWithHint: true,
                   ),
@@ -2093,7 +2099,7 @@ class _AddPlotScreenState extends State<AddPlotScreen> {
                   maxLines: 2,
                   textCapitalization: TextCapitalization.sentences,
                   decoration: InputDecoration(
-                    labelText: '${context.tr('irrigation')} details',
+                    labelText: context.tr('irrigationDetailsOptional'),
                     prefixIcon: const Icon(LucideIcons.droplets),
                     alignLabelWithHint: true,
                   ),
@@ -2132,7 +2138,9 @@ class _AddPlotScreenState extends State<AddPlotScreen> {
                                   soilNotes: _soil.text,
                                   irrigationDetails: _irrigation.text,
                                 );
-                            if (context.mounted) context.go('/plot/${plot.id}');
+                            if (context.mounted) {
+                              context.pushReplacement('/plot/${plot.id}');
+                            }
                           } on ApiException catch (error) {
                             if (context.mounted) {
                               showAppSnackBar(
@@ -2217,6 +2225,7 @@ class _PlotLocationPickerState extends State<_PlotLocationPicker> {
   LocationPoint? _selected;
   bool _confirmed = false;
   bool _busy = false;
+  bool _searched = false;
 
   @override
   void initState() {
@@ -2233,13 +2242,28 @@ class _PlotLocationPickerState extends State<_PlotLocationPicker> {
   }
 
   Future<void> _search() async {
-    if (_query.text.trim().length < 2) return;
-    setState(() => _busy = true);
+    final query = _query.text.trim();
+    if (query.length < 2) return;
+    setState(() {
+      _busy = true;
+      _searched = false;
+      _results = const [];
+    });
     try {
       final results = await context.read<AppController>().searchLocations(
-        _query.text,
+        query,
       );
-      if (mounted) setState(() => _results = results);
+      if (mounted) {
+        final isIndianPin = RegExp(r'^\d{6}$').hasMatch(query);
+        if (isIndianPin && results.isNotEmpty) {
+          _select(results.first);
+        } else {
+          setState(() {
+            _results = results;
+            _searched = true;
+          });
+        }
+      }
     } on ApiException catch (error) {
       if (mounted) showAppSnackBar(context, context.localizedError(error));
     } finally {
@@ -2265,6 +2289,7 @@ class _PlotLocationPickerState extends State<_PlotLocationPicker> {
       _selected = point;
       _confirmed = false;
       _results = const [];
+      _searched = false;
     });
     widget.onConfirmed(null);
     _mapController.move(LatLng(point.latitude, point.longitude), 15);
@@ -2287,14 +2312,15 @@ class _PlotLocationPickerState extends State<_PlotLocationPicker> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         TextField(
+          key: const ValueKey('plot-location-search'),
           controller: _query,
           textInputAction: TextInputAction.search,
           onSubmitted: (_) => _search(),
           decoration: InputDecoration(
-            labelText: 'Search village, city or pincode',
+            labelText: context.tr('searchLocationHint'),
             prefixIcon: const Icon(LucideIcons.search),
             suffixIcon: IconButton(
-              tooltip: 'Search location',
+              tooltip: context.tr('searchLocation'),
               onPressed: _busy ? null : _search,
               icon: _busy
                   ? const SizedBox.square(
@@ -2325,13 +2351,22 @@ class _PlotLocationPickerState extends State<_PlotLocationPicker> {
             ),
           ),
         ],
+        if (_searched && _results.isEmpty) ...[
+          const SizedBox(height: 8),
+          InlineNotice(
+            key: const ValueKey('plot-location-empty'),
+            title: context.tr('searchLocation'),
+            message: context.tr('choosePlotLocationBody'),
+            icon: LucideIcons.mapPinOff,
+          ),
+        ],
         const SizedBox(height: 10),
         SizedBox(
           width: double.infinity,
           child: OutlinedButton.icon(
             onPressed: _busy ? null : _useCurrentLocation,
             icon: const Icon(LucideIcons.locateFixed),
-            label: const Text('Use current device location'),
+            label: Text(context.tr('useCurrentDeviceLocation')),
           ),
         ),
         const SizedBox(height: 12),
@@ -2366,6 +2401,7 @@ class _PlotLocationPickerState extends State<_PlotLocationPicker> {
                         height: 52,
                         child: const Icon(
                           LucideIcons.mapPin,
+                          key: ValueKey('plot-location-marker'),
                           color: AppColors.forest,
                           size: 42,
                         ),
@@ -2383,9 +2419,9 @@ class _PlotLocationPickerState extends State<_PlotLocationPicker> {
         ),
         const SizedBox(height: 10),
         if (selected == null)
-          const InlineNotice(
-            title: 'Choose the plot location',
-            message: 'Search, use the phone location, or tap the map to place the pointer.',
+          InlineNotice(
+            title: context.tr('choosePlotLocation'),
+            message: context.tr('choosePlotLocationBody'),
             icon: LucideIcons.mapPinned,
           )
         else
@@ -2395,7 +2431,9 @@ class _PlotLocationPickerState extends State<_PlotLocationPicker> {
                   constraints.maxWidth < 440 ||
                   MediaQuery.textScalerOf(context).scale(1) > 1.3;
               final notice = InlineNotice(
-                title: _confirmed ? 'Map pointer confirmed' : 'Confirm pointer',
+                title: context.tr(
+                  _confirmed ? 'mapPointerConfirmed' : 'confirmPointer',
+                ),
                 message:
                     '${selected.displayLabel}\n${selected.latitude.toStringAsFixed(5)}, ${selected.longitude.toStringAsFixed(5)}',
                 icon: _confirmed ? LucideIcons.circleCheck : LucideIcons.mapPin,
@@ -2411,7 +2449,9 @@ class _PlotLocationPickerState extends State<_PlotLocationPicker> {
                 icon: Icon(
                   _confirmed ? LucideIcons.circleCheck : LucideIcons.mapPin,
                 ),
-                label: Text(_confirmed ? 'Confirmed' : 'Confirm pointer'),
+                label: Text(
+                  context.tr(_confirmed ? 'confirmed' : 'confirmPointer'),
+                ),
               );
               if (stackAction) {
                 return Column(
@@ -2484,19 +2524,19 @@ class _EditPlotScreenState extends State<EditPlotScreen> {
   Widget build(BuildContext context) {
     final plot = _plot;
     if (plot == null) {
-      return const Scaffold(
+      return Scaffold(
         body: SafeArea(
           child: AppStateView(
             kind: AppStateKind.error,
-            title: 'Plot not found',
-            message: 'This plot may have been removed.',
+            title: context.tr('plotNotFound'),
+            message: context.tr('plotRemovedBody'),
           ),
         ),
       );
     }
     final busy = context.watch<AppController>().busy;
     return Scaffold(
-      appBar: AppBar(title: const Text('Edit plot')),
+      appBar: AppBar(title: Text(context.tr('editPlot'))),
       body: SafeArea(
         top: false,
         child: AppContent(
@@ -2520,9 +2560,9 @@ class _EditPlotScreenState extends State<EditPlotScreen> {
                 TextFormField(
                   controller: _name,
                   textCapitalization: TextCapitalization.words,
-                  decoration: const InputDecoration(
-                    labelText: 'Plot name',
-                    prefixIcon: Icon(LucideIcons.map),
+                  decoration: InputDecoration(
+                    labelText: context.tr('plotName'),
+                    prefixIcon: const Icon(LucideIcons.map),
                   ),
                   validator: (value) => value?.trim().isEmpty ?? true
                       ? 'Plot name is required.'
@@ -2545,9 +2585,9 @@ class _EditPlotScreenState extends State<EditPlotScreen> {
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
                       ),
-                      decoration: const InputDecoration(
-                        labelText: 'Area (optional)',
-                        prefixIcon: Icon(LucideIcons.ruler),
+                      decoration: InputDecoration(
+                        labelText: context.tr('areaOptional'),
+                        prefixIcon: const Icon(LucideIcons.ruler),
                       ),
                       validator: (value) {
                         if (value == null || value.trim().isEmpty) return null;
@@ -2560,12 +2600,17 @@ class _EditPlotScreenState extends State<EditPlotScreen> {
                     final unitField = DropdownButtonFormField<String>(
                       initialValue: _areaUnit,
                       isExpanded: true,
-                      decoration: const InputDecoration(labelText: 'Unit'),
-                      items: const [
-                        DropdownMenuItem(value: 'acre', child: Text('Acre')),
+                      decoration: InputDecoration(
+                        labelText: context.tr('unit'),
+                      ),
+                      items: [
+                        DropdownMenuItem(
+                          value: 'acre',
+                          child: Text(context.tr('acre')),
+                        ),
                         DropdownMenuItem(
                           value: 'hectare',
-                          child: Text('Hectare'),
+                          child: Text(context.tr('hectare')),
                         ),
                       ],
                       onChanged: (value) {
@@ -2595,9 +2640,9 @@ class _EditPlotScreenState extends State<EditPlotScreen> {
                 TextFormField(
                   controller: _soil,
                   maxLines: 2,
-                  decoration: const InputDecoration(
-                    labelText: 'Soil notes (optional)',
-                    prefixIcon: Icon(LucideIcons.layers3),
+                  decoration: InputDecoration(
+                    labelText: context.tr('soilNotesOptional'),
+                    prefixIcon: const Icon(LucideIcons.layers3),
                     alignLabelWithHint: true,
                   ),
                 ),
@@ -2605,9 +2650,9 @@ class _EditPlotScreenState extends State<EditPlotScreen> {
                 TextFormField(
                   controller: _irrigation,
                   maxLines: 2,
-                  decoration: const InputDecoration(
-                    labelText: 'Irrigation details (optional)',
-                    prefixIcon: Icon(LucideIcons.droplets),
+                  decoration: InputDecoration(
+                    labelText: context.tr('irrigationDetailsOptional'),
+                    prefixIcon: const Icon(LucideIcons.droplets),
                     alignLabelWithHint: true,
                   ),
                 ),
@@ -2619,7 +2664,7 @@ class _EditPlotScreenState extends State<EditPlotScreen> {
                           dimension: 22,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('Save changes'),
+                      : Text(context.tr('saveChanges')),
                 ),
               ],
             ),
@@ -2633,7 +2678,7 @@ class _EditPlotScreenState extends State<EditPlotScreen> {
     if (!_key.currentState!.validate()) return;
     final location = _confirmedLocation;
     if (location == null) {
-      showAppSnackBar(context, 'Confirm the plot pointer before saving.');
+      showAppSnackBar(context, context.tr('confirmPlotPointerFirst'));
       return;
     }
     try {
@@ -2724,7 +2769,7 @@ class _ActivityDetailScreenState extends State<ActivityDetailScreen> {
       }
       if (mounted) {
         setState(() => _activity = activity);
-        showAppSnackBar(context, 'Field photos added.', success: true);
+        showAppSnackBar(context, context.tr('fieldPhotosAdded'), success: true);
       }
     } on ApiException catch (error) {
       if (mounted) showAppSnackBar(context, context.localizedError(error));
@@ -2737,10 +2782,8 @@ class _ActivityDetailScreenState extends State<ActivityDetailScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Remove this photo?'),
-        content: const Text(
-          'The written activity stays in the timeline. Only this photo is removed.',
-        ),
+        title: Text(context.tr('removePhotoQuestion')),
+        content: Text(context.tr('removeActivityPhotoBody')),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -2748,7 +2791,7 @@ class _ActivityDetailScreenState extends State<ActivityDetailScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Remove photo'),
+            child: Text(context.tr('removePhoto')),
           ),
         ],
       ),
@@ -2806,8 +2849,8 @@ class _ActivityDetailScreenState extends State<ActivityDetailScreen> {
                   TextField(
                     controller: title,
                     maxLength: 150,
-                    decoration: const InputDecoration(
-                      labelText: 'Activity title',
+                    decoration: InputDecoration(
+                      labelText: context.tr('activityTitle'),
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -2824,7 +2867,7 @@ class _ActivityDetailScreenState extends State<ActivityDetailScreen> {
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading: const Icon(LucideIcons.calendarClock),
-                    title: const Text('Activity date and time'),
+                    title: Text(context.tr('activityDateTime')),
                     subtitle: Text(context.strings.formatDateTime(occurredAt)),
                     trailing: const Icon(LucideIcons.chevronRight),
                     onTap: () async {
@@ -2894,10 +2937,8 @@ class _ActivityDetailScreenState extends State<ActivityDetailScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete this field activity?'),
-        content: const Text(
-          'The activity and its attached photos will be removed from the plot timeline.',
-        ),
+        title: Text(context.tr('deleteActivityQuestion')),
+        content: Text(context.tr('deleteActivityBody')),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -2927,7 +2968,7 @@ class _ActivityDetailScreenState extends State<ActivityDetailScreen> {
     final activity = _activity;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Field activity'),
+        title: Text(context.tr('fieldActivity')),
         actions: [
           IconButton(
             tooltip: context.tr('edit'),
@@ -2945,24 +2986,24 @@ class _ActivityDetailScreenState extends State<ActivityDetailScreen> {
       body: SafeArea(
         top: false,
         child: _loading
-            ? const AppStateView(
+            ? AppStateView(
                 kind: AppStateKind.loading,
-                title: 'Loading activity',
-                message: 'Reading the latest field record.',
+                title: context.tr('loadingActivity'),
+                message: context.tr('loadingActivityBody'),
               )
             : _error != null
             ? AppStateView(
                 kind: AppStateKind.error,
-                title: 'Activity could not be loaded',
+                title: context.tr('activityLoadFailed'),
                 message: _error!.message,
                 actionLabel: context.tr('retry'),
                 onAction: _load,
               )
             : activity == null
-            ? const AppStateView(
+            ? AppStateView(
                 kind: AppStateKind.empty,
-                title: 'Activity not found',
-                message: 'This record may have been removed.',
+                title: context.tr('activityNotFound'),
+                message: context.tr('recordRemovedBody'),
               )
             : AppContent(
                 maxWidth: 760,
@@ -3001,7 +3042,7 @@ class _ActivityDetailScreenState extends State<ActivityDetailScreen> {
                     ),
                     const SizedBox(height: 24),
                     SectionHeader(
-                      title: 'Field photos',
+                      title: context.tr('fieldPhotos'),
                       subtitle: activity.photos.isEmpty
                           ? 'No photos are attached to this record.'
                           : '${activity.photos.length} attached',
@@ -3013,10 +3054,10 @@ class _ActivityDetailScreenState extends State<ActivityDetailScreen> {
                     ),
                     const SizedBox(height: 12),
                     if (activity.photos.isEmpty)
-                      const AppStateView(
+                      AppStateView(
                         kind: AppStateKind.empty,
-                        title: 'No field photos',
-                        message: 'Add photos to document crop condition or work completed.',
+                        title: context.tr('noFieldPhotos'),
+                        message: context.tr('noFieldPhotosBody'),
                         compact: true,
                       )
                     else
@@ -3078,7 +3119,7 @@ class _ActivityPhotoTile extends StatelessWidget {
                 return Image.memory(
                   Uint8List.fromList(snapshot.data!),
                   fit: BoxFit.cover,
-                  semanticLabel: 'Field activity photo',
+                  semanticLabel: context.tr('fieldActivityPhoto'),
                 );
               }
               if (snapshot.hasError) {
@@ -3097,7 +3138,7 @@ class _ActivityPhotoTile extends StatelessWidget {
             top: 6,
             end: 6,
             child: IconButton.filled(
-              tooltip: 'Remove photo',
+              tooltip: context.tr('removePhoto'),
               onPressed: () => onDelete(photo),
               icon: const Icon(LucideIcons.trash2, size: 17),
             ),
@@ -3188,9 +3229,9 @@ class _AddActivityScreenState extends State<AddActivityScreen> {
                 isExpanded: true,
                 decoration: InputDecoration(labelText: context.tr('crop')),
                 items: [
-                  const DropdownMenuItem<String?>(
+                  DropdownMenuItem<String?>(
                     value: null,
-                    child: Text('Whole plot / no specific crop'),
+                    child: Text(context.tr('wholePlotNoCrop')),
                   ),
                   ...crops.map(
                     (crop) => DropdownMenuItem<String?>(
@@ -3205,7 +3246,7 @@ class _AddActivityScreenState extends State<AddActivityScreen> {
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(LucideIcons.calendarClock),
-                title: const Text('Activity date and time'),
+                title: Text(context.tr('activityDateTime')),
                 subtitle: Text(context.strings.formatDateTime(_occurredAt)),
                 trailing: const Icon(LucideIcons.chevronRight),
                 onTap: _pickOccurredAt,
@@ -3269,7 +3310,7 @@ class _AddActivityScreenState extends State<AddActivityScreen> {
                           end: 4,
                           child: IconButton.filled(
                             visualDensity: VisualDensity.compact,
-                            tooltip: 'Remove photo',
+                            tooltip: context.tr('removePhoto'),
                             onPressed: () =>
                                 setState(() => _images.removeAt(index)),
                             icon: const Icon(LucideIcons.x, size: 15),

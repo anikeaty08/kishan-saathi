@@ -8,13 +8,11 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
-    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     func,
-    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -117,59 +115,3 @@ class ChatSendOperation(Base):
     request_hash: Mapped[str] = mapped_column(String(64))
     response: Mapped[dict[str, object]] = mapped_column(JSON_DOCUMENT)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-
-class ChatTurn(Base):
-    """Durable queued farmer turn processed in strict per-chat order."""
-
-    __tablename__ = "chat_turns"
-    __table_args__ = (
-        UniqueConstraint(
-            "farmer_id",
-            "chat_id",
-            "idempotency_key",
-            name="uq_chat_turns_key",
-        ),
-        UniqueConstraint("chat_id", "sequence", name="uq_chat_turns_sequence"),
-        CheckConstraint(
-            "status IN ('queued', 'processing', 'completed', 'failed')",
-            name="ck_chat_turns_status",
-        ),
-        Index(
-            "ix_chat_turns_claim",
-            "status",
-            "next_attempt_at",
-            "created_at",
-            postgresql_where=text("status = 'queued'"),
-            sqlite_where=text("status = 'queued'"),
-        ),
-    )
-
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    farmer_id: Mapped[UUID] = mapped_column(
-        ForeignKey("farmer_profiles.id", ondelete="CASCADE"), index=True
-    )
-    chat_id: Mapped[UUID] = mapped_column(
-        ForeignKey("chat_sessions.id", ondelete="CASCADE"), index=True
-    )
-    idempotency_key: Mapped[str] = mapped_column(String(128))
-    request_hash: Mapped[str] = mapped_column(String(64))
-    sequence: Mapped[int] = mapped_column(Integer)
-    content: Mapped[str] = mapped_column(Text)
-    preferred_language: Mapped[str | None] = mapped_column(String(8), nullable=True)
-    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
-    attempts: Mapped[int] = mapped_column(Integer, default=0)
-    response: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
-    error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    next_attempt_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), index=True
-    )
-    lease_expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True, index=True
-    )
-    lease_token: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
-    )

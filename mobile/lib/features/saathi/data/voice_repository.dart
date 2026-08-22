@@ -1,4 +1,5 @@
 import '../../../core/network/api_exception.dart';
+import '../../../core/network/api_client.dart';
 import '../../../core/network/krishi_api.dart';
 
 class VoiceRepository {
@@ -21,7 +22,7 @@ class VoiceRepository {
     );
   }
 
-  Future<List<int>> speech({
+  Future<AuthenticatedResource> speech({
     required String chatId,
     required String messageId,
   }) => _api.assistantSpeech(chatId, messageId);

@@ -45,8 +45,8 @@ Copy `config/dev.example.json` to a git-ignored local file, for example
 ```json
 {
   "API_BASE_URL": "http://10.0.2.2:8000",
-  "AWS_REGION": "ap-south-1",
-  "COGNITO_USER_POOL_ID": "ap-south-1_example",
+  "AWS_REGION": "ap-northeast-1",
+  "COGNITO_USER_POOL_ID": "ap-northeast-1_example",
   "COGNITO_APP_CLIENT_ID": "public-app-client-id",
   "APP_ENV": "development"
 }

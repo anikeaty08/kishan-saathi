@@ -64,7 +64,7 @@ def build_chat_service(
     current_weather_provider: CurrentWeatherProvider,
     forecast_weather_provider: ForecastWeatherProvider,
 ) -> ChatService:
-    """Build the same chat use case for requests and background turn workers."""
+    """Build the direct chat use case for one request."""
 
     return ChatService(
         repository=ChatRepository(session),
@@ -88,5 +88,4 @@ def build_chat_service(
             llm=LLMRouter(llm_provider, settings),
             max_capture_attempts=settings.memory_capture_max_attempts,
         ),
-        max_pending_turns=settings.chat_max_pending_turns,
     )

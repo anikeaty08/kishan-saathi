@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:krishisathi/core/localization/app_strings.dart';
 import 'package:krishisathi/core/models/app_models.dart';
+import 'package:krishisathi/core/network/api_client.dart';
 import 'package:krishisathi/core/theme/app_theme.dart';
 import 'package:krishisathi/features/saathi/presentation/live_voice_screen.dart';
+import 'package:krishisathi/features/saathi/presentation/live_voice_session_controller.dart';
 import 'package:krishisathi/features/saathi/presentation/voice_composer_controller.dart';
 import 'package:krishisathi/features/shared/presentation/app_controller.dart';
 import 'package:provider/provider.dart';
@@ -41,16 +44,26 @@ void main() {
         ),
       ];
       final voice = _ScreenFakeVoice();
+      final session = LiveVoiceSessionController(
+        chatId: 'chat-voice',
+        transcribe: (_, _) async => 'Question',
+        sendMessage: (_, _) async {},
+        loadSpeech: (_, _) async => AuthenticatedResource(
+          uri: Uri(scheme: 'https', host: 'example.test', path: '/speech.mp3'),
+          headers: {},
+        ),
+        messages: () => app.chats.single.messages,
+        voice: voice,
+      );
 
       await tester.pumpWidget(
         ChangeNotifierProvider<AppController>.value(
           value: app,
           child: MaterialApp(
             theme: AppTheme.light(),
-            home: LiveVoiceScreen(
-              chatId: 'chat-voice',
-              voiceFactory: (_) => voice,
-            ),
+            localizationsDelegates: const [AppStrings.delegate],
+            supportedLocales: AppStrings.supportedLocales,
+            home: LiveVoiceScreen(chatId: 'chat-voice', session: session),
           ),
         ),
       );

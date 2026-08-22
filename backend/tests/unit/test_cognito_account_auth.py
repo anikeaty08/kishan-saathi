@@ -39,6 +39,87 @@ async def test_sign_up_sends_the_backend_validated_farmer_name() -> None:
 
 
 @pytest.mark.asyncio
+async def test_duplicate_unconfirmed_sign_up_resends_code() -> None:
+    operations: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        operation = request.headers["x-amz-target"].split(".")[-1]
+        operations.append(operation)
+        if operation == "SignUp":
+            return httpx.Response(
+                400,
+                json={
+                    "__type": "UsernameExistsException",
+                    "message": "account exists",
+                },
+            )
+        assert operation == "ResendConfirmationCode"
+        return httpx.Response(200, json={})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = CognitoAccountAuthProvider(_settings(), http_client=client)
+        confirmed = await provider.sign_up(
+            "Nikhil Kumar", "farmer@example.com", "valid-password"
+        )
+
+    assert confirmed is False
+    assert operations == ["SignUp", "ResendConfirmationCode"]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_confirmed_sign_up_reports_existing_account() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        operation = request.headers["x-amz-target"].split(".")[-1]
+        if operation == "SignUp":
+            return httpx.Response(
+                400,
+                json={
+                    "__type": "UsernameExistsException",
+                    "message": "account exists",
+                },
+            )
+        assert operation == "ResendConfirmationCode"
+        return httpx.Response(
+            400,
+            json={
+                "__type": "InvalidParameterException",
+                "message": "User is already confirmed.",
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = CognitoAccountAuthProvider(_settings(), http_client=client)
+        with pytest.raises(ApplicationError) as raised:
+            await provider.sign_up(
+                "Nikhil Kumar", "farmer@example.com", "valid-password"
+            )
+
+    assert raised.value.code == "AUTH_ACCOUNT_EXISTS"
+    assert raised.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_resend_for_confirmed_account_reports_existing_account() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["x-amz-target"].endswith(".ResendConfirmationCode")
+        return httpx.Response(
+            400,
+            json={
+                "__type": "InvalidParameterException",
+                "message": "User is already confirmed.",
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = CognitoAccountAuthProvider(_settings(), http_client=client)
+        with pytest.raises(ApplicationError) as raised:
+            await provider.resend_confirmation("farmer@example.com")
+
+    assert raised.value.code == "AUTH_ACCOUNT_EXISTS"
+    assert raised.value.status_code == 409
+
+
+@pytest.mark.asyncio
 async def test_sign_in_maps_tokens_without_leaking_provider_shape() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["x-amz-target"].endswith(".InitiateAuth")

@@ -1,5 +1,6 @@
 """Owner-scoped transcription and assistant speech orchestration."""
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
@@ -11,6 +12,7 @@ from app.integrations.audio.provider import (
     AudioTranscriptionRequest,
     SpeechSynthesisRequest,
     SpeechSynthesisResult,
+    SpeechSynthesisStream,
 )
 from app.modules.chats.repository import ChatRepository
 from app.modules.voice.schemas import VoiceTranscriptionResponse
@@ -102,20 +104,57 @@ class VoiceService:
         chat_id: UUID,
         message_id: UUID,
     ) -> SpeechSynthesisResult:
+        stream = await self.speech_stream(farmer_id, chat_id, message_id)
+        parts = [chunk async for chunk in stream.content]
+        if not parts:
+            raise ApplicationError(code="VOICE_AUDIO_EMPTY", status_code=502)
+        return SpeechSynthesisResult(
+            content=b"".join(parts),
+            media_type=stream.media_type,
+            model=stream.model,
+            voice=stream.voice,
+        )
+
+    async def speech_stream(
+        self,
+        farmer_id: UUID,
+        chat_id: UUID,
+        message_id: UUID,
+    ) -> SpeechSynthesisStream:
         message = await self._chats.message(farmer_id, chat_id, message_id)
         if message is None or message.role != "assistant":
             raise ApplicationError(code="CHAT_MESSAGE_NOT_FOUND", status_code=404)
         if len(message.content) > self._settings.voice_max_speech_characters:
             raise ApplicationError(code="VOICE_TEXT_TOO_LONG", status_code=422)
-        chunks = self._speech_chunks(message.content)
-        results = [
-            await self._provider.synthesize(SpeechSynthesisRequest(text=chunk)) for chunk in chunks
-        ]
-        first = results[0]
-        if any(result.media_type != first.media_type for result in results):
-            raise ApplicationError(code="VOICE_PROVIDER_FAILED", status_code=502)
-        return SpeechSynthesisResult(
-            content=self._join_audio(results),
+        text_chunks = self._speech_chunks(message.content)
+        first = await self._provider.synthesize_stream(SpeechSynthesisRequest(text=text_chunks[0]))
+
+        async def content() -> AsyncIterator[bytes]:
+            emitted = False
+            for index, text in enumerate(text_chunks):
+                result = (
+                    first
+                    if index == 0
+                    else await self._provider.synthesize_stream(SpeechSynthesisRequest(text=text))
+                )
+                if (
+                    result.media_type != first.media_type
+                    or result.model != first.model
+                    or result.voice != first.voice
+                ):
+                    raise ApplicationError(code="VOICE_PROVIDER_FAILED", status_code=502)
+                stream = result.content
+                if index > 0 and result.media_type == "audio/mpeg":
+                    stream = self._without_leading_id3(stream)
+                async for chunk in stream:
+                    if chunk:
+                        emitted = True
+                        yield chunk
+            if not emitted:
+                raise ApplicationError(code="VOICE_AUDIO_EMPTY", status_code=502)
+
+        return SpeechSynthesisStream(
+            content=content(),
             media_type=first.media_type,
             model=first.model,
             voice=first.voice,
@@ -169,3 +208,40 @@ class VoiceService:
                 raise ApplicationError(code="VOICE_AUDIO_EMPTY", status_code=502)
             parts.append(content)
         return b"".join(parts)
+
+    @staticmethod
+    async def _without_leading_id3(content: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
+        """Remove one leading ID3 block before concatenating another MP3 stream."""
+
+        buffered = bytearray()
+        stripped = False
+        async for chunk in content:
+            if stripped:
+                yield chunk
+                continue
+            buffered.extend(chunk)
+            if len(buffered) < 10:
+                continue
+            if not buffered.startswith(b"ID3"):
+                stripped = True
+                yield bytes(buffered)
+                buffered.clear()
+                continue
+            size = (
+                (buffered[6] & 0x7F) << 21
+                | (buffered[7] & 0x7F) << 14
+                | (buffered[8] & 0x7F) << 7
+                | (buffered[9] & 0x7F)
+            )
+            header_size = 10 + size
+            if len(buffered) < header_size:
+                continue
+            stripped = True
+            remainder = bytes(buffered[header_size:])
+            buffered.clear()
+            if remainder:
+                yield remainder
+        if not stripped and buffered:
+            if buffered.startswith(b"ID3"):
+                raise ApplicationError(code="VOICE_PROVIDER_FAILED", status_code=502)
+            yield bytes(buffered)

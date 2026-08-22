@@ -43,11 +43,7 @@ abstract final class ApiEndpoints {
   static const chats = '/api/v1/chats';
   static String chat(String id) => '$chats/$id';
   static String chatMessages(String id) => '${chat(id)}/messages';
-  static String chatTurns(String id) => '${chat(id)}/turns';
-  static String chatTurn(String chatId, String turnId) =>
-      '${chatTurns(chatId)}/$turnId';
-  static String chatTurnRetry(String chatId, String turnId) =>
-      '${chatTurn(chatId, turnId)}/retry';
+  static String chatMessageStream(String id) => '${chatMessages(id)}/stream';
   static String voiceTranscription(String chatId) =>
       '/api/v1/voice/chats/$chatId/transcriptions';
   static String assistantSpeech(String chatId, String messageId) =>

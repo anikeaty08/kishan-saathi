@@ -1,9 +1,11 @@
 """Authenticated request-based speech endpoints for Saathi chat."""
 
+from collections.abc import AsyncIterator
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi.responses import StreamingResponse
 
 from app.core.config import Settings
 from app.core.dependencies import get_app_settings, get_paid_operation_rate_limiter
@@ -51,18 +53,30 @@ async def transcribe_chat_audio(
         )
 
 
-@router.post("/chats/{chat_id}/messages/{message_id}/speech")
+@router.get(
+    "/chats/{chat_id}/messages/{message_id}/speech",
+    operation_id="stream_assistant_message_speech",
+)
+@router.post(
+    "/chats/{chat_id}/messages/{message_id}/speech",
+    operation_id="speak_assistant_message",
+)
 async def speak_assistant_message(
     chat_id: UUID,
     message_id: UUID,
     farmer_id: FarmerId,
     service: Service,
     limiter: Annotated[PaidOperationRateLimiter, Depends(get_paid_operation_rate_limiter)],
-) -> Response:
-    async with limiter.request(farmer_id, "speech"):
-        result = await service.speech(farmer_id, chat_id, message_id)
-    return Response(
-        content=result.content,
+) -> StreamingResponse:
+    result = await service.speech_stream(farmer_id, chat_id, message_id)
+
+    async def audio() -> AsyncIterator[bytes]:
+        async with limiter.request(farmer_id, "speech"):
+            async for chunk in result.content:
+                yield chunk
+
+    return StreamingResponse(
+        content=audio(),
         media_type=result.media_type,
         headers={
             "Cache-Control": "private, no-store",

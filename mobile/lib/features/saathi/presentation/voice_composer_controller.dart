@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import 'voice_audio_playback.dart';
 import 'voice_audio_recorder.dart';
@@ -12,7 +13,7 @@ typedef VoiceTranscriber = Future<String> Function(
   String chatId,
   String audioPath,
 );
-typedef AssistantSpeechLoader = Future<List<int>> Function(
+typedef AssistantSpeechLoader = Future<AuthenticatedResource> Function(
   String chatId,
   String messageId,
 );
@@ -224,9 +225,9 @@ class VoiceComposerController extends ChangeNotifier implements VoiceTurnIO {
     speakingMessageId = messageId;
     _notify();
     try {
-      final bytes = await loadSpeech(chatId, messageId);
+      final source = await loadSpeech(chatId, messageId);
       if (_disposed || operation != _speechOperation) return false;
-      await _playback.play(bytes);
+      await _playback.play(source);
       if (_disposed || operation != _speechOperation) {
         await _playback.stop();
         return false;

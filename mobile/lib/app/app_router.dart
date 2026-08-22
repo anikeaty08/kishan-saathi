@@ -227,9 +227,9 @@ GoRouter createAppRouter(AppController controller) {
         builder: (_, _) => const NotificationSettingsScreen(),
       ),
       GoRoute(
-        path: '/settings/privacy',
+        path: '/settings/permissions',
         parentNavigatorKey: rootKey,
-        builder: (_, _) => const PrivacyScreen(),
+        builder: (_, _) => const PermissionSettingsScreen(),
       ),
       GoRoute(
         path: '/settings/memory',

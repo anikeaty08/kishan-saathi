@@ -16,6 +16,7 @@ async def test_open_meteo_geocoding_maps_location_results() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.params["name"] == "Pune"
         assert request.url.params["language"] == "mr"
+        assert request.url.params["countryCode"] == "IN"
         return httpx.Response(
             200,
             json={
@@ -44,6 +45,56 @@ async def test_open_meteo_geocoding_maps_location_results() -> None:
     assert results[0].name == "Pune"
     assert results[0].admin1 == "Maharashtra"
     assert results[0].latitude == 18.52
+
+
+@pytest.mark.asyncio
+async def test_pincode_search_uses_postal_geocoder_and_maps_result() -> None:
+    requests = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        assert request.url.params["postalcode"] == "560088"
+        assert request.url.params["countrycodes"] == "in"
+        assert request.url.params["accept-language"] == "en"
+        assert request.headers["User-Agent"].startswith("KishanSaathi/")
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "lat": "13.1377",
+                    "lon": "77.4786",
+                    "display_name": "560088, Bengaluru, Karnataka, India",
+                    "address": {
+                        "postcode": "560088",
+                        "city": "Bengaluru",
+                        "state": "Karnataka",
+                        "country": "India",
+                    },
+                }
+            ],
+        )
+
+    postal_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="https://geocoding.test"
+    )
+    provider = OpenMeteoGeocodingProvider(
+        Settings(_env_file=None),
+        postal_client=postal_client,
+    )
+    try:
+        results = await provider.search(query="560088", language="en", limit=5)
+        cached = await provider.search(query="560088", language="en", limit=5)
+    finally:
+        await provider.close()
+        await postal_client.aclose()
+
+    assert requests == 1
+    assert cached == results
+    assert results[0].name == "560088"
+    assert results[0].admin2 == "Bengaluru"
+    assert results[0].admin1 == "Karnataka"
+    assert results[0].country == "India"
 
 
 def test_http_client_info_urls_are_suppressed() -> None:

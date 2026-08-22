@@ -23,12 +23,11 @@ import '../../home/data/weather_repository.dart';
 import '../../profile/data/memory_repository.dart';
 import '../../profile/data/reminder_repository.dart';
 import '../../saathi/data/chat_repository.dart';
-import '../../saathi/data/chat_outbox_store.dart';
 import '../../saathi/data/voice_repository.dart';
 import '../../scan/data/diagnosis_repository.dart';
 import '../../scan/data/scan_queue_repository.dart';
 
-class AppController extends ChangeNotifier with WidgetsBindingObserver {
+class AppController extends ChangeNotifier {
   AppController({
     required this.config,
     required this.preferences,
@@ -37,7 +36,6 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     required this.farmRepository,
     required this.locationRepository,
     required this.chatRepository,
-    required this.chatOutboxStore,
     required this.voiceRepository,
     required this.diagnosisRepository,
     required this.weatherRepository,
@@ -78,7 +76,6 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   final FarmRepository farmRepository;
   final LocationRepository locationRepository;
   final ChatRepository chatRepository;
-  final ChatOutboxStore chatOutboxStore;
   final VoiceRepository voiceRepository;
   final DiagnosisRepository diagnosisRepository;
   final WeatherRepository weatherRepository;
@@ -94,8 +91,6 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
   bool _processingQueuedScans = false;
   bool _initializingSession = false;
-  bool _observingLifecycle = false;
-  AppLifecycleState? _appLifecycleState;
 
   bool initialized = false;
   bool onboardingComplete = false;
@@ -109,11 +104,13 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   AppPermissionState notificationPermission = AppPermissionState.denied;
   AppPermissionState locationPermission = AppPermissionState.denied;
   AppPermissionState cameraPermission = AppPermissionState.denied;
+  AppPermissionState microphonePermission = AppPermissionState.denied;
   bool busy = false;
   ThemeMode themeMode = ThemeMode.system;
   String preferredAreaUnit = 'acre';
   Locale locale = const Locale('en');
   String farmerName = '';
+  String farmerEmail = '';
   ApiException? lastError;
 
   WeatherSnapshot? weather;
@@ -122,10 +119,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   List<ReminderProposalModel> reminderProposals = const [];
   List<DiagnosisCaseModel> diagnoses = const [];
   List<ChatThreadModel> chats = const [];
-  final Map<String, Set<String>> _activeChatTurnIds = {};
-  final Map<String, Timer> _chatTurnPollers = {};
-  final Map<String, int> _chatTurnPollFailures = {};
-  final Set<String> _refreshingChatTurns = {};
+  final Map<String, Set<String>> _activeChatRequestIds = {};
   final Map<String, int?> _chatNextBeforeSequence = {};
   final Set<String> _loadingOlderChatIds = {};
   final Map<String, String> _chatDrafts = {};
@@ -152,13 +146,9 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> initialize() async {
-    if (!_observingLifecycle) {
-      _appLifecycleState = WidgetsBinding.instance.lifecycleState;
-      WidgetsBinding.instance.addObserver(this);
-      _observingLifecycle = true;
-    }
     locale = Locale(preferences.getString(_localeKey) ?? 'en');
     farmerName = '';
+    farmerEmail = '';
     final legacyDraftKeys = preferences.getKeys().where(
       (key) => key.startsWith(_chatDraftPrefix),
     );
@@ -197,6 +187,9 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       AppPermissionKind.location,
     );
     cameraPermission = await permissionService.status(AppPermissionKind.camera);
+    microphonePermission = await permissionService.status(
+      AppPermissionKind.microphone,
+    );
     notificationsEnabled =
         (preferences.getBool(_notificationsKey) ?? false) &&
         notificationPermission.isAllowed;
@@ -259,13 +252,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     if (isAuthenticated) {
       try {
         await refreshProfile();
-        await refreshFarms();
-        await refreshDiagnoses();
-        await refreshDiagnosisReports();
-        await refreshChats();
-        await refreshReminders();
-        await refreshMemories();
-        await refreshCurrentWeather(requestPermission: false);
+        unawaited(_loadInitialData());
       } on ApiException catch (error) {
         lastError = error;
       }
@@ -284,35 +271,61 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  Future<void> _loadInitialData() async {
+    try {
+      await Future.wait([
+        refreshFarms(),
+        refreshDiagnoses().then((_) => refreshDiagnosisReports()),
+        refreshChats(),
+        refreshReminders(),
+        refreshMemories(),
+        refreshCurrentWeather(requestPermission: false),
+      ]);
+    } on Exception catch (error) {
+      lastError = error is ApiException
+          ? error
+          : ApiException(code: 'INITIAL_LOAD_ERROR', message: error.toString());
+      notifyListeners();
+    }
+  }
+
   Future<void> setLocale(String code) async {
     final nextLocale = AppLanguage.byCode(code).locale;
-    await AppStrings.load(nextLocale);
     if (canUseLiveServices) {
       try {
-        await apiClient.patch(
+        final payload = await apiClient.patch(
           ApiEndpoints.me,
           body: {'preferred_language': code},
         );
+        await _applyProfile(payload);
       } on ApiException catch (error) {
         lastError = error;
         notifyListeners();
         rethrow;
       }
+    } else {
+      await AppStrings.load(nextLocale);
+      locale = nextLocale;
+      await preferences.setString(_localeKey, code);
     }
-    locale = nextLocale;
-    await preferences.setString(_localeKey, code);
     notifyListeners();
   }
 
   Future<void> setFarmerName(String value) async {
     final normalized = value.trim();
-    if (normalized.isEmpty) return;
+    if (normalized.isEmpty) {
+      throw const ApiException(
+        code: 'PROFILE_NAME_REQUIRED',
+        message: 'Enter your name',
+        statusCode: 422,
+      );
+    }
     if (canUseLiveServices) {
       final payload = await apiClient.patch(
         ApiEndpoints.me,
         body: {'name': normalized},
       );
-      _applyProfile(payload);
+      await _applyProfile(payload);
     } else {
       farmerName = normalized;
     }
@@ -327,8 +340,16 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> setPreferredAreaUnit(String value) async {
     if (value != 'acre' && value != 'hectare') return;
-    preferredAreaUnit = value;
-    await preferences.setString(_areaUnitKey, value);
+    if (canUseLiveServices) {
+      final payload = await apiClient.patch(
+        ApiEndpoints.me,
+        body: {'area_unit': value},
+      );
+      await _applyProfile(payload);
+    } else {
+      preferredAreaUnit = value;
+      await preferences.setString(_areaUnitKey, value);
+    }
     notifyListeners();
   }
 
@@ -385,7 +406,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
         _initializingSession = true;
         previewMode = false;
         final profile = await apiClient.get(ApiEndpoints.me);
-        _applyProfile(profile);
+        await _applyProfile(profile);
         await Future.wait([
           preferences.setBool(_previewKey, false),
           preferences.setBool(_onboardingKey, onboardingComplete),
@@ -401,21 +422,25 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> _refreshSignedInData() async {
-    final refreshes = <Future<void> Function()>[
-      refreshFarms,
-      refreshDiagnoses,
-      refreshDiagnosisReports,
-      refreshChats,
-      refreshReminders,
-      refreshMemories,
-      () => refreshCurrentWeather(requestPermission: false),
-    ];
-    for (final refresh in refreshes) {
-      try {
-        await refresh();
-      } on ApiException catch (error) {
-        lastError = await _withConnectivityContext(error);
-      }
+    // Run all post-sign-in data refreshes concurrently instead of sequentially.
+    // Individual failures are captured to lastError without blocking others.
+    await Future.wait([
+      _safeRefresh(refreshFarms),
+      _safeRefresh(
+        () => refreshDiagnoses().then((_) => refreshDiagnosisReports()),
+      ),
+      _safeRefresh(refreshChats),
+      _safeRefresh(refreshReminders),
+      _safeRefresh(refreshMemories),
+      _safeRefresh(() => refreshCurrentWeather(requestPermission: false)),
+    ]);
+  }
+
+  Future<void> _safeRefresh(Future<void> Function() refresh) async {
+    try {
+      await refresh();
+    } on ApiException catch (error) {
+      lastError = await _withConnectivityContext(error);
     }
   }
 
@@ -467,6 +492,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     _initializingSession = false;
     isAuthenticated = false;
     farmerName = '';
+    farmerEmail = '';
     previewMode = false;
     _setOnboardingComplete(false);
     farms = const [];
@@ -492,11 +518,11 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     if (!canUseLiveServices) return;
     await _guard(() async {
       final payload = await apiClient.get(ApiEndpoints.me);
-      _applyProfile(payload);
+      await _applyProfile(payload);
     });
   }
 
-  void _applyProfile(Object? payload) {
+  Future<void> _applyProfile(Object? payload) async {
     if (payload is! Map<String, dynamic>) {
       throw const ApiException(
         code: 'PROFILE_INVALID_RESPONSE',
@@ -504,11 +530,13 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       );
     }
     final rawName = payload['name'];
+    final rawEmail = payload['email'];
     final rawLanguage = payload['preferred_language'];
     final rawAreaUnit = payload['area_unit'];
     final rawNotifications = payload['notifications_enabled'];
     final rawOnboarding = payload['onboarding_complete'];
     if ((rawName != null && rawName is! String) ||
+        (rawEmail != null && rawEmail is! String) ||
         (rawLanguage != null && rawLanguage is! String) ||
         (rawAreaUnit != null && rawAreaUnit is! String) ||
         (rawNotifications != null && rawNotifications is! bool) ||
@@ -519,8 +547,13 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       );
     }
     farmerName = (rawName as String?)?.trim() ?? '';
+    farmerEmail = (rawEmail as String?) ?? '';
     final language = rawLanguage as String?;
-    if (language != null) locale = AppLanguage.byCode(language).locale;
+    if (language != null) {
+      final nextLocale = AppLanguage.byCode(language).locale;
+      await AppStrings.load(nextLocale);
+      locale = nextLocale;
+    }
     final areaUnit = rawAreaUnit as String?;
     if (areaUnit == 'acre' || areaUnit == 'hectare') {
       preferredAreaUnit = areaUnit!;
@@ -528,15 +561,24 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     final notifications = rawNotifications as bool?;
     if (notifications != null) {
       notificationsEnabled = notifications && notificationPermission.isAllowed;
-      if (!notificationsEnabled) {
-        farmReminderNotificationsEnabled = false;
-        weatherAlertNotificationsEnabled = false;
-      }
+      farmReminderNotificationsEnabled =
+          notificationsEnabled &&
+          (preferences.getBool(_farmReminderNotificationsKey) ?? true);
+      weatherAlertNotificationsEnabled =
+          notificationsEnabled &&
+          (preferences.getBool(_weatherAlertNotificationsKey) ?? true);
     }
     final serverOnboardingComplete = rawOnboarding as bool? ?? false;
     // A real name is a required onboarding invariant. Partially-created or
     // older accounts collect it instead of rendering a fallback identity.
     _setOnboardingComplete(serverOnboardingComplete && hasFarmerName);
+    await Future.wait([
+      if (language != null) preferences.setString(_localeKey, language),
+      preferences.setString(_areaUnitKey, preferredAreaUnit),
+      if (notifications != null)
+        preferences.setBool(_notificationsKey, notifications),
+      preferences.setBool(_onboardingKey, onboardingComplete),
+    ]);
   }
 
   void _setOnboardingComplete(bool value) {
@@ -736,6 +778,9 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
                 areaUnit: areaUnit,
                 soilType: _nullableText(soilNotes),
                 irrigation: _nullableText(irrigationDetails),
+                clearArea: area == null,
+                clearSoilType: _nullableText(soilNotes) == null,
+                clearIrrigation: _nullableText(irrigationDetails) == null,
               );
         final plots = [...farm.plots]..[plotIndex] = updated;
         farms = [...farms]..[farmIndex] = farm.copyWith(plots: plots);
@@ -1075,7 +1120,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
             LocationPoint(
               latitude: 13.1377,
               longitude: 77.4786,
-              label: 'Hesaraghatta, Karnataka',
+              label: '560088, Hesaraghatta, Karnataka',
               country: 'India',
             ),
             LocationPoint(
@@ -1178,10 +1223,26 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
         longitude: location.longitude,
       );
       notifyListeners();
-    } on ApiException catch (error) {
+    } on Exception catch (error) {
       if (requestPermission) rethrow;
-      lastError = error;
+      lastError = error is ApiException
+          ? error
+          : ApiException(
+              code: 'WEATHER_FETCH_FAILED',
+              message: error.toString(),
+            );
     }
+  }
+
+  Future<void> enableLocationAndFetchWeather() async {
+    final result = await setLocationEnabled(true);
+    if (!result.isAllowed) {
+      throw const ApiException(
+        code: 'LOCATION_PERMISSION_DENIED',
+        message: 'Location permission is required to fetch weather',
+      );
+    }
+    await refreshCurrentWeather(requestPermission: true);
   }
 
   Future<PlotWeatherModel> loadPlotWeather(String plotId) async {
@@ -1596,11 +1657,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> refreshDiagnosisReports() async {
     if (!canUseLiveServices) return;
-    final reports = <DiagnosisReportModel>[];
-    for (final diagnosis in diagnoses) {
-      reports.addAll(await diagnosisRepository.loadReports(diagnosis.id));
-    }
-    diagnosisReports = reports;
+    final results = await Future.wait(
+      diagnoses.map((d) => diagnosisRepository.loadReports(d.id)),
+    );
+    diagnosisReports = results.expand((x) => x).toList();
     notifyListeners();
   }
 
@@ -1735,8 +1795,6 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     };
     chats = index < 0 ? [hydrated, ...chats] : ([...chats]..[index] = hydrated);
     notifyListeners();
-    await _restoreChatOutbox(chatId);
-    await _restoreActiveChatTurns(chatId);
   }
 
   bool hasOlderChatMessages(String chatId) =>
@@ -1802,46 +1860,16 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       author: ChatAuthor.farmer,
       text: normalized,
       sentAt: DateTime.now(),
-      delivery: ChatDelivery.queued,
+      delivery: ChatDelivery.sending,
       idempotencyKey: idempotencyKey,
-    );
-    var envelope = PendingChatEnvelope(
-      localId: localMessageId,
-      chatId: threadId,
-      content: normalized,
-      idempotencyKey: idempotencyKey,
-      createdAt: optimistic.sentAt,
     );
     _appendChatMessage(threadId, optimistic);
-    try {
-      await _persistChatEnvelope(envelope);
-      final turn = await chatRepository.enqueueMessage(
-        threadId,
-        normalized,
-        idempotencyKey: idempotencyKey,
-      );
-      _updateLocalChatMessage(
-        threadId,
-        localMessageId,
-        (message) => message.copyWith(
-          turnId: turn.id,
-          delivery: _deliveryForTurn(turn.status),
-        ),
-      );
-      envelope = envelope.copyWith(turnId: turn.id);
-      await _persistChatEnvelope(envelope);
-      _activeChatTurnIds.putIfAbsent(threadId, () => <String>{}).add(turn.id);
-      _startChatTurnPolling(threadId);
-      await _applyChatTurn(turn);
-    } on ApiException {
-      _updateLocalChatMessage(
-        threadId,
-        localMessageId,
-        (message) =>
-            message.copyWith(delivery: ChatDelivery.failed, failed: true),
-      );
-      rethrow;
-    }
+    await _streamChatMessage(
+      chatId: threadId,
+      content: normalized,
+      localUserMessageId: localMessageId,
+      idempotencyKey: idempotencyKey,
+    );
   }
 
   Future<String> transcribeChatVoice(String chatId, String audioPath) {
@@ -1854,7 +1882,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     return voiceRepository.transcribe(chatId: chatId, audioPath: audioPath);
   }
 
-  Future<List<int>> loadAssistantSpeech(String chatId, String messageId) {
+  Future<AuthenticatedResource> loadAssistantSpeech(
+    String chatId,
+    String messageId,
+  ) {
     if (!canUseLiveServices) {
       throw const ApiException(
         code: 'VOICE_REQUIRES_CONNECTION',
@@ -1865,15 +1896,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   bool isChatResponding(String chatId) =>
-      _activeChatTurnIds[chatId]?.isNotEmpty ?? false;
-
-  int queuedChatTurns(String chatId) {
-    final index = chats.indexWhere((chat) => chat.id == chatId);
-    if (index < 0) return 0;
-    return chats[index].messages
-        .where((message) => message.delivery == ChatDelivery.queued)
-        .length;
-  }
+      _activeChatRequestIds[chatId]?.isNotEmpty ?? false;
 
   Future<void> retryChatMessage(String chatId, String messageId) async {
     final chatIndex = chats.indexWhere((chat) => chat.id == chatId);
@@ -1881,303 +1904,155 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     final message = chats[chatIndex].messages
         .cast<ChatMessageModel?>()
         .firstWhere((item) => item?.id == messageId, orElse: () => null);
-    if (message == null || message.delivery != ChatDelivery.failed) return;
+    if (message == null ||
+        message.author != ChatAuthor.farmer ||
+        message.delivery != ChatDelivery.failed) {
+      return;
+    }
     final idempotencyKey = message.idempotencyKey ?? _uuid.v4();
+    _removeFailedAssistantForRequest(chatId, idempotencyKey);
     _updateLocalChatMessage(
       chatId,
       messageId,
       (value) => value.copyWith(
-        delivery: ChatDelivery.queued,
+        delivery: ChatDelivery.sending,
         failed: false,
         idempotencyKey: idempotencyKey,
       ),
     );
+    await _streamChatMessage(
+      chatId: chatId,
+      content: message.text,
+      localUserMessageId: message.id,
+      idempotencyKey: idempotencyKey,
+    );
+  }
+
+  Future<void> _streamChatMessage({
+    required String chatId,
+    required String content,
+    required String localUserMessageId,
+    required String idempotencyKey,
+  }) async {
+    final assistantMessageId = _uuid.v4();
+    var assistantAdded = false;
+    _activeChatRequestIds
+        .putIfAbsent(chatId, () => <String>{})
+        .add(idempotencyKey);
+    notifyListeners();
     try {
-      await _persistChatEnvelope(
-        PendingChatEnvelope(
-          localId: message.id,
-          chatId: chatId,
-          content: message.text,
-          idempotencyKey: idempotencyKey,
-          createdAt: message.sentAt,
-          turnId: message.turnId,
-        ),
-      );
-      final turn = message.turnId == null
-          ? await chatRepository.enqueueMessage(
-              chatId,
-              message.text,
-              idempotencyKey: idempotencyKey,
-            )
-          : await chatRepository.retryTurn(chatId, message.turnId!);
-      await _persistChatEnvelope(
-        PendingChatEnvelope(
-          localId: message.id,
-          chatId: chatId,
-          content: message.text,
-          idempotencyKey: idempotencyKey,
-          createdAt: message.sentAt,
-          turnId: turn.id,
-        ),
-      );
-      _updateLocalChatMessage(
+      final result = await chatRepository.streamMessage(
         chatId,
-        messageId,
-        (value) => value.copyWith(
-          turnId: turn.id,
-          delivery: _deliveryForTurn(turn.status),
-        ),
+        content,
+        idempotencyKey: idempotencyKey,
+        onDelta: (delta) {
+          if (!assistantAdded) {
+            assistantAdded = true;
+            _appendChatMessage(
+              chatId,
+              ChatMessageModel(
+                id: assistantMessageId,
+                author: ChatAuthor.assistant,
+                text: delta,
+                sentAt: DateTime.now(),
+                delivery: ChatDelivery.sending,
+                idempotencyKey: idempotencyKey,
+              ),
+            );
+            return;
+          }
+          _updateLocalChatMessage(
+            chatId,
+            assistantMessageId,
+            (message) => message.copyWith(text: '${message.text}$delta'),
+          );
+        },
       );
-      _activeChatTurnIds.putIfAbsent(chatId, () => <String>{}).add(turn.id);
-      _startChatTurnPolling(chatId);
-      await _applyChatTurn(turn);
+      _replaceStreamedPair(
+        chatId,
+        localUserMessageId: localUserMessageId,
+        localAssistantMessageId: assistantAdded ? assistantMessageId : null,
+        result: result,
+      );
+      _upsertReminderProposal(result.reminderProposal);
     } on ApiException {
       _updateLocalChatMessage(
         chatId,
-        messageId,
-        (value) => value.copyWith(delivery: ChatDelivery.failed, failed: true),
+        localUserMessageId,
+        (message) =>
+            message.copyWith(delivery: ChatDelivery.failed, failed: true),
       );
-      rethrow;
-    }
-  }
-
-  Future<void> _restoreActiveChatTurns(String chatId) async {
-    try {
-      final turns = await chatRepository.recentTurns(chatId);
-      for (final turn in turns) {
-        final index = chats.indexWhere((chat) => chat.id == chatId);
-        if (index < 0) break;
-        final persisted = await _outboxEnvelope(
-          chatId,
-          idempotencyKey: turn.idempotencyKey,
-        );
-        if (persisted != null) {
-          final localMessage = chats[index].messages
-              .cast<ChatMessageModel?>()
-              .firstWhere(
-                (message) =>
-                    message?.id == persisted.localId ||
-                    message?.idempotencyKey == turn.idempotencyKey,
-                orElse: () => null,
-              );
-          if (localMessage != null && localMessage.turnId != turn.id) {
-            _updateLocalChatMessage(
-              chatId,
-              localMessage.id,
-              (message) => message.copyWith(turnId: turn.id),
-            );
-          }
-        }
-        final exists = chats[index].messages.any(
-          (message) => message.turnId == turn.id,
-        );
-        if (!exists && turn.status != 'completed') {
-          _appendChatMessage(
-            chatId,
-            ChatMessageModel(
-              id: persisted?.localId ?? 'turn-${turn.id}',
-              author: ChatAuthor.farmer,
-              text: turn.content,
-              sentAt: turn.createdAt,
-              delivery: _deliveryForTurn(turn.status),
-              turnId: turn.id,
-              idempotencyKey: turn.idempotencyKey,
-            ),
-          );
-        }
-        if (persisted != null && persisted.turnId != turn.id) {
-          await _persistChatEnvelope(persisted.copyWith(turnId: turn.id));
-        }
-        if (turn.status == 'queued' || turn.status == 'processing') {
-          _activeChatTurnIds.putIfAbsent(chatId, () => <String>{}).add(turn.id);
-        }
-        await _applyChatTurn(turn);
-      }
-      if (_activeChatTurnIds[chatId]?.isNotEmpty ?? false) {
-        _startChatTurnPolling(chatId);
-      }
-    } on ApiException catch (error) {
-      lastError = error;
-      notifyListeners();
-    }
-  }
-
-  void _startChatTurnPolling(String chatId) {
-    _scheduleChatTurnPoll(chatId, immediate: true);
-  }
-
-  bool get _canPollChatTurns =>
-      _appLifecycleState == null ||
-      _appLifecycleState == AppLifecycleState.resumed;
-
-  void _scheduleChatTurnPoll(String chatId, {bool immediate = false}) {
-    if (!_canPollChatTurns || _chatTurnPollers.containsKey(chatId)) return;
-    if (_activeChatTurnIds[chatId]?.isEmpty ?? true) return;
-    final failures = _chatTurnPollFailures[chatId] ?? 0;
-    final multiplier = 1 << failures.clamp(0, 4);
-    final delay = immediate
-        ? Duration.zero
-        : Duration(milliseconds: 900 * multiplier);
-    _chatTurnPollers[chatId] = Timer(delay, () {
-      _chatTurnPollers.remove(chatId);
-      unawaited(_refreshChatTurns(chatId));
-    });
-  }
-
-  Future<void> _refreshChatTurns(String chatId) async {
-    if (!_refreshingChatTurns.add(chatId)) return;
-    try {
-      final turnIds = List<String>.of(
-        _activeChatTurnIds[chatId] ?? const <String>{},
-      );
-      for (final turnId in turnIds) {
-        final turn = await chatRepository.getTurn(chatId, turnId);
-        await _applyChatTurn(turn);
-      }
-      _chatTurnPollFailures[chatId] = 0;
-    } on ApiException catch (error) {
-      lastError = error;
-      _chatTurnPollFailures[chatId] = ((_chatTurnPollFailures[chatId] ?? 0) + 1)
-          .clamp(0, 4);
-      notifyListeners();
-    } finally {
-      _refreshingChatTurns.remove(chatId);
-      if (_activeChatTurnIds[chatId]?.isEmpty ?? true) {
-        _chatTurnPollers.remove(chatId)?.cancel();
-        _chatTurnPollFailures.remove(chatId);
-      } else {
-        _scheduleChatTurnPoll(chatId);
-      }
-    }
-  }
-
-  Future<void> _applyChatTurn(ChatTurnModel turn) async {
-    final chatIndex = chats.indexWhere((chat) => chat.id == turn.chatId);
-    if (chatIndex < 0) return;
-    final messageIndex = chats[chatIndex].messages.indexWhere(
-      (message) => message.turnId == turn.id,
-    );
-    final proposal = turn.reminderProposal;
-    if (proposal != null) {
-      final proposalIndex = reminderProposals.indexWhere(
-        (item) => item.id == proposal.id,
-      );
-      reminderProposals = proposalIndex < 0
-          ? [proposal, ...reminderProposals]
-          : ([...reminderProposals]..[proposalIndex] = proposal);
-    }
-    if (turn.status == 'completed' && turn.messages.isNotEmpty) {
-      final messages = List<ChatMessageModel>.of(chats[chatIndex].messages);
-      String? completedLocalId;
-      if (messageIndex >= 0) {
-        completedLocalId = messages[messageIndex].id;
-        messages.removeAt(messageIndex);
-        final knownIds = messages.map((message) => message.id).toSet();
-        messages.addAll(
-          turn.messages.where((message) => knownIds.add(message.id)),
-        );
-      } else {
-        final knownIds = messages.map((message) => message.id).toSet();
-        messages.addAll(
-          turn.messages.where((message) => knownIds.add(message.id)),
-        );
-      }
-      chats = [...chats]
-        ..[chatIndex] = chats[chatIndex].copyWith(messages: messages);
-      final persisted = await _outboxEnvelope(
-        turn.chatId,
-        idempotencyKey: turn.idempotencyKey,
-      );
-      await _removeChatEnvelope(persisted?.localId ?? completedLocalId ?? '');
-      _activeChatTurnIds[turn.chatId]?.remove(turn.id);
-    } else if (turn.status == 'failed') {
-      if (messageIndex >= 0) {
+      if (assistantAdded) {
         _updateLocalChatMessage(
-          turn.chatId,
-          chats[chatIndex].messages[messageIndex].id,
+          chatId,
+          assistantMessageId,
           (message) =>
               message.copyWith(delivery: ChatDelivery.failed, failed: true),
         );
       }
-      _activeChatTurnIds[turn.chatId]?.remove(turn.id);
-    } else if (messageIndex >= 0) {
-      _updateLocalChatMessage(
-        turn.chatId,
-        chats[chatIndex].messages[messageIndex].id,
-        (message) => message.copyWith(delivery: _deliveryForTurn(turn.status)),
-      );
+      rethrow;
+    } finally {
+      final active = _activeChatRequestIds[chatId];
+      active?.remove(idempotencyKey);
+      if (active?.isEmpty ?? false) _activeChatRequestIds.remove(chatId);
+      notifyListeners();
     }
+  }
+
+  void _replaceStreamedPair(
+    String chatId, {
+    required String localUserMessageId,
+    required String? localAssistantMessageId,
+    required ChatSendResult result,
+  }) {
+    final chatIndex = chats.indexWhere((chat) => chat.id == chatId);
+    if (chatIndex < 0) return;
+    final messages = List<ChatMessageModel>.of(chats[chatIndex].messages);
+    final localIds = {localUserMessageId, ?localAssistantMessageId};
+    var insertionIndex = messages.length;
+    for (var index = 0; index < messages.length; index++) {
+      if (localIds.contains(messages[index].id)) {
+        insertionIndex = index;
+        break;
+      }
+    }
+    messages.removeWhere((message) => localIds.contains(message.id));
+    insertionIndex = insertionIndex.clamp(0, messages.length);
+    messages.insertAll(insertionIndex, [
+      result.userMessage,
+      result.assistantMessage,
+    ]);
+    chats = [...chats]
+      ..[chatIndex] = chats[chatIndex].copyWith(messages: messages);
     notifyListeners();
   }
 
-  Future<void> _restoreChatOutbox(String chatId) async {
-    final values = await chatOutboxStore.readAll();
+  void _upsertReminderProposal(ReminderProposalModel? proposal) {
+    if (proposal == null) return;
+    final index = reminderProposals.indexWhere(
+      (item) => item.id == proposal.id,
+    );
+    reminderProposals = index < 0
+        ? [proposal, ...reminderProposals]
+        : ([...reminderProposals]..[index] = proposal);
+    notifyListeners();
+  }
+
+  void _removeFailedAssistantForRequest(String chatId, String idempotencyKey) {
     final chatIndex = chats.indexWhere((chat) => chat.id == chatId);
     if (chatIndex < 0) return;
-    for (final value in values.where((item) => item.chatId == chatId)) {
-      final exists = chats[chatIndex].messages.any(
-        (message) =>
-            message.id == value.localId ||
-            message.idempotencyKey == value.idempotencyKey,
-      );
-      if (!exists) {
-        _appendChatMessage(
-          chatId,
-          ChatMessageModel(
-            id: value.localId,
-            author: ChatAuthor.farmer,
-            text: value.content,
-            sentAt: value.createdAt,
-            delivery: ChatDelivery.queued,
-            turnId: value.turnId,
-            idempotencyKey: value.idempotencyKey,
-          ),
-        );
-      }
-    }
+    final messages = chats[chatIndex].messages
+        .where(
+          (message) =>
+              message.author != ChatAuthor.assistant ||
+              message.delivery != ChatDelivery.failed ||
+              message.idempotencyKey != idempotencyKey,
+        )
+        .toList(growable: false);
+    chats = [...chats]
+      ..[chatIndex] = chats[chatIndex].copyWith(messages: messages);
+    notifyListeners();
   }
-
-  Future<PendingChatEnvelope?> _outboxEnvelope(
-    String chatId, {
-    required String idempotencyKey,
-  }) async {
-    final values = await chatOutboxStore.readAll();
-    return values.cast<PendingChatEnvelope?>().firstWhere(
-      (item) =>
-          item?.chatId == chatId && item?.idempotencyKey == idempotencyKey,
-      orElse: () => null,
-    );
-  }
-
-  Future<void> _persistChatEnvelope(PendingChatEnvelope value) async {
-    try {
-      await chatOutboxStore.upsert(value);
-    } catch (_) {
-      throw const ApiException(
-        code: 'CHAT_OUTBOX_UNAVAILABLE',
-        message: 'The pending message could not be stored securely',
-      );
-    }
-  }
-
-  Future<void> _removeChatEnvelope(String localId) async {
-    if (localId.isEmpty) return;
-    try {
-      await chatOutboxStore.remove(localId);
-    } catch (_) {
-      throw const ApiException(
-        code: 'CHAT_OUTBOX_UNAVAILABLE',
-        message: 'The pending message state could not be updated securely',
-      );
-    }
-  }
-
-  ChatDelivery _deliveryForTurn(String status) => switch (status) {
-    'processing' => ChatDelivery.sending,
-    'failed' => ChatDelivery.failed,
-    'completed' => ChatDelivery.sent,
-    _ => ChatDelivery.queued,
-  };
 
   void _appendChatMessage(String chatId, ChatMessageModel message) {
     final index = chats.indexWhere((chat) => chat.id == chatId);
@@ -2217,23 +2092,6 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> restoreChat(String chatId) async {
     await _updateChat(chatId, archived: false);
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    _appLifecycleState = state;
-    if (state == AppLifecycleState.resumed) {
-      for (final entry in _activeChatTurnIds.entries) {
-        if (entry.value.isNotEmpty) {
-          _scheduleChatTurnPoll(entry.key, immediate: true);
-        }
-      }
-      return;
-    }
-    for (final timer in _chatTurnPollers.values) {
-      timer.cancel();
-    }
-    _chatTurnPollers.clear();
   }
 
   Future<void> deleteChat(String chatId) async {
@@ -2361,17 +2219,33 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     notificationPermission = value
         ? await permissionService.request(AppPermissionKind.notifications)
         : await permissionService.status(AppPermissionKind.notifications);
-    notificationsEnabled = value && notificationPermission.isAllowed;
-    if (!notificationsEnabled) {
-      farmReminderNotificationsEnabled = false;
-      weatherAlertNotificationsEnabled = false;
+    final enabled = value && notificationPermission.isAllowed;
+    if (canUseLiveServices) {
+      final payload = await apiClient.patch(
+        ApiEndpoints.me,
+        body: {'notifications_enabled': enabled},
+      );
+      await _applyProfile(payload);
+    } else {
+      notificationsEnabled = enabled;
     }
+    notificationsEnabled = enabled;
+    farmReminderNotificationsEnabled =
+        enabled && (preferences.getBool(_farmReminderNotificationsKey) ?? true);
+    weatherAlertNotificationsEnabled =
+        enabled && (preferences.getBool(_weatherAlertNotificationsKey) ?? true);
     await Future.wait([
-      preferences.setBool(_notificationsKey, notificationsEnabled),
-      if (!notificationsEnabled)
-        preferences.setBool(_farmReminderNotificationsKey, false),
-      if (!notificationsEnabled)
-        preferences.setBool(_weatherAlertNotificationsKey, false),
+      preferences.setBool(_notificationsKey, enabled),
+      if (enabled)
+        preferences.setBool(
+          _farmReminderNotificationsKey,
+          farmReminderNotificationsEnabled,
+        ),
+      if (enabled)
+        preferences.setBool(
+          _weatherAlertNotificationsKey,
+          weatherAlertNotificationsEnabled,
+        ),
     ]);
     notifyListeners();
     return notificationPermission;
@@ -2381,11 +2255,21 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     final status = value
         ? await _ensureNotificationPermission()
         : notificationPermission;
-    farmReminderNotificationsEnabled = value && status.isAllowed;
-    await preferences.setBool(
-      _farmReminderNotificationsKey,
-      farmReminderNotificationsEnabled,
-    );
+    final farmEnabled = value && status.isAllowed;
+    final notifications = farmEnabled || weatherAlertNotificationsEnabled;
+    if (canUseLiveServices) {
+      final payload = await apiClient.patch(
+        ApiEndpoints.me,
+        body: {'notifications_enabled': notifications},
+      );
+      await _applyProfile(payload);
+    }
+    farmReminderNotificationsEnabled = farmEnabled;
+    notificationsEnabled = notifications;
+    await Future.wait([
+      preferences.setBool(_farmReminderNotificationsKey, farmEnabled),
+      preferences.setBool(_notificationsKey, notifications),
+    ]);
     notifyListeners();
     return status;
   }
@@ -2394,11 +2278,21 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     final status = value
         ? await _ensureNotificationPermission()
         : notificationPermission;
-    weatherAlertNotificationsEnabled = value && status.isAllowed;
-    await preferences.setBool(
-      _weatherAlertNotificationsKey,
-      weatherAlertNotificationsEnabled,
-    );
+    final weatherEnabled = value && status.isAllowed;
+    final notifications = weatherEnabled || farmReminderNotificationsEnabled;
+    if (canUseLiveServices) {
+      final payload = await apiClient.patch(
+        ApiEndpoints.me,
+        body: {'notifications_enabled': notifications},
+      );
+      await _applyProfile(payload);
+    }
+    weatherAlertNotificationsEnabled = weatherEnabled;
+    notificationsEnabled = notifications;
+    await Future.wait([
+      preferences.setBool(_weatherAlertNotificationsKey, weatherEnabled),
+      preferences.setBool(_notificationsKey, notifications),
+    ]);
     notifyListeners();
     return status;
   }
@@ -2408,9 +2302,45 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     notificationPermission = await permissionService.request(
       AppPermissionKind.notifications,
     );
-    notificationsEnabled = notificationPermission.isAllowed;
-    await preferences.setBool(_notificationsKey, notificationsEnabled);
     return notificationPermission;
+  }
+
+  Future<AppPermissionState> requestMicrophonePermission() async {
+    microphonePermission = await permissionService.request(
+      AppPermissionKind.microphone,
+    );
+    notifyListeners();
+    return microphonePermission;
+  }
+
+  Future<void> refreshPermissionStates() async {
+    final states = await Future.wait([
+      permissionService.status(AppPermissionKind.notifications),
+      permissionService.status(AppPermissionKind.location),
+      permissionService.status(AppPermissionKind.camera),
+      permissionService.status(AppPermissionKind.microphone),
+    ]);
+    notificationPermission = states[0];
+    locationPermission = states[1];
+    cameraPermission = states[2];
+    microphonePermission = states[3];
+    notificationsEnabled =
+        (preferences.getBool(_notificationsKey) ?? false) &&
+        notificationPermission.isAllowed;
+    farmReminderNotificationsEnabled =
+        notificationsEnabled &&
+        (preferences.getBool(_farmReminderNotificationsKey) ?? true);
+    weatherAlertNotificationsEnabled =
+        notificationsEnabled &&
+        (preferences.getBool(_weatherAlertNotificationsKey) ?? true);
+    locationEnabled =
+        (preferences.getBool(_locationKey) ?? false) &&
+        locationPermission.isAllowed;
+    cameraEnabled =
+        (preferences.getBool(_cameraKey) ?? false) &&
+        cameraPermission.isAllowed;
+    if (!locationEnabled) weather = null;
+    notifyListeners();
   }
 
   Future<AppPermissionState> setLocationEnabled(bool value) async {
@@ -2421,8 +2351,6 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     await preferences.setBool(_locationKey, locationEnabled);
     if (!locationEnabled) {
       weather = null;
-    } else if (canUseLiveServices) {
-      unawaited(_refreshWeatherSilently());
     }
     notifyListeners();
     return locationPermission;
@@ -2450,15 +2378,6 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     } else {
       _chatDrafts[chatId] = value;
       await privateLocalStore.write(key, value);
-    }
-  }
-
-  Future<void> _refreshWeatherSilently() async {
-    try {
-      await refreshCurrentWeather();
-    } on ApiException catch (error) {
-      lastError = error;
-      notifyListeners();
     }
   }
 
@@ -2522,13 +2441,6 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void dispose() {
-    for (final timer in _chatTurnPollers.values) {
-      timer.cancel();
-    }
-    _chatTurnPollers.clear();
-    if (_observingLifecycle) {
-      WidgetsBinding.instance.removeObserver(this);
-    }
     unawaited(_connectivitySubscription?.cancel());
     navigationRefresh.dispose();
     apiClient.dispose();

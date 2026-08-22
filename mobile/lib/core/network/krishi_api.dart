@@ -156,12 +156,18 @@ class KrishiApi {
     body: body,
     headers: {'Idempotency-Key': idempotencyKey},
   );
-  Future<Object?> listChatTurns(String id, {bool activeOnly = true}) => client
-      .get(ApiEndpoints.chatTurns(id), query: {'active_only': '$activeOnly'});
-  Future<Object?> getChatTurn(String chatId, String turnId) =>
-      client.get(ApiEndpoints.chatTurn(chatId, turnId));
-  Future<Object?> retryChatTurn(String chatId, String turnId) =>
-      client.post(ApiEndpoints.chatTurnRetry(chatId, turnId));
+  Future<Stream<String>> streamChatMessage(
+    String id,
+    Map<String, Object?> body, {
+    required String idempotencyKey,
+  }) => client.postStream(
+    ApiEndpoints.chatMessageStream(id),
+    body: body,
+    headers: {
+      'Accept': 'application/x-ndjson',
+      'Idempotency-Key': idempotencyKey,
+    },
+  );
 
   Future<Object?> transcribeChatAudio(String chatId, String filePath) =>
       client.multipart(
@@ -171,11 +177,13 @@ class KrishiApi {
         fileField: 'audio',
       );
 
-  Future<List<int>> assistantSpeech(String chatId, String messageId) =>
-      client.postBytes(
-        ApiEndpoints.assistantSpeech(chatId, messageId),
-        headers: const {'Accept': 'audio/mpeg'},
-      );
+  Future<AuthenticatedResource> assistantSpeech(
+    String chatId,
+    String messageId,
+  ) => client.authenticatedResource(
+    ApiEndpoints.assistantSpeech(chatId, messageId),
+    headers: const {'Accept': 'audio/mpeg'},
+  );
 
   Future<Object?> connectChatMemory(String id, Map<String, Object?> body) =>
       client.post(ApiEndpoints.chatMemoryConnection(id), body: body);

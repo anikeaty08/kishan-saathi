@@ -1,6 +1,7 @@
 """Integration tests for chat isolation and backend-owned context assembly."""
 
 import json
+from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
@@ -18,6 +19,7 @@ from app.integrations.llm.provider import (
     LLMProvider,
     LLMRequest,
     LLMResult,
+    LLMStreamResult,
     LLMTask,
     MemoryExtraction,
     MemoryExtractionRequest,
@@ -32,7 +34,7 @@ from app.integrations.weather.provider import (
     ForecastDay,
     PlotForecast,
 )
-from app.modules.chats.models import ChatMessage, ChatTurn
+from app.modules.chats.models import ChatMessage
 from app.modules.chats.repository import ChatRepository
 from app.modules.chats.schemas import ChatCreate, ChatMessageCreate, ChatScope, ChatUpdate
 from app.modules.chats.service import ChatService
@@ -67,6 +69,22 @@ class CapturingLLM(LLMProvider):
             policy_reviewed=self.policy_reviewed,
         )
 
+    async def respond_stream(
+        self, request: LLMRequest, *, model: str
+    ) -> AsyncIterator[dict[str, object]]:
+        self.requests.append((request, model))
+        yield {"event": "routing", "status": "Thinking..."}
+        yield {"event": "token", "data": self.reply.short_answer}
+        yield {
+            "event": "done",
+            "result": LLMStreamResult(
+                reply=self.reply,
+                provider_response_id="response-stream-1",
+                model=model,
+                policy_reviewed=self.policy_reviewed,
+            ).model_dump(mode="json"),
+        }
+
     async def close(self) -> None:
         return None
 
@@ -95,6 +113,14 @@ class CapturingLLM(LLMProvider):
             reason_code=ChatRiskReason.ROUTINE,
             is_agricultural=self.is_agricultural,
         )
+
+
+class FailingClassifierLLM(CapturingLLM):
+    async def classify_chat_risk(
+        self, *, content: str, farmer_id: UUID, model: str
+    ) -> ChatRiskClassification:
+        del content, farmer_id, model
+        raise ApplicationError(code="LLM_TEMPORARILY_UNAVAILABLE", status_code=503)
 
 
 class ScopedMemory(MemoryProvider):
@@ -416,7 +442,8 @@ async def test_chat_detail_and_message_pages_are_bounded() -> None:
         async with sessions() as session:
             session.add(_farmer(FARMER, "bounded"))
             await session.commit()
-            service = _chat_service(session)
+            llm = CapturingLLM()
+            service = _chat_service(session, llm)
             chat = await service.create_chat(FARMER, ChatCreate())
             session.add_all(
                 [
@@ -556,64 +583,133 @@ def _chat_service(session: AsyncSession, llm: CapturingLLM | None = None) -> Cha
 
 
 @pytest.mark.asyncio
-async def test_chat_turns_are_idempotent_ordered_and_explicitly_retryable() -> None:
+async def test_direct_chat_is_idempotent_and_persists_in_order() -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     try:
         async with sessions() as session:
-            session.add(_farmer(FARMER, "queue"))
+            session.add(_farmer(FARMER, "direct"))
             await session.commit()
             service = _chat_service(session)
             chat = await service.create_chat(FARMER, ChatCreate(scope_type=ChatScope.GENERAL))
-            first = await service.enqueue_message(
+            first = await service.send_message(
                 FARMER,
                 chat.id,
                 ChatMessageCreate(content="How should I inspect the leaves?"),
                 preferred_language=None,
                 idempotency_key="request-one",
             )
-            replay = await service.enqueue_message(
+            replay = await service.send_message(
                 FARMER,
                 chat.id,
                 ChatMessageCreate(content="How should I inspect the leaves?"),
                 preferred_language=None,
                 idempotency_key="request-one",
             )
-            second = await service.enqueue_message(
+            second = await service.send_message(
                 FARMER,
                 chat.id,
                 ChatMessageCreate(content="What should I record next?"),
                 preferred_language=None,
                 idempotency_key="request-two",
             )
-
-            assert replay.id == first.id
-            claims = await service.claim_due_turns(limit=10, lease_seconds=60)
-            assert [claim.turn_id for claim in claims] == [first.id]
-
-            stored = await session.get(ChatTurn, first.id)
-            assert stored is not None
-            stored.status = "failed"
-            stored.error_code = "LLM_TEMPORARILY_UNAVAILABLE"
-            stored.lease_token = None
-            stored.lease_expires_at = None
-            await session.commit()
-            retried = await service.retry_turn(FARMER, chat.id, first.id)
-            assert retried.status == "queued"
-            assert retried.attempts == 0
-            assert retried.error_code is None
+            assert replay.user_message.id == first.user_message.id
+            assert replay.assistant_message.id == first.assistant_message.id
+            messages = await ChatRepository(session).all_messages(FARMER, chat.id)
+            assert [message.sequence for message in messages] == [1, 2, 3, 4]
+            assert second.user_message.sequence == 3
 
             with pytest.raises(ApplicationError, match="IDEMPOTENCY_KEY_REUSED"):
-                await service.enqueue_message(
+                await service.send_message(
                     FARMER,
                     chat.id,
                     ChatMessageCreate(content="Different content"),
                     preferred_language=None,
                     idempotency_key="request-two",
                 )
-            assert second.queue_position == 2
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_stream_message_yields_text_before_persisted_result() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with sessions() as session:
+            session.add(_farmer(FARMER, "stream"))
+            await session.commit()
+            llm = CapturingLLM()
+            service = _chat_service(session, llm)
+            chat = await service.create_chat(FARMER, ChatCreate(scope_type=ChatScope.GENERAL))
+
+            events = [
+                event
+                async for event in service.stream_message(
+                    FARMER,
+                    chat.id,
+                    ChatMessageCreate(content="Hello"),
+                    preferred_language=None,
+                    idempotency_key="stream-request",
+                )
+            ]
+
+            token_index = next(
+                index for index, event in enumerate(events) if event["event"] == "token"
+            )
+            done_index = next(
+                index for index, event in enumerate(events) if event["event"] == "done"
+            )
+            assert token_index < done_index
+            assert events[token_index]["data"] == "Check the affected leaves carefully."
+            result = events[done_index]["result"]
+            assert isinstance(result, dict)
+            assert result["assistant_message"]["content"] == (
+                "Check the affected leaves carefully."
+            )
+            messages = await ChatRepository(session).all_messages(FARMER, chat.id)
+            assert [message.role for message in messages] == ["user", "assistant"]
+            assert messages[-1].model == "gpt-5-mini"
+            assert messages[-1].provider_response_id == "response-stream-1"
+            assert messages[-1].structured_content == llm.reply.model_dump(mode="json")
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_stream_uses_primary_model_when_risk_classifier_is_unavailable() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    llm = FailingClassifierLLM()
+    try:
+        async with sessions() as session:
+            session.add(_farmer(FARMER, "classifier-fallback"))
+            await session.commit()
+            service = _chat_service(session, llm)
+            chat = await service.create_chat(FARMER, ChatCreate())
+
+            events = [
+                event
+                async for event in service.stream_message(
+                    FARMER,
+                    chat.id,
+                    ChatMessageCreate(content="How should I inspect these leaves?"),
+                    preferred_language=None,
+                    idempotency_key="classifier-fallback-request",
+                )
+            ]
+
+            assert any(event["event"] == "token" for event in events)
+            assert events[-1]["event"] == "done"
+            guidance_request, guidance_model = llm.requests[-1]
+            assert guidance_request.task is LLMTask.AGRICULTURAL_GUIDANCE
+            assert guidance_model == "gpt-5"
     finally:
         await engine.dispose()
 
@@ -651,7 +747,9 @@ async def test_scope_gate_requires_reviewed_model_generated_redirect() -> None:
                 response.assistant_message.structured_content.disposition
                 is ReplyDisposition.OUT_OF_SCOPE
             )
-            request, _model = llm.requests[-2]
+            request, _model = next(
+                item for item in reversed(llm.requests) if item[0].task is LLMTask.ROUTINE_CHAT
+            )
             assert request.tools == ()
 
             llm.policy_reviewed = False
@@ -666,6 +764,19 @@ async def test_scope_gate_requires_reviewed_model_generated_redirect() -> None:
 
             llm.policy_reviewed = True
             llm.is_agricultural = True
+            llm.reply = AssistantReply(
+                short_answer="Your saved plot name is North.",
+                certainty=ReplyCertainty.CONFIRMED_CONTEXT,
+            )
+            confirmed_context = await service.send_message(
+                FARMER,
+                chat.id,
+                ChatMessageCreate(content="What is my saved plot name?"),
+                preferred_language=None,
+                idempotency_key="safe-confirmed-context",
+            )
+            assert confirmed_context.assistant_message.content == "Your saved plot name is North."
+
             llm.reply = AssistantReply(
                 short_answer="Your tomato plant definitely has early blight.",
                 certainty=ReplyCertainty.CONFIRMED_CONTEXT,

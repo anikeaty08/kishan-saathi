@@ -36,11 +36,37 @@ class FakeSpeechResponse:
     async def aclose(self) -> None:
         self.closed = True
 
+    async def iter_bytes(self, chunk_size: int | None = None):
+        assert chunk_size == 64 * 1024
+        yield b"generated-"
+        yield b"mp3"
+
+
+class FakeSpeechStreamContext:
+    def __init__(self, response: FakeSpeechResponse) -> None:
+        self.response = response
+
+    async def __aenter__(self) -> FakeSpeechResponse:
+        return self.response
+
+    async def __aexit__(self, *_args: object) -> None:
+        await self.response.aclose()
+
+
+class FakeStreamingSpeech:
+    def __init__(self, speech: "FakeSpeech") -> None:
+        self.speech = speech
+
+    def create(self, **kwargs: Any) -> FakeSpeechStreamContext:
+        self.speech.kwargs = kwargs
+        return FakeSpeechStreamContext(self.speech.response)
+
 
 class FakeSpeech:
     def __init__(self) -> None:
         self.kwargs: dict[str, Any] = {}
         self.response = FakeSpeechResponse()
+        self.with_streaming_response = FakeStreamingSpeech(self)
 
     async def create(self, **kwargs: Any) -> FakeSpeechResponse:
         self.kwargs = kwargs
@@ -63,7 +89,7 @@ class FakeClient:
 async def test_audio_adapter_preserves_script_and_generates_disclosed_mp3() -> None:
     client = FakeClient()
     provider = OpenAIAudioProvider(
-        Settings(_env_file=None, openai_api_key="test"),
+        Settings(_env_file=None, openai_api_key="test", openai_speech_voice="coral"),
         client=cast(AsyncOpenAI, client),
     )
 
@@ -75,11 +101,16 @@ async def test_audio_adapter_preserves_script_and_generates_disclosed_mp3() -> N
         )
     )
     speech = await provider.synthesize(SpeechSynthesisRequest(text="कल निचली पत्तियों को फिर से देखें।"))
+    speech_stream = await provider.synthesize_stream(
+        SpeechSynthesisRequest(text="पत्तियों को ध्यान से देखें।")
+    )
+    streamed = b"".join([chunk async for chunk in speech_stream.content])
 
     assert transcript.text == "मेरे पौधे को क्या हुआ?"
     assert client.audio.transcriptions.kwargs["model"] == "gpt-4o-mini-transcribe"
     assert "language" not in client.audio.transcriptions.kwargs
     assert speech.content == b"generated-mp3"
+    assert streamed == b"generated-mp3"
     assert client.audio.speech.kwargs["model"] == "tts-1"
     assert client.audio.speech.kwargs["voice"] == "coral"
     assert client.audio.speech.response.closed is True

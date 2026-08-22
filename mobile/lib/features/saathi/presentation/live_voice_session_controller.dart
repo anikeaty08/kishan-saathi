@@ -6,7 +6,11 @@ import '../../../core/models/app_models.dart';
 import '../../../core/network/api_exception.dart';
 import 'voice_composer_controller.dart';
 
-typedef LiveVoiceMessageSender = Future<void> Function(String text);
+typedef LiveVoiceMessageSender = Future<void> Function(
+  String chatId,
+  String text,
+);
+typedef LiveVoiceMessages = List<ChatMessageModel> Function();
 
 enum LiveVoiceSessionState {
   ready,
@@ -19,167 +23,150 @@ enum LiveVoiceSessionState {
   ended,
 }
 
-/// Coordinates one continuous, turn-based voice conversation.
-///
-/// Audio I/O remains isolated in [VoiceTurnIO]. Farmer speech is transcribed,
-/// sent through the existing ordered chat pipeline, and only an owned persisted
-/// assistant message can be spoken back. This preserves all existing chat
-/// context, safety validation, idempotency, and authorization rules.
 class LiveVoiceSessionController extends ChangeNotifier {
   factory LiveVoiceSessionController({
     required String chatId,
-    required VoiceTurnIO voice,
+    required VoiceTranscriber transcribe,
     required LiveVoiceMessageSender sendMessage,
+    required AssistantSpeechLoader loadSpeech,
+    required LiveVoiceMessages messages,
+    VoiceTurnIO? voice,
   }) => LiveVoiceSessionController._(
     chatId: chatId,
-    voice: voice,
     sendMessage: sendMessage,
+    messages: messages,
+    voice:
+        voice ??
+        VoiceComposerController(transcribe: transcribe, loadSpeech: loadSpeech),
   );
 
   LiveVoiceSessionController._({
     required this.chatId,
-    required this._voice,
     required this._sendMessage,
+    required this._messages,
+    required this._voice,
   }) {
-    _voice.addListener(_handleVoiceChange);
+    _voice.addListener(_handleVoiceState);
   }
 
   final String chatId;
-  final VoiceTurnIO _voice;
   final LiveVoiceMessageSender _sendMessage;
+  final LiveVoiceMessages _messages;
+  final VoiceTurnIO _voice;
 
   LiveVoiceSessionState state = LiveVoiceSessionState.ready;
   String? farmerCaption;
   String? assistantCaption;
   String? errorCode;
-  String? _pendingAssistantMessageId;
-  Set<String> _assistantIdsBeforeTurn = const {};
-  List<ChatMessageModel> _latestMessages = const [];
-  bool _active = true;
   bool _disposed = false;
-  bool _speechStarted = false;
-  int _operation = 0;
+  bool _advancingAfterSpeech = false;
 
-  Duration get elapsed => _voice.elapsed;
-  bool get isActive => _active && state != LiveVoiceSessionState.ended;
+  bool get isActive => state != LiveVoiceSessionState.ended;
 
   Future<void> startListening() async {
-    if (!isActive ||
-        state == LiveVoiceSessionState.starting ||
-        state == LiveVoiceSessionState.listening ||
-        state == LiveVoiceSessionState.transcribing ||
-        state == LiveVoiceSessionState.waiting) {
+    if (_disposed ||
+        (state != LiveVoiceSessionState.ready &&
+            state != LiveVoiceSessionState.error)) {
       return;
     }
-    final operation = ++_operation;
     errorCode = null;
-    _speechStarted = false;
-    if (_voice.speakingMessageId != null) await _voice.stopSpeech();
-    if (!_isCurrent(operation)) return;
     state = LiveVoiceSessionState.starting;
     _notify();
     try {
-      await _voice.startRecording(onLimitReached: finishFarmerTurn);
-      if (!_isCurrent(operation)) return;
-      if (_voice.isRecording) {
-        state = LiveVoiceSessionState.listening;
-        _notify();
+      await _voice.startRecording(
+        onLimitReached: () => finishFarmerTurn(_messages()),
+      );
+      if (_disposed || state == LiveVoiceSessionState.ended) return;
+      if (!_voice.isRecording) {
+        throw const ApiException(
+          code: 'VOICE_RECORDING_FAILED',
+          message: 'The microphone could not start',
+        );
       }
+      state = LiveVoiceSessionState.listening;
+      _notify();
     } on ApiException catch (error) {
-      _fail(error.code);
+      await _fail(error.code);
     } catch (_) {
-      _fail('VOICE_UNAVAILABLE');
+      await _fail('VOICE_UNAVAILABLE');
+    }
+  }
+
+  void acceptMessages(List<ChatMessageModel> messages) {
+    if (_disposed || messages.isEmpty) return;
+    final assistant = messages.reversed.cast<ChatMessageModel?>().firstWhere(
+      (message) =>
+          message?.author == ChatAuthor.assistant &&
+          message!.text.trim().isNotEmpty,
+      orElse: () => null,
+    );
+    if (assistant != null &&
+        (state == LiveVoiceSessionState.waiting ||
+            state == LiveVoiceSessionState.speaking)) {
+      assistantCaption = assistant.text;
+      _notify();
     }
   }
 
   Future<void> finishFarmerTurn([List<ChatMessageModel>? messages]) async {
-    if (!isActive || state != LiveVoiceSessionState.listening) return;
-    final operation = ++_operation;
+    if (_disposed || state != LiveVoiceSessionState.listening) return;
+    final before = (messages ?? _messages())
+        .map((message) => message.id)
+        .toSet();
     state = LiveVoiceSessionState.transcribing;
     _notify();
     try {
       final transcript = await _voice.stopAndTranscribe(chatId);
-      if (!_isCurrent(operation)) return;
-      final normalized = transcript?.trim() ?? '';
-      if (normalized.isEmpty) {
+      if (_disposed || state == LiveVoiceSessionState.ended) return;
+      if (transcript == null || transcript.trim().isEmpty) {
         state = LiveVoiceSessionState.ready;
         _notify();
         return;
       }
-      farmerCaption = normalized;
+      farmerCaption = transcript.trim();
       assistantCaption = null;
-      _pendingAssistantMessageId = null;
-      _assistantIdsBeforeTurn = (messages ?? _latestMessages)
-          .where((message) => message.author == ChatAuthor.assistant)
-          .map((message) => message.id)
-          .toSet();
       state = LiveVoiceSessionState.waiting;
       _notify();
-      await _sendMessage(normalized);
-    } on ApiException catch (error) {
-      if (_isCurrent(operation)) _fail(error.code);
-    } catch (_) {
-      if (_isCurrent(operation)) _fail('VOICE_TURN_FAILED');
-    }
-  }
 
-  /// Called by the view whenever the canonical chat changes.
-  void acceptMessages(List<ChatMessageModel> messages) {
-    _latestMessages = List.unmodifiable(messages);
-    if (!isActive || state != LiveVoiceSessionState.waiting) return;
-    final candidates = messages
-        .where(
-          (message) =>
-              message.author == ChatAuthor.assistant &&
-              message.delivery == ChatDelivery.sent &&
-              !_assistantIdsBeforeTurn.contains(message.id),
-        )
-        .toList(growable: false);
-    if (candidates.isEmpty) return;
-    final assistant = candidates.last;
-    if (_pendingAssistantMessageId == assistant.id) return;
-    _pendingAssistantMessageId = assistant.id;
-    assistantCaption = assistant.text;
-    unawaited(_speak(assistant.id));
-  }
-
-  Future<void> _speak(String messageId) async {
-    final operation = ++_operation;
-    state = LiveVoiceSessionState.speaking;
-    _speechStarted = false;
-    _notify();
-    try {
+      await _sendMessage(chatId, transcript);
+      if (_disposed || state == LiveVoiceSessionState.ended) return;
+      final assistant = _messages().reversed
+          .cast<ChatMessageModel?>()
+          .firstWhere(
+            (message) =>
+                message?.author == ChatAuthor.assistant &&
+                !before.contains(message!.id),
+            orElse: () => null,
+          );
+      if (assistant == null) {
+        throw const ApiException(
+          code: 'VOICE_ASSISTANT_MESSAGE_MISSING',
+          message: 'The spoken reply was not saved',
+        );
+      }
+      assistantCaption = assistant.text;
+      state = LiveVoiceSessionState.speaking;
+      _notify();
       final started = await _voice.toggleSpeech(
         chatId: chatId,
-        messageId: messageId,
+        messageId: assistant.id,
       );
-      if (!_isCurrent(operation)) return;
-      if (!started || _voice.speakingMessageId == null) {
-        _fail('VOICE_PLAYBACK_FAILED');
-        return;
-      }
-      _speechStarted = true;
-      _notify();
+      if (!started && !_disposed) await _startNextTurn();
     } on ApiException catch (error) {
-      if (_isCurrent(operation)) _fail(error.code);
+      await _fail(error.code);
     } catch (_) {
-      if (_isCurrent(operation)) _fail('VOICE_PLAYBACK_FAILED');
+      await _fail('VOICE_UNAVAILABLE');
     }
   }
 
   Future<void> stopSaathiAndListen() async {
-    if (!isActive || state != LiveVoiceSessionState.speaking) return;
-    ++_operation;
-    _speechStarted = false;
+    if (_disposed || state != LiveVoiceSessionState.speaking) return;
     await _voice.stopSpeech();
-    if (!isActive) return;
-    state = LiveVoiceSessionState.ready;
-    _notify();
-    await startListening();
+    await _startNextTurn();
   }
 
   Future<void> retry() async {
-    if (!isActive || state != LiveVoiceSessionState.error) return;
+    if (_disposed || state != LiveVoiceSessionState.error) return;
     state = LiveVoiceSessionState.ready;
     errorCode = null;
     _notify();
@@ -187,60 +174,49 @@ class LiveVoiceSessionController extends ChangeNotifier {
   }
 
   Future<void> pause() async {
-    if (!isActive) return;
-    ++_operation;
-    _speechStarted = false;
-    if (_voice.state == VoiceComposerState.starting ||
-        _voice.state == VoiceComposerState.recording) {
-      await _voice.cancelRecording();
-    }
-    await _voice.stopSpeech();
-    if (!isActive) return;
+    if (_disposed || state == LiveVoiceSessionState.ended) return;
+    await _stopLocalAudio();
     state = LiveVoiceSessionState.ready;
     _notify();
   }
 
   Future<void> end() async {
-    if (!_active) return;
-    _active = false;
-    ++_operation;
-    if (_voice.state == VoiceComposerState.starting ||
-        _voice.state == VoiceComposerState.recording) {
-      await _voice.cancelRecording();
-    }
-    await _voice.stopSpeech();
+    if (_disposed) return;
+    await _stopLocalAudio();
     state = LiveVoiceSessionState.ended;
     _notify();
   }
 
-  void _handleVoiceChange() {
-    if (!isActive) return;
-    if (state == LiveVoiceSessionState.starting && _voice.isRecording) {
-      state = LiveVoiceSessionState.listening;
-      _notify();
+  void _handleVoiceState() {
+    if (_disposed ||
+        state != LiveVoiceSessionState.speaking ||
+        _voice.speakingMessageId != null ||
+        _advancingAfterSpeech) {
       return;
     }
-    if (state == LiveVoiceSessionState.listening &&
-        _voice.state == VoiceComposerState.transcribing) {
-      state = LiveVoiceSessionState.transcribing;
-      _notify();
-      return;
-    }
-    if (state == LiveVoiceSessionState.speaking &&
-        _speechStarted &&
-        _voice.speakingMessageId == null) {
-      _speechStarted = false;
+    unawaited(_startNextTurn());
+  }
+
+  Future<void> _startNextTurn() async {
+    if (_advancingAfterSpeech || _disposed) return;
+    _advancingAfterSpeech = true;
+    try {
       state = LiveVoiceSessionState.ready;
       _notify();
-      unawaited(startListening());
+      await startListening();
+    } finally {
+      _advancingAfterSpeech = false;
     }
   }
 
-  bool _isCurrent(int operation) =>
-      !_disposed && isActive && operation == _operation;
+  Future<void> _stopLocalAudio() async {
+    if (_voice.isRecording) await _voice.cancelRecording();
+    if (_voice.speakingMessageId != null) await _voice.stopSpeech();
+  }
 
-  void _fail(String code) {
-    if (!isActive) return;
+  Future<void> _fail(String code) async {
+    if (_disposed || !isActive) return;
+    await _stopLocalAudio();
     errorCode = code;
     state = LiveVoiceSessionState.error;
     _notify();
@@ -254,10 +230,9 @@ class LiveVoiceSessionController extends ChangeNotifier {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
-    _active = false;
-    _operation++;
-    _voice.removeListener(_handleVoiceChange);
-    _voice.dispose();
+    _voice
+      ..removeListener(_handleVoiceState)
+      ..dispose();
     super.dispose();
   }
 }

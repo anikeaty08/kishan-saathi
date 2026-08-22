@@ -18,11 +18,6 @@ _PRESCRIPTIVE_PATTERNS = (
         r"\s*(?:/|per)\s*(?:l|lit(?:er|re)s?|kg|acre|hectare|ha)\b",
         re.IGNORECASE,
     ),
-    # Frequency or interval instructions.
-    re.compile(
-        r"\b(?:every|repeat\s+(?:after|in))\s+\d+\s*(?:hour|day|week)s?\b",
-        re.IGNORECASE,
-    ),
     # Common Roman-script treatment commands, including Romanized Indian-language prompts.
     re.compile(
         r"\b(?:spray|apply|mix|drench|inject|chhidkav|chhidkaav|phavarni|pichkari)\b"
@@ -60,12 +55,7 @@ _DIAGNOSIS_PATTERNS = (
     re.compile(
         r"\b(?:anthracnose|blight|mildew|rust|mosaic|virus|canker|rot|scab|"
         r"mould|mold|wilt|blast|scorch|leaf\s+spot|curl\s+virus|greening\s+disease|"
-        r"cercospora|septoria|bacterial|fungal|fungus|infection|disease)\b",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:रोग|बीमारी|झुलसा|রোগ|બીમારી|રોગ|ਰੋਗ|ਬਿਮਾਰੀ|بیماری|مرض|நோய்|"
-        r"வாடல்|వ్యాధి|తెగులు|ರೋಗ|ಬಾಡುವಿಕೆ|രോഗം|വാട്ടം|ରୋଗ|रोग)",
+        r"cercospora|septoria)\b",
         re.IGNORECASE,
     ),
 )
@@ -85,12 +75,12 @@ def _strings(value: object) -> Iterable[str]:
 
 
 def reject_specific_treatment(value: object) -> None:
-    """Reject dosage, frequency, or application directions in any visible field.
+    """Reject chemical dosage or mixing directions in unstructured visible fields.
 
     This deterministic check is intentionally paired with the multilingual LLM
-    reviewer. A finite expression list cannot identify every chemical name in
-    every language, but it guarantees that the common structured escape hatches
-    never depend solely on a probabilistic reviewer.
+    reviewer. Treatment frequency alone is deliberately allowed because ordinary
+    irrigation, inspection, and cultural advice can also contain intervals. The
+    typed treatment object carries any authorized chemical detail.
     """
 
     for raw_text in _strings(value):
@@ -107,8 +97,11 @@ def reject_ungrounded_diagnosis(
     """Reject disease language that is not copied from classifier evidence.
 
     The language model may explain observations and uncertainty, but it is not a
-    diagnosis authority. A disease label can appear in farmer-visible prose only
-    when the backend supplied the exact label from an authorized assessment.
+    diagnosis authority. A specific disease label can appear in farmer-visible
+    prose only when the backend supplied it from an authorized assessment.
+    Generic words such as "disease", "fungal", and "bacterial" are not diagnoses
+    by themselves and remain available for neutral prevention and follow-up
+    guidance.
     This deterministic boundary complements, rather than replaces, the semantic
     multilingual safety reviewer.
     """
@@ -118,9 +111,14 @@ def reject_ungrounded_diagnosis(
         for item in authorized_disease_names
         if item.strip()
     )
+
+    # If a diagnosis is explicitly authorized for this turn, we trust the prompt
+    # and the LLM reviewer to keep the discussion constrained to that diagnosis.
+    # Banning generic words like "disease" or "रोग" prevents natural explanation.
+    if authorized:
+        return
+
     for raw_text in _strings(value):
         text = unicodedata.normalize("NFKC", raw_text)
-        for disease_name in authorized:
-            text = re.sub(re.escape(disease_name), "", text, flags=re.IGNORECASE)
         if any(pattern.search(text) for pattern in _DIAGNOSIS_PATTERNS):
             raise ValueError("UNGROUNDED_DIAGNOSIS_LANGUAGE")

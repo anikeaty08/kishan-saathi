@@ -262,6 +262,9 @@ class PlotModel {
     String? areaUnit,
     String? soilType,
     String? irrigation,
+    bool clearArea = false,
+    bool clearSoilType = false,
+    bool clearIrrigation = false,
     double? latitude,
     double? longitude,
     String? locationLabel,
@@ -271,10 +274,10 @@ class PlotModel {
     id: id,
     farmId: farmId,
     name: name ?? this.name,
-    area: area ?? this.area,
-    areaUnit: areaUnit ?? this.areaUnit,
-    soilType: soilType ?? this.soilType,
-    irrigation: irrigation ?? this.irrigation,
+    area: clearArea ? null : area ?? this.area,
+    areaUnit: clearArea ? null : areaUnit ?? this.areaUnit,
+    soilType: clearSoilType ? null : soilType ?? this.soilType,
+    irrigation: clearIrrigation ? null : irrigation ?? this.irrigation,
     locationLabel: locationLabel ?? this.locationLabel,
     latitude: latitude ?? this.latitude,
     longitude: longitude ?? this.longitude,
@@ -481,7 +484,7 @@ class QueuedScanModel {
 
 enum ChatAuthor { farmer, assistant, system }
 
-enum ChatDelivery { queued, sending, sent, failed }
+enum ChatDelivery { sending, sent, failed }
 
 class ChatAnswerSectionModel {
   const ChatAnswerSectionModel({required this.title, required this.body});
@@ -536,7 +539,6 @@ class ChatMessageModel {
     required this.sentAt,
     this.failed = false,
     this.delivery = ChatDelivery.sent,
-    this.turnId,
     this.idempotencyKey,
     this.structuredReply,
     this.sequence,
@@ -548,25 +550,23 @@ class ChatMessageModel {
   final DateTime sentAt;
   final bool failed;
   final ChatDelivery delivery;
-  final String? turnId;
   final String? idempotencyKey;
   final ChatAssistantReplyModel? structuredReply;
   final int? sequence;
 
   ChatMessageModel copyWith({
+    String? text,
     ChatDelivery? delivery,
     bool? failed,
-    String? turnId,
     String? idempotencyKey,
     int? sequence,
   }) => ChatMessageModel(
     id: id,
     author: author,
-    text: text,
+    text: text ?? this.text,
     sentAt: sentAt,
     failed: failed ?? this.failed,
     delivery: delivery ?? this.delivery,
-    turnId: turnId ?? this.turnId,
     idempotencyKey: idempotencyKey ?? this.idempotencyKey,
     structuredReply: structuredReply,
     sequence: sequence ?? this.sequence,
@@ -581,32 +581,6 @@ class ChatMessagePageModel {
 
   final List<ChatMessageModel> items;
   final int? nextBeforeSequence;
-}
-
-class ChatTurnModel {
-  const ChatTurnModel({
-    required this.id,
-    required this.chatId,
-    required this.idempotencyKey,
-    required this.content,
-    required this.status,
-    required this.createdAt,
-    required this.queuePosition,
-    this.errorCode,
-    this.messages = const [],
-    this.reminderProposal,
-  });
-
-  final String id;
-  final String chatId;
-  final String idempotencyKey;
-  final String content;
-  final String status;
-  final DateTime createdAt;
-  final int? queuePosition;
-  final String? errorCode;
-  final List<ChatMessageModel> messages;
-  final ReminderProposalModel? reminderProposal;
 }
 
 class ChatThreadModel {

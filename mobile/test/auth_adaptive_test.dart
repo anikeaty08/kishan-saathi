@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:krishisathi/app/krishisathi_app.dart';
 import 'package:krishisathi/features/onboarding/presentation/onboarding_screens.dart';
 import 'package:krishisathi/features/profile/presentation/profile_screens.dart';
@@ -72,19 +73,22 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('pre-auth language setup returns to login, not permissions', (
-    tester,
-  ) async {
-    final controller = await _controller();
+  testWidgets('pre-auth onboarding routes remain behind login', (tester) async {
+    final controller = await _controller()
+      ..previewMode = false
+      ..isAuthenticated = false;
     addTearDown(controller.dispose);
     await tester.pumpWidget(KrishiSathiApp(controller: controller));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Choose your language'));
+    GoRouter.of(tester.element(find.byType(WelcomeScreen)))
+        .go('/onboarding/language');
     await tester.pumpAndSettle();
-    expect(find.byType(LanguageSetupScreen), findsOneWidget);
+    expect(find.byType(WelcomeScreen), findsOneWidget);
+    expect(find.byType(LanguageSetupScreen), findsNothing);
+    expect(find.byType(PermissionsSetupScreen), findsNothing);
 
-    await tester.tap(find.byType(FilledButton).last);
+    await tester.tap(find.text('Get started'));
     await tester.pumpAndSettle();
 
     expect(find.byType(AuthScreen), findsOneWidget);

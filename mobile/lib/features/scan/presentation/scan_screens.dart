@@ -260,7 +260,7 @@ class _ScanScreenState extends State<ScanScreen> {
           actions: [
             if (!isProcessing && controller.queuedScans.isNotEmpty)
               IconButton(
-                tooltip: 'Saved leaf checks',
+                tooltip: context.tr('savedLeafChecks'),
                 onPressed: () => context.push('/scan/queue'),
                 icon: Badge(
                   label: Text('${controller.queuedScans.length}'),
@@ -362,7 +362,10 @@ class _CaptureStep extends StatelessWidget {
       key: const PageStorageKey('scan-capture'),
       padding: const EdgeInsets.only(top: 8, bottom: 110),
       children: [
-        Text('Check a leaf', style: Theme.of(context).textTheme.headlineMedium),
+        Text(
+          context.tr('scanTitle'),
+          style: Theme.of(context).textTheme.headlineMedium,
+        ),
         const SizedBox(height: 5),
         Text(
           context.tr('scanBody'),
@@ -385,8 +388,10 @@ class _CaptureStep extends StatelessWidget {
           title: Text(context.tr('scanHistory')),
           subtitle: Text(
             diagnoses.isEmpty
-                ? 'No completed checks yet'
-                : '${diagnoses.length} saved ${diagnoses.length == 1 ? 'check' : 'checks'}',
+                ? context.tr('noCompletedChecksYet')
+                : context.tr('savedChecksCount', {
+                    'count': diagnoses.length.toString(),
+                  }),
           ),
           children: [
             if (plots.isNotEmpty) ...[
@@ -395,7 +400,7 @@ class _CaptureStep extends StatelessWidget {
                 child: Row(
                   children: [
                     ChoiceChip(
-                      label: const Text('All plots'),
+                      label: Text(context.tr('allPlots')),
                       selected: selectedHistoryPlotId == null,
                       onSelected: (_) => onHistoryPlotChanged(null),
                     ),
@@ -504,7 +509,7 @@ class _ReviewStep extends StatelessWidget {
                 top: 6,
                 end: 6,
                 child: IconButton.filled(
-                  tooltip: 'Remove photo',
+                  tooltip: context.tr('removePhoto'),
                   style: IconButton.styleFrom(
                     backgroundColor: const Color(0xC7111A14),
                   ),
@@ -524,8 +529,8 @@ class _ReviewStep extends StatelessWidget {
           tilePadding: EdgeInsets.zero,
           childrenPadding: const EdgeInsets.only(bottom: 8),
           leading: const Icon(LucideIcons.listPlus, color: AppColors.forest),
-          title: const Text('Add crop or plot context'),
-          subtitle: const Text('Optional, but it can improve the result'),
+          title: Text(context.tr('addCropOrPlotContext')),
+          subtitle: Text(context.tr('cropOrPlotContextHelp')),
           children: [
             TextField(
               controller: cropController,
@@ -544,9 +549,9 @@ class _ReviewStep extends StatelessWidget {
                 prefixIcon: const Icon(LucideIcons.map, size: 20),
               ),
               items: [
-                const DropdownMenuItem<String?>(
+                DropdownMenuItem<String?>(
                   value: null,
-                  child: Text('No plot selected'),
+                  child: Text(context.tr('noPlotSelected')),
                 ),
                 ...plots.map(
                   (plot) => DropdownMenuItem<String?>(
@@ -658,7 +663,7 @@ class _ProcessingStepState extends State<_ProcessingStep>
           children: [
             // Leaf fill loader
             Semantics(
-              label: 'Leaf analysis in progress',
+              label: context.tr('leafAnalysisInProgress'),
               child: RepaintBoundary(
                 child: SizedBox(
                   width: 88,
@@ -827,7 +832,7 @@ class _UnavailableStep extends StatelessWidget {
           const SizedBox(height: 10),
           TextButton(
             onPressed: onSample,
-            child: const Text('Open previous result'),
+            child: Text(context.tr('openPreviousResult')),
           ),
         ],
       ],
@@ -846,7 +851,7 @@ class _SavedStep extends StatelessWidget {
         AppStateView(
           kind: AppStateKind.success,
           title: context.tr('savedForLater'),
-          message: 'KrishiSathi will ask before uploading these photos when live diagnosis becomes available.',
+          message: context.tr('savedForLaterBody'),
         ),
         FilledButton(onPressed: onDone, child: Text(context.tr('done'))),
       ],
@@ -1066,7 +1071,7 @@ class QueuedScansScreen extends StatelessWidget {
     final controller = context.watch<AppController>();
     final scans = controller.queuedScans;
     return Scaffold(
-      appBar: AppBar(title: const Text('Saved leaf checks')),
+      appBar: AppBar(title: Text(context.tr('savedLeafChecks'))),
       body: SafeArea(
         top: false,
         child: AppContent(
@@ -1141,7 +1146,13 @@ class QueuedScansScreen extends StatelessWidget {
                                   ),
                                   const SizedBox(height: 3),
                                   Text(
-                                    '${scan.imagePaths.length} ${scan.imagePaths.length == 1 ? 'photo' : 'photos'} - ${context.tr('date.saved', {'date': context.strings.formatDateTime(scan.createdAt)})}',
+                                    context.tr('photosSavedOn', {
+                                      'count': scan.imagePaths.length
+                                          .toString(),
+                                      'date': context.strings.formatDateTime(
+                                        scan.createdAt,
+                                      ),
+                                    }),
                                     style: Theme.of(context).textTheme.bodySmall
                                         ?.copyWith(color: AppColors.mutedInk),
                                   ),
@@ -1166,7 +1177,7 @@ class QueuedScansScreen extends StatelessWidget {
                                           LucideIcons.scanLine,
                                           size: 17,
                                         ),
-                                        label: const Text('Analyse now'),
+                                        label: Text(context.tr('analyseNow')),
                                       ),
                                     ],
                                   ),
@@ -1203,10 +1214,8 @@ class QueuedScansScreen extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Remove saved photos?'),
-        content: const Text(
-          'These local copies will be deleted from KrishiSathi. This cannot be undone.',
-        ),
+        title: Text(context.tr('removeSavedPhotosQuestion')),
+        content: Text(context.tr('removeSavedPhotosBody')),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
@@ -1362,10 +1371,10 @@ class _DiagnosisResultScreenState extends State<DiagnosisResultScreen> {
     if (diagnosis == null) {
       return Scaffold(
         appBar: AppBar(),
-        body: const AppStateView(
+        body: AppStateView(
           kind: AppStateKind.error,
-          title: 'Leaf check not found',
-          message: 'It may have been deleted or is still being processed.',
+          title: context.tr('leafCheckNotFound'),
+          message: context.tr('leafCheckMissingBody'),
         ),
       );
     }
@@ -1383,15 +1392,18 @@ class _DiagnosisResultScreenState extends State<DiagnosisResultScreen> {
             icon: const Icon(LucideIcons.share2),
           ),
           PopupMenuButton<String>(
-            tooltip: 'Leaf check options',
+            tooltip: context.tr('leafCheckOptions'),
             onSelected: (action) => _handleOption(context, diagnosis, action),
-            itemBuilder: (_) => const [
+            itemBuilder: (_) => [
               PopupMenuItem(
                 value: 'link',
-                child: Text('Link to plot and crop'),
+                child: Text(context.tr('linkToPlotAndCrop')),
               ),
               PopupMenuDivider(),
-              PopupMenuItem(value: 'delete', child: Text('Delete leaf check')),
+              PopupMenuItem(
+                value: 'delete',
+                child: Text(context.tr('deleteLeafCheck')),
+              ),
             ],
           ),
           const SizedBox(width: 6),
@@ -1480,7 +1492,7 @@ class _DiagnosisResultScreenState extends State<DiagnosisResultScreen> {
                 const SizedBox(height: 18),
                 InlineNotice(
                   title: context.tr('retakeRecommended'),
-                  message: 'Take one closer photo in daylight and one photo of the full plant before acting.',
+                  message: context.tr('retakeRecommendedBody'),
                   icon: LucideIcons.camera,
                   color: AppColors.amber,
                 ),
@@ -1488,24 +1500,24 @@ class _DiagnosisResultScreenState extends State<DiagnosisResultScreen> {
               const SizedBox(height: 26),
               SectionHeader(title: context.tr('whatToDo')),
               const SizedBox(height: 10),
-              const _ActionStep(
+              _ActionStep(
                 number: '1',
-                title: 'Remove badly affected leaves',
-                body: 'Keep removed leaves away from the plot. Do not compost them near the crop.',
+                title: context.tr('removeAffectedLeaves'),
+                body: context.tr('removeAffectedLeavesBody'),
               ),
-              const _ActionStep(
+              _ActionStep(
                 number: '2',
-                title: 'Keep foliage dry',
-                body: 'Water near the root and improve airflow where plants are crowded.',
+                title: context.tr('keepFoliageDry'),
+                body: context.tr('keepFoliageDryBody'),
               ),
-              const _ActionStep(
+              _ActionStep(
                 number: '3',
-                title: 'Confirm before treatment',
-                body: 'Ask a local expert before using any pesticide or fungicide.',
+                title: context.tr('confirmBeforeTreatment'),
+                body: context.tr('confirmBeforeTreatmentBody'),
               ),
               if (diagnosis.predictions.length > 1) ...[
                 const SizedBox(height: 24),
-                SectionHeader(title: 'Other possibilities'),
+                SectionHeader(title: context.tr('otherPossibilities')),
                 const SizedBox(height: 10),
                 ...diagnosis.predictions
                     .skip(1)
@@ -1523,8 +1535,8 @@ class _DiagnosisResultScreenState extends State<DiagnosisResultScreen> {
               ],
               const SizedBox(height: 24),
               SectionHeader(
-                title: 'Case history',
-                subtitle: 'Original checks and retakes stay linked.',
+                title: context.tr('caseHistory'),
+                subtitle: context.tr('caseHistoryBody'),
               ),
               const SizedBox(height: 10),
               if (_loadingHistory)
@@ -1533,10 +1545,10 @@ class _DiagnosisResultScreenState extends State<DiagnosisResultScreen> {
                   child: Center(child: CircularProgressIndicator()),
                 )
               else if (_history.isEmpty)
-                const AppStateView(
+                AppStateView(
                   kind: AppStateKind.empty,
-                  title: 'No earlier assessments',
-                  message: 'Retake results will appear here without replacing the original record.',
+                  title: context.tr('noEarlierAssessments'),
+                  message: context.tr('retakeHistoryBody'),
                   compact: true,
                 )
               else
@@ -1556,7 +1568,7 @@ class _DiagnosisResultScreenState extends State<DiagnosisResultScreen> {
                       '${assessment.cropName} · ${_confidenceText(assessment.confidenceLabel)} · ${context.strings.formatDateTime(assessment.createdAt.toLocal())}',
                     ),
                     trailing: assessment.isActive
-                        ? const Text('Current')
+                        ? Text(context.tr('current'))
                         : null,
                   ),
                 ),
@@ -1584,9 +1596,9 @@ class _DiagnosisResultScreenState extends State<DiagnosisResultScreen> {
                 ),
                 if (_comparisonHistory.isNotEmpty) ...[
                   const SizedBox(height: 14),
-                  const SectionHeader(
-                    title: 'Earlier visual comparisons',
-                    subtitle: 'Saved analyses can be reopened here.',
+                  SectionHeader(
+                    title: context.tr('earlierVisualComparisons'),
+                    subtitle: context.tr('savedAnalysesBody'),
                   ),
                   const SizedBox(height: 8),
                   ..._comparisonHistory.map(
@@ -1744,10 +1756,8 @@ class _DiagnosisResultScreenState extends State<DiagnosisResultScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete this leaf check?'),
-        content: const Text(
-          'Its images, diagnosis history, linked scan conversation, and saved scan context will be removed.',
-        ),
+        title: Text(context.tr('deleteLeafCheckQuestion')),
+        content: Text(context.tr('deleteLeafCheckBody')),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -1822,11 +1832,11 @@ class _DiagnosisResultScreenState extends State<DiagnosisResultScreen> {
                   DropdownButtonFormField<String?>(
                     initialValue: plotId,
                     isExpanded: true,
-                    decoration: const InputDecoration(labelText: 'Plot'),
+                    decoration: InputDecoration(labelText: context.tr('plot')),
                     items: [
-                      const DropdownMenuItem(
+                      DropdownMenuItem(
                         value: null,
-                        child: Text('Keep as standalone scan'),
+                        child: Text(context.tr('keepStandaloneScan')),
                       ),
                       ...plots.map(
                         (plot) => DropdownMenuItem(
@@ -1847,13 +1857,13 @@ class _DiagnosisResultScreenState extends State<DiagnosisResultScreen> {
                           ? cropId
                           : null,
                       isExpanded: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Crop in this plot (optional)',
+                      decoration: InputDecoration(
+                        labelText: context.tr('cropInPlotOptional'),
                       ),
                       items: [
-                        const DropdownMenuItem(
+                        DropdownMenuItem(
                           value: null,
-                          child: Text('Not sure yet'),
+                          child: Text(context.tr('notSureYet')),
                         ),
                         ...activeCrops.map(
                           (crop) => DropdownMenuItem(
@@ -1885,7 +1895,11 @@ class _DiagnosisResultScreenState extends State<DiagnosisResultScreen> {
         cropId: result.$2,
       );
       if (context.mounted) {
-        showAppSnackBar(context, 'Leaf check link updated.', success: true);
+        showAppSnackBar(
+          context,
+          context.tr('leafCheckLinkUpdated'),
+          success: true,
+        );
       }
     } on ApiException catch (error) {
       if (context.mounted) {
@@ -1937,13 +1951,13 @@ class _ProgressionComparisonSheet extends StatelessWidget {
                   constraints.maxWidth < 500 ||
                   MediaQuery.textScalerOf(context).scale(1) > 1.3;
               final earlier = _ProgressionTimepoint(
-                label: 'Earlier',
+                label: context.tr('earlier'),
                 capturedAt: comparison.earlierCapturedAt,
                 caseId: caseId,
                 imageIds: comparison.earlierImageIds,
               );
               final later = _ProgressionTimepoint(
-                label: 'Recent',
+                label: context.tr('recent'),
                 capturedAt: comparison.laterCapturedAt,
                 caseId: caseId,
                 imageIds: comparison.laterImageIds,
@@ -1992,7 +2006,7 @@ class _ProgressionComparisonSheet extends StatelessWidget {
           ),
           if (comparison.evidence.isNotEmpty) ...[
             const SizedBox(height: 20),
-            const SectionHeader(title: 'Visible evidence'),
+            SectionHeader(title: context.tr('visibleEvidence')),
             const SizedBox(height: 8),
             ...comparison.evidence.map(
               (code) => _ComparisonBullet(_progressionCodeLabel(code)),
@@ -2000,7 +2014,7 @@ class _ProgressionComparisonSheet extends StatelessWidget {
           ],
           if (comparison.recommendations.isNotEmpty) ...[
             const SizedBox(height: 18),
-            const SectionHeader(title: 'What to observe next'),
+            SectionHeader(title: context.tr('whatToObserveNext')),
             const SizedBox(height: 8),
             ...comparison.recommendations.map(
               (code) => _ComparisonBullet(_progressionCodeLabel(code)),
@@ -2011,7 +2025,7 @@ class _ProgressionComparisonSheet extends StatelessWidget {
             ExpansionTile(
               tilePadding: EdgeInsets.zero,
               childrenPadding: EdgeInsets.zero,
-              title: const Text('Comparison limitations'),
+              title: Text(context.tr('comparisonLimitations')),
               children: comparison.limitations
                   .map((code) => _ComparisonBullet(_progressionCodeLabel(code)))
                   .toList(growable: false),
@@ -2277,13 +2291,13 @@ class _ReportApprovalSheetState extends State<_ReportApprovalSheet> {
             const SizedBox(height: 16),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('Selected leaf image'),
+              title: Text(context.tr('selectedLeafImage')),
               value: includeImage,
               onChanged: (value) => setState(() => includeImage = value),
             ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('Plot name'),
+              title: Text(context.tr('plotName')),
               value: includePlot,
               onChanged: (value) => setState(() {
                 includePlot = value;
@@ -2292,8 +2306,8 @@ class _ReportApprovalSheetState extends State<_ReportApprovalSheet> {
             ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('Plot location'),
-              subtitle: const Text('Share only when the reviewer needs it.'),
+              title: Text(context.tr('plotLocation')),
+              subtitle: Text(context.tr('plotLocationSharingHelp')),
               value: includePlotLocation,
               onChanged: includePlot
                   ? (value) => setState(() => includePlotLocation = value)
@@ -2301,13 +2315,13 @@ class _ReportApprovalSheetState extends State<_ReportApprovalSheet> {
             ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('Other possible diagnoses'),
+              title: Text(context.tr('otherPossibleDiagnoses')),
               value: includeAlternatives,
               onChanged: (value) => setState(() => includeAlternatives = value),
             ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('Your feedback'),
+              title: Text(context.tr('yourFeedback')),
               value: includeFeedback,
               onChanged: (value) => setState(() => includeFeedback = value),
             ),
@@ -2399,7 +2413,7 @@ class _DiagnosisFeedbackSheetState extends State<_DiagnosisFeedbackSheet> {
       );
       if (!mounted) return;
       Navigator.pop(context);
-      showAppSnackBar(context, 'Feedback saved.', success: true);
+      showAppSnackBar(context, context.tr('feedbackSaved'), success: true);
     } on ApiException catch (error) {
       if (mounted) showAppSnackBar(context, context.localizedError(error));
     } finally {
@@ -2437,9 +2451,15 @@ class _DiagnosisFeedbackSheetState extends State<_DiagnosisFeedbackSheet> {
               const SizedBox(height: 16),
             ],
             SegmentedButton<bool>(
-              segments: const [
-                ButtonSegment(value: false, label: Text('Looks correct')),
-                ButtonSegment(value: true, label: Text('Needs correction')),
+              segments: [
+                ButtonSegment(
+                  value: false,
+                  label: Text(context.tr('looksCorrect')),
+                ),
+                ButtonSegment(
+                  value: true,
+                  label: Text(context.tr('needsCorrection')),
+                ),
               ],
               selected: {_isIncorrect},
               onSelectionChanged: (value) =>
@@ -2450,16 +2470,16 @@ class _DiagnosisFeedbackSheetState extends State<_DiagnosisFeedbackSheet> {
               TextField(
                 controller: _crop,
                 textCapitalization: TextCapitalization.words,
-                decoration: const InputDecoration(
-                  labelText: 'Correct crop or plant (optional)',
+                decoration: InputDecoration(
+                  labelText: context.tr('correctCropOptional'),
                 ),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: _disease,
                 textCapitalization: TextCapitalization.words,
-                decoration: const InputDecoration(
-                  labelText: 'Correct condition (optional)',
+                decoration: InputDecoration(
+                  labelText: context.tr('correctConditionOptional'),
                 ),
               ),
             ],
@@ -2469,8 +2489,8 @@ class _DiagnosisFeedbackSheetState extends State<_DiagnosisFeedbackSheet> {
               minLines: 3,
               maxLines: 5,
               textCapitalization: TextCapitalization.sentences,
-              decoration: const InputDecoration(
-                labelText: 'What did you observe? (optional)',
+              decoration: InputDecoration(
+                labelText: context.tr('observationOptional'),
                 alignLabelWithHint: true,
               ),
             ),
@@ -2479,7 +2499,7 @@ class _DiagnosisFeedbackSheetState extends State<_DiagnosisFeedbackSheet> {
               width: double.infinity,
               child: FilledButton(
                 onPressed: _saving || _loading ? null : _save,
-                child: Text(_saving ? 'Saving...' : 'Save feedback'),
+                child: Text(context.tr(_saving ? 'saving' : 'saveFeedback')),
               ),
             ),
           ],
@@ -2563,7 +2583,7 @@ class _DiagnosisServerImage extends StatelessWidget {
           Uint8List.fromList(snapshot.data!),
           fit: BoxFit.cover,
           gaplessPlayback: true,
-          semanticLabel: 'Leaf image in this diagnosis case',
+          semanticLabel: context.tr('diagnosisLeafImage'),
         );
       }
       if (snapshot.hasError) {

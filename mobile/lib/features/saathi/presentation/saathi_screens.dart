@@ -44,8 +44,8 @@ class _SaathiScreenState extends State<SaathiScreen> {
         actions: [
           IconButton(
             tooltip: _showArchived
-                ? 'Show active conversations'
-                : 'Show archived conversations',
+                ? context.tr('showActiveConversations')
+                : context.tr('showArchivedConversations'),
             onPressed: () => setState(() => _showArchived = !_showArchived),
             icon: Icon(_showArchived ? LucideIcons.inbox : LucideIcons.archive),
           ),
@@ -467,11 +467,18 @@ class _NewChatScreenState extends State<NewChatScreen> {
   Future<void> _create() async {
     final prompt = _prompt.text.trim();
     if (_scope != 'general' && _contextId == null) {
-      showAppSnackBar(context, 'Choose the $_scope before continuing.');
+      showAppSnackBar(
+        context,
+        context.tr('chooseScopeBeforeContinuing', {
+          'scope': context.tr(
+            _scope == 'scan' ? 'leafCheck' : '${_scope}Scope',
+          ),
+        }),
+      );
       return;
     }
     if (prompt.isEmpty) {
-      showAppSnackBar(context, 'Write the first question for Saathi.');
+      showAppSnackBar(context, context.tr('writeFirstQuestion'));
       return;
     }
     final controller = context.read<AppController>();
@@ -483,7 +490,7 @@ class _NewChatScreenState extends State<NewChatScreen> {
       return;
     }
     if (!mounted) return;
-    context.go('/saathi/chat/${chat.id}');
+    context.pushReplacement('/saathi/chat/${chat.id}');
     try {
       await controller.sendMessage(chat.id, prompt);
     } on ApiException {
@@ -549,10 +556,10 @@ class _NewChatScreenState extends State<NewChatScreen> {
                     icon: const Icon(LucideIcons.sprout),
                     label: Text(context.tr('plotScope')),
                   ),
-                  const ButtonSegment(
+                  ButtonSegment(
                     value: 'scan',
                     icon: Icon(LucideIcons.scanLine),
-                    label: Text('Leaf check'),
+                    label: Text(context.tr('leafCheck')),
                   ),
                 ],
                 selected: {_scope},
@@ -571,8 +578,11 @@ class _NewChatScreenState extends State<NewChatScreen> {
                     initialValue: selectedContextId,
                     isExpanded: true,
                     decoration: InputDecoration(
-                      labelText:
-                          'Choose ${_scope == 'scan' ? 'leaf check' : _scope}',
+                      labelText: context.tr('chooseContext', {
+                        'scope': context.tr(
+                          _scope == 'scan' ? 'leafCheck' : '${_scope}Scope',
+                        ),
+                      }),
                     ),
                     items: contextItems
                         .map(
@@ -648,7 +658,9 @@ class _MissingChatContext extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.mineral,
+        color: Theme.of(context).brightness == Brightness.dark
+            ? Theme.of(context).colorScheme.surfaceContainerHigh
+            : AppColors.mineral,
         borderRadius: BorderRadius.circular(AppRadius.large),
         border: Border.all(color: AppColors.leaf.withValues(alpha: 0.18)),
       ),
@@ -809,7 +821,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
   Future<void> _copyMessage(ChatMessageModel message) async {
     await Clipboard.setData(ClipboardData(text: message.text));
-    if (mounted) showAppSnackBar(context, 'Response copied.');
+    if (mounted) showAppSnackBar(context, context.tr('responseCopied'));
   }
 
   Future<void> _readMessage(ChatMessageModel message) async {
@@ -931,7 +943,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
             const SizedBox(height: 14),
             ListTile(
               leading: const Icon(LucideIcons.camera),
-              title: const Text('Take a photo'),
+              title: Text(context.tr('takePhoto')),
               onTap: () {
                 Navigator.pop(sheetContext);
                 context.push('/scan?source=camera$retake');
@@ -939,7 +951,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
             ),
             ListTile(
               leading: const Icon(LucideIcons.images),
-              title: const Text('Choose from gallery'),
+              title: Text(context.tr('choosePhotos')),
               onTap: () {
                 Navigator.pop(sheetContext);
                 context.push('/scan?source=gallery$retake');
@@ -997,16 +1009,15 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     if (chat == null) {
       return Scaffold(
         appBar: AppBar(),
-        body: const AppStateView(
+        body: AppStateView(
           kind: AppStateKind.error,
-          title: 'Conversation not found',
-          message: 'It may have been archived or deleted.',
+          title: context.tr('conversationNotFound'),
+          message: context.tr('conversationMissingBody'),
         ),
       );
     }
     final controller = context.watch<AppController>();
     final responding = controller.isChatResponding(chat.id);
-    final queued = controller.queuedChatTurns(chat.id);
     final hasOlder = controller.hasOlderChatMessages(chat.id);
     final proposals = controller.reminderProposals
         .where(
@@ -1041,7 +1052,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         ),
         actions: [
           IconButton(
-            tooltip: 'Conversation options',
+            tooltip: context.tr('conversationOptions'),
             onPressed: () => _showConversationOptions(chat),
             icon: const Icon(LucideIcons.ellipsisVertical),
           ),
@@ -1116,8 +1127,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                                   chat.messages[index - 1].author !=
                                       ChatAuthor.assistant),
                           onRetry:
-                              chat.messages[index].delivery ==
-                                  ChatDelivery.failed
+                              chat.messages[index].author ==
+                                      ChatAuthor.farmer &&
+                                  chat.messages[index].delivery ==
+                                      ChatDelivery.failed
                               ? () => _retry(chat.messages[index])
                               : null,
                           onFollowUp: _useFollowUp,
@@ -1130,7 +1143,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                           onFeedback: (helpful) =>
                               _setFeedback(chat.messages[index], helpful),
                         ),
-                      if (responding) _ThinkingIndicator(queuedCount: queued),
+                      if (responding) const _ThinkingIndicator(),
                     ],
                   ),
                 ),
@@ -1152,13 +1165,13 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                 child: Padding(
                   padding: const EdgeInsets.only(bottom: 12),
                   child: InlineNotice(
-                    title: 'Archived conversation',
-                    message: 'Restore this conversation before sending another message.',
+                    title: context.tr('archivedConversation'),
+                    message: context.tr('error.CHAT_ARCHIVED'),
                     icon: LucideIcons.archive,
                     color: AppColors.amber,
                     action: TextButton(
                       onPressed: () => _controller.restoreChat(chat.id),
-                      child: const Text('Restore'),
+                      child: Text(context.tr('restore')),
                     ),
                   ),
                 ),
@@ -1239,41 +1252,39 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
           children: [
             ListTile(
               leading: const Icon(LucideIcons.pencil),
-              title: const Text('Rename conversation'),
+              title: Text(context.tr('renameConversation')),
               onTap: () => Navigator.pop(context, 'rename'),
             ),
             if (chat.scope == 'general')
               ListTile(
                 leading: const Icon(LucideIcons.folderSymlink),
-                title: const Text('Connect to farm or plot'),
-                subtitle: const Text(
-                  'Save only relevant facts to shared memory.',
-                ),
+                title: Text(context.tr('connectConversation')),
+                subtitle: Text(context.tr('connectConversationBody')),
                 onTap: () => Navigator.pop(context, 'connect'),
               ),
             if (chat.scope == 'general')
               ListTile(
                 leading: const Icon(LucideIcons.unlink),
-                title: const Text('Disconnect shared memory'),
+                title: Text(context.tr('disconnectMemory')),
                 onTap: () => Navigator.pop(context, 'disconnect'),
               ),
             if (chat.archived)
               ListTile(
                 leading: const Icon(LucideIcons.archiveRestore),
-                title: const Text('Restore conversation'),
+                title: Text(context.tr('restoreConversation')),
                 onTap: () => Navigator.pop(context, 'restore'),
               )
             else
               ListTile(
                 leading: const Icon(LucideIcons.archive),
-                title: const Text('Archive conversation'),
+                title: Text(context.tr('archiveConversation')),
                 onTap: () => Navigator.pop(context, 'archive'),
               ),
             ListTile(
               leading: const Icon(LucideIcons.trash2, color: Colors.red),
-              title: const Text(
-                'Delete conversation',
-                style: TextStyle(color: Colors.red),
+              title: Text(
+                context.tr('deleteConversation'),
+                style: const TextStyle(color: Colors.red),
               ),
               onTap: () => Navigator.pop(context, 'delete'),
             ),
@@ -1312,18 +1323,16 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
           final confirmed = await showDialog<bool>(
             context: context,
             builder: (context) => AlertDialog(
-              title: const Text('Delete this conversation?'),
-              content: const Text(
-                'Its messages will be removed. Plot memories are managed separately in Memory settings.',
-              ),
+              title: Text(context.tr('deleteConversationQuestion')),
+              content: Text(context.tr('deleteConversationBody')),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context, false),
-                  child: const Text('Cancel'),
+                  child: Text(context.tr('cancel')),
                 ),
                 FilledButton(
                   onPressed: () => Navigator.pop(context, true),
-                  child: const Text('Delete'),
+                  child: Text(context.tr('delete')),
                 ),
               ],
             ),
@@ -1344,22 +1353,24 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     final title = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Rename conversation'),
+        title: Text(context.tr('renameConversation')),
         content: TextField(
           controller: controller,
           autofocus: true,
           maxLength: 150,
           textCapitalization: TextCapitalization.sentences,
-          decoration: const InputDecoration(labelText: 'Conversation title'),
+          decoration: InputDecoration(
+            labelText: context.tr('conversationTitle'),
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+            child: Text(context.tr('cancel')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, controller.text.trim()),
-            child: const Text('Save'),
+            child: Text(context.tr('save')),
           ),
         ],
       ),
@@ -1624,7 +1635,6 @@ class _MessageBubble extends StatelessWidget {
 
   String _deliveryLabel(BuildContext context, ChatMessageModel value) =>
       switch (value.delivery) {
-        ChatDelivery.queued => context.tr('chatQueued'),
         ChatDelivery.sending => context.tr('chatProcessing'),
         ChatDelivery.failed => context.tr('chatFailed'),
         ChatDelivery.sent => context.strings.formatTime(value.sentAt),
@@ -1734,45 +1744,6 @@ class _ReplyList extends StatelessWidget {
   }
 }
 
-// Kept temporarily for compatibility with older golden fixtures.
-// ignore: unused_element
-class _ThinkingBar extends StatelessWidget {
-  // ignore: unused_element_parameter
-  const _ThinkingBar({super.key, required this.queuedCount});
-
-  final int queuedCount;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      liveRegion: true,
-      label: context.tr('saathiThinking'),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
-        color: AppColors.leaf.withValues(alpha: 0.06),
-        child: Row(
-          children: [
-            const SizedBox.square(
-              dimension: 15,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                queuedCount > 0
-                    ? context.tr('saathiThinkingQueued', {'count': queuedCount})
-                    : context.tr('saathiThinking'),
-                style: Theme.of(context).textTheme.labelMedium,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _ConversationContextPill extends StatelessWidget {
   const _ConversationContextPill({required this.chat, required this.onTap});
 
@@ -1844,6 +1815,12 @@ class _GeneralChatWelcome extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
+    final scheme = Theme.of(context).colorScheme;
+    final suggestionSurface = dark
+        ? scheme.surfaceContainerHigh
+        : const Color(0xFFE7F0E5);
+    final suggestionInk = dark ? scheme.onSurface : AppColors.ink;
+    final suggestionAccent = dark ? scheme.primary : AppColors.forest;
     final prompts = <(IconData, String)>[
       (LucideIcons.cloudSun, 'How should I plan farm work around the weather?'),
       (LucideIcons.sprout, 'Help me think through a crop problem'),
@@ -1889,9 +1866,8 @@ class _GeneralChatWelcome extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(bottom: 9),
               child: Material(
-                color: dark
-                    ? Theme.of(context).colorScheme.surfaceContainerHigh
-                    : Colors.white.withValues(alpha: 0.72),
+                key: ValueKey('general-chat-prompt-${prompt.$2}'),
+                color: suggestionSurface,
                 borderRadius: BorderRadius.circular(18),
                 child: InkWell(
                   borderRadius: BorderRadius.circular(18),
@@ -1900,20 +1876,23 @@ class _GeneralChatWelcome extends StatelessWidget {
                     padding: const EdgeInsets.fromLTRB(14, 13, 12, 13),
                     child: Row(
                       children: [
-                        Icon(prompt.$1, size: 19, color: AppColors.leaf),
+                        Icon(prompt.$1, size: 19, color: suggestionAccent),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Text(
                             prompt.$2,
                             style: Theme.of(context).textTheme.bodyMedium
-                                ?.copyWith(fontWeight: FontWeight.w600),
+                                ?.copyWith(
+                                  color: suggestionInk,
+                                  fontWeight: FontWeight.w600,
+                                ),
                           ),
                         ),
                         const SizedBox(width: 8),
-                        const Icon(
+                        Icon(
                           LucideIcons.arrowUpRight,
                           size: 17,
-                          color: AppColors.mutedInk,
+                          color: suggestionAccent,
                         ),
                       ],
                     ),
@@ -1925,7 +1904,7 @@ class _GeneralChatWelcome extends StatelessWidget {
           TextButton.icon(
             onPressed: () => onPrompt(''),
             icon: const Icon(LucideIcons.messageCircle, size: 17),
-            label: const Text('Or write your own question below'),
+            label: Text(context.tr('writeOwnQuestion')),
           ),
         ],
       ),
@@ -2119,7 +2098,6 @@ class _MessageEntry extends StatelessWidget {
                     ),
                   Text(
                     switch (message.delivery) {
-                      ChatDelivery.queued => context.tr('chatQueued'),
                       ChatDelivery.sending => context.tr('chatProcessing'),
                       ChatDelivery.failed => context.tr('chatFailed'),
                       ChatDelivery.sent => context.strings.formatTime(
@@ -2177,6 +2155,13 @@ class _AssistantResponse extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final scheme = Theme.of(context).colorScheme;
+    final suggestionSurface = dark
+        ? scheme.surfaceContainerHigh
+        : const Color(0xFFE7F0E5);
+    final suggestionInk = dark ? scheme.onSurface : AppColors.ink;
+    final suggestionAccent = dark ? scheme.primary : AppColors.forest;
     final reply = message.structuredReply;
     return Padding(
       key: ValueKey('saathi-response-${message.id}'),
@@ -2266,8 +2251,19 @@ class _AssistantResponse extends StatelessWidget {
                 children: [
                   for (final question in reply.followUpQuestions)
                     ActionChip(
-                      avatar: const Icon(LucideIcons.cornerDownRight, size: 14),
+                      key: ValueKey('follow-up-question-$question'),
+                      avatar: Icon(
+                        LucideIcons.cornerDownRight,
+                        size: 14,
+                        color: suggestionAccent,
+                      ),
                       label: Text(question),
+                      labelStyle: Theme.of(context).textTheme.labelLarge
+                          ?.copyWith(color: suggestionInk),
+                      backgroundColor: suggestionSurface,
+                      side: BorderSide(
+                        color: suggestionAccent.withValues(alpha: 0.32),
+                      ),
                       onPressed: () => onFollowUp(question),
                     ),
                 ],
@@ -2468,20 +2464,22 @@ class _AssistantActions extends StatelessWidget {
       children: [
         IconButton(
           visualDensity: VisualDensity.compact,
-          tooltip: 'Copy response',
+          tooltip: context.tr('copyResponse'),
           onPressed: onCopy,
           icon: const Icon(LucideIcons.copy, size: 17),
         ),
         IconButton(
           visualDensity: VisualDensity.compact,
-          tooltip: feedback == true ? 'Marked helpful' : 'Helpful',
+          tooltip: context.tr(feedback == true ? 'markedHelpful' : 'helpful'),
           onPressed: () => onFeedback(true),
           color: feedback == true ? AppColors.leaf : null,
           icon: const Icon(LucideIcons.thumbsUp, size: 17),
         ),
         IconButton(
           visualDensity: VisualDensity.compact,
-          tooltip: feedback == false ? 'Marked not helpful' : 'Not helpful',
+          tooltip: context.tr(
+            feedback == false ? 'markedNotHelpful' : 'notHelpful',
+          ),
           onPressed: () => onFeedback(false),
           color: feedback == false ? AppColors.danger : null,
           icon: const Icon(LucideIcons.thumbsDown, size: 17),
@@ -2492,7 +2490,7 @@ class _AssistantActions extends StatelessWidget {
             speaking ? LucideIcons.square : LucideIcons.volume2,
             size: 16,
           ),
-          label: Text(speaking ? 'Stop' : 'Read aloud'),
+          label: Text(context.tr(speaking ? 'stopSpeaking' : 'readAloud')),
         ),
       ],
     );
@@ -2500,9 +2498,7 @@ class _AssistantActions extends StatelessWidget {
 }
 
 class _ThinkingIndicator extends StatefulWidget {
-  const _ThinkingIndicator({required this.queuedCount});
-
-  final int queuedCount;
+  const _ThinkingIndicator();
 
   @override
   State<_ThinkingIndicator> createState() => _ThinkingIndicatorState();
@@ -2582,18 +2578,6 @@ class _ThinkingIndicatorState extends State<_ThinkingIndicator>
                 }),
               ),
             ),
-            if (widget.queuedCount > 0) ...[
-              const SizedBox(width: 8),
-              Flexible(
-                child: Text(
-                  context.tr('saathiThinkingQueued', {
-                    'count': widget.queuedCount,
-                  }),
-                  style: Theme.of(context).textTheme.labelSmall
-                      ?.copyWith(color: AppColors.mutedInk),
-                ),
-              ),
-            ],
           ],
         ),
       ),
@@ -2608,8 +2592,16 @@ class _PromptTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final scheme = Theme.of(context).colorScheme;
+    final surface = dark
+        ? scheme.surfaceContainerHigh
+        : const Color(0xFFE7F0E5);
+    final foreground = dark ? scheme.onSurface : AppColors.ink;
+    final accent = dark ? scheme.primary : AppColors.forest;
     return Material(
-      color: Colors.white,
+      key: ValueKey('saathi-home-prompt-$prompt'),
+      color: surface,
       borderRadius: BorderRadius.circular(AppRadius.medium),
       child: InkWell(
         onTap: onTap,
@@ -2631,15 +2623,13 @@ class _PromptTile extends StatelessWidget {
               Expanded(
                 child: Text(
                   prompt,
-                  style: Theme.of(context).textTheme.bodyMedium
-                      ?.copyWith(fontWeight: FontWeight.w500),
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: foreground,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
-              const Icon(
-                LucideIcons.arrowRight,
-                size: 16,
-                color: AppColors.mutedInk,
-              ),
+              Icon(LucideIcons.arrowRight, size: 16, color: accent),
             ],
           ),
         ),

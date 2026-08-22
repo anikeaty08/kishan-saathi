@@ -48,36 +48,52 @@ async def test_open_meteo_geocoding_maps_location_results() -> None:
 
 
 @pytest.mark.asyncio
-async def test_open_meteo_scopes_pincode_search_to_india() -> None:
+async def test_pincode_search_uses_postal_geocoder_and_maps_result() -> None:
+    requests = 0
+
     async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.params["name"] == "560088"
-        assert request.url.params["countryCode"] == "IN"
+        nonlocal requests
+        requests += 1
+        assert request.url.params["postalcode"] == "560088"
+        assert request.url.params["countrycodes"] == "in"
+        assert request.url.params["accept-language"] == "en"
+        assert request.headers["User-Agent"].startswith("KishanSaathi/")
         return httpx.Response(
             200,
-            json={
-                "results": [
-                    {
-                        "name": "Hesaraghatta",
-                        "latitude": 13.1377,
-                        "longitude": 77.4786,
+            json=[
+                {
+                    "lat": "13.1377",
+                    "lon": "77.4786",
+                    "display_name": "560088, Bengaluru, Karnataka, India",
+                    "address": {
+                        "postcode": "560088",
+                        "city": "Bengaluru",
+                        "state": "Karnataka",
                         "country": "India",
-                        "admin1": "Karnataka",
-                        "postcodes": ["560088"],
-                    }
-                ]
-            },
+                    },
+                }
+            ],
         )
 
-    client = httpx.AsyncClient(
+    postal_client = httpx.AsyncClient(
         transport=httpx.MockTransport(handler), base_url="https://geocoding.test"
     )
-    provider = OpenMeteoGeocodingProvider(Settings(_env_file=None), client=client)
+    provider = OpenMeteoGeocodingProvider(
+        Settings(_env_file=None),
+        postal_client=postal_client,
+    )
     try:
         results = await provider.search(query="560088", language="en", limit=5)
+        cached = await provider.search(query="560088", language="en", limit=5)
     finally:
-        await client.aclose()
+        await provider.close()
+        await postal_client.aclose()
 
-    assert results[0].name == "Hesaraghatta"
+    assert requests == 1
+    assert cached == results
+    assert results[0].name == "560088"
+    assert results[0].admin2 == "Bengaluru"
+    assert results[0].admin1 == "Karnataka"
     assert results[0].country == "India"
 
 

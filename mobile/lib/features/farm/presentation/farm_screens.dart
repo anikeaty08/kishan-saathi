@@ -2254,10 +2254,15 @@ class _PlotLocationPickerState extends State<_PlotLocationPicker> {
         query,
       );
       if (mounted) {
-        setState(() {
-          _results = results;
-          _searched = true;
-        });
+        final isIndianPin = RegExp(r'^\d{6}$').hasMatch(query);
+        if (isIndianPin && results.isNotEmpty) {
+          _select(results.first);
+        } else {
+          setState(() {
+            _results = results;
+            _searched = true;
+          });
+        }
       }
     } on ApiException catch (error) {
       if (mounted) showAppSnackBar(context, context.localizedError(error));
@@ -2396,6 +2401,7 @@ class _PlotLocationPickerState extends State<_PlotLocationPicker> {
                         height: 52,
                         child: const Icon(
                           LucideIcons.mapPin,
+                          key: ValueKey('plot-location-marker'),
                           color: AppColors.forest,
                           size: 42,
                         ),

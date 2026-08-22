@@ -121,7 +121,7 @@ void main() {
     expect(updated.irrigation, isNull);
   });
 
-  testWidgets('plot pincode search always gives visible feedback', (
+  testWidgets('plot pincode search selects and zooms to its area', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(430, 1100);
@@ -144,7 +144,10 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(find.byKey(const ValueKey('plot-location-empty')), findsOneWidget);
+    expect(find.byKey(const ValueKey('plot-location-empty')), findsNothing);
+    expect(find.byKey(const ValueKey('plot-location-marker')), findsOneWidget);
+    expect(find.textContaining('13.13770, 77.47860'), findsOneWidget);
+    expect(find.text('Confirm pointer'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 

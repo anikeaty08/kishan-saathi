@@ -1120,7 +1120,7 @@ class AppController extends ChangeNotifier {
             LocationPoint(
               latitude: 13.1377,
               longitude: 77.4786,
-              label: 'Hesaraghatta, Karnataka',
+              label: '560088, Hesaraghatta, Karnataka',
               country: 'India',
             ),
             LocationPoint(

@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:krishisathi/app/krishisathi_app.dart';
 import 'package:krishisathi/core/localization/app_strings.dart';
 import 'package:krishisathi/features/shared/presentation/app_controller.dart';
+import 'package:krishisathi/features/saathi/presentation/saathi_screens.dart';
 
 import 'support/test_controller.dart';
 
@@ -166,6 +167,36 @@ void main() {
     await tester.tap(find.text('Home').last);
     await tester.pumpAndSettle();
     expect(find.text('Test Farmer'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('phone back returns to Saathi after creating a chat', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final controller = await _controllerFor(tester);
+    await tester.pumpWidget(KrishiSathiApp(controller: controller));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Saathi').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('New chat').first);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'How is my field today?');
+    await tester.tap(find.text('Send'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.byType(ChatDetailScreen), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Recent conversations'), findsOneWidget);
+    expect(find.byType(NavigationBar), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

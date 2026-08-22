@@ -84,13 +84,14 @@ class FakeUserService(UserServicePort):
         changes: FarmerProfileUpdate,
     ) -> FarmerProfileResponse:
         assert context.principal.subject == "farmer-sub"
-        return self.profile.model_copy(
-            update={
-                "name": changes.name,
-                "preferred_language": changes.preferred_language,
-                "onboarding_complete": True,
-            }
-        )
+        update = {
+            field: getattr(changes, field) for field in changes.model_fields_set
+        }
+        name = update.get("name", self.profile.name)
+        language = update.get("preferred_language", self.profile.preferred_language)
+        update["onboarding_complete"] = bool(name and language)
+        self.profile = self.profile.model_copy(update=update)
+        return self.profile
 
 
 @pytest.mark.asyncio
@@ -141,6 +142,33 @@ async def test_patch_profile_validates_language_and_updates_onboarding() -> None
     assert valid.json()["name"] == "Nikhil"
     assert valid.json()["preferred_language"] == "hi"
     assert valid.json()["onboarding_complete"] is True
+
+
+@pytest.mark.asyncio
+async def test_patch_profile_settings_are_partial_and_do_not_erase_identity() -> None:
+    app, _provider = _app()
+    async with LifespanManager(app):
+        await _request(
+            app,
+            "PATCH",
+            "/api/v1/me",
+            token="valid-token",
+            json={"name": "Nikhil", "preferred_language": "hi"},
+        )
+        settings = await _request(
+            app,
+            "PATCH",
+            "/api/v1/me",
+            token="valid-token",
+            json={"area_unit": "hectare", "notifications_enabled": True},
+        )
+
+    assert settings.status_code == 200
+    assert settings.json()["name"] == "Nikhil"
+    assert settings.json()["preferred_language"] == "hi"
+    assert settings.json()["area_unit"] == "hectare"
+    assert settings.json()["notifications_enabled"] is True
+    assert settings.json()["onboarding_complete"] is True
 
 
 def _app() -> tuple[FastAPI, FakeAuthProvider]:

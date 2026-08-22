@@ -6,11 +6,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:krishisathi/core/config/app_config.dart';
 import 'package:krishisathi/core/localization/app_strings.dart';
+import 'package:krishisathi/core/models/app_models.dart';
+import 'package:krishisathi/core/permissions/app_permission_service.dart';
 import 'package:krishisathi/core/theme/app_theme.dart';
 import 'package:krishisathi/core/ui/crop_visuals.dart';
 import 'package:krishisathi/features/farm/presentation/farm_screens.dart';
 import 'package:krishisathi/features/farm/presentation/plot_history_screen.dart';
 import 'package:krishisathi/features/home/presentation/weather_screen.dart';
+import 'package:krishisathi/features/onboarding/presentation/onboarding_screens.dart';
+import 'package:krishisathi/features/profile/presentation/profile_screens.dart';
 import 'package:krishisathi/features/shared/presentation/app_controller.dart';
 import 'package:provider/provider.dart';
 
@@ -91,6 +95,118 @@ void main() {
     await controller.setPreferredAreaUnit('hectare');
     expect(controller.formatArea(2.47105381, 'acre'), '1.0 hectare');
     expect(controller.preferredAreaUnit, 'hectare');
+  });
+
+  test('plot settings can clear optional field details', () async {
+    final controller = await createTestController();
+    seedTestFarmData(controller);
+    final plot = controller.plotById('plot-1')!;
+
+    await controller.updatePlot(
+      plotId: plot.id,
+      name: plot.name,
+      location: LocationPoint(
+        latitude: plot.latitude,
+        longitude: plot.longitude,
+        label: plot.locationLabel,
+      ),
+      soilNotes: '',
+      irrigationDetails: '',
+    );
+
+    final updated = controller.plotById('plot-1')!;
+    expect(updated.area, isNull);
+    expect(updated.areaUnit, isNull);
+    expect(updated.soilType, isNull);
+    expect(updated.irrigation, isNull);
+  });
+
+  testWidgets('plot pincode search always gives visible feedback', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(430, 1100);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final controller = await createTestController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _screen(controller, const AddPlotScreen(farmId: 'farm-1')),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const ValueKey('plot-location-search')),
+      '560088',
+    );
+    await tester.tap(find.byTooltip('Search location'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.byKey(const ValueKey('plot-location-empty')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('profile settings exposes permissions without a privacy page', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(430, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final controller = await createTestController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_screen(controller, const ProfileScreen()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Useful, only when you allow it'), findsOneWidget);
+    expect(find.text('Privacy'), findsNothing);
+    expect(find.text('Version 1.0.1'), findsOneWidget);
+  });
+
+  testWidgets('blank onboarding name stays on the profile step', (
+    tester,
+  ) async {
+    final controller = await createTestController(farmerName: '');
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _screen(controller, const ProfileSetupScreen(preview: false)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Continue'));
+    await tester.pump();
+
+    expect(
+      find.text('Check the highlighted information and try again.'),
+      findsOneWidget,
+    );
+    expect(find.byType(ProfileSetupScreen), findsOneWidget);
+  });
+
+  testWidgets('weather explains permanently blocked location permission', (
+    tester,
+  ) async {
+    final controller = await createTestController(
+      permissionService: const TestPermissionService(
+        response: AppPermissionState.permanentlyDenied,
+      ),
+    );
+    addTearDown(controller.dispose);
+    controller
+      ..locationEnabled = false
+      ..locationPermission = AppPermissionState.permanentlyDenied;
+
+    await tester.pumpWidget(_screen(controller, const WeatherScreen()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Turn on location for weather').last);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('Permission blocked'), findsOneWidget);
+    expect(find.text('Open Settings'), findsOneWidget);
   });
 
   test(

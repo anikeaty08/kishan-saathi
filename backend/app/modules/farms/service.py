@@ -1,6 +1,6 @@
 """Business rules for farms, plots, crops, and manual activities."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from sqlalchemy.exc import IntegrityError
@@ -168,7 +168,8 @@ class FarmService:
         crop = await self._crop(farmer_id, crop_id, for_update=True)
         if crop.cycle_ended_on is not None:
             raise ApplicationError(code="CROP_CYCLE_ALREADY_CLOSED", status_code=409)
-        if data.ended_on < crop.cycle_started_on or data.ended_on > datetime.now(tz=UTC).date():
+        farmer_today = datetime.now(tz=timezone(timedelta(hours=5, minutes=30))).date()
+        if data.ended_on < crop.cycle_started_on or data.ended_on > farmer_today:
             raise ApplicationError(code="CROP_CYCLE_END_DATE_INVALID", status_code=422)
         crop.cycle_ended_on = data.ended_on
         self.repository.add(

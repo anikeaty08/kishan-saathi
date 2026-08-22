@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -18,11 +20,26 @@ class KrishiSathiApp extends StatefulWidget {
   State<KrishiSathiApp> createState() => _KrishiSathiAppState();
 }
 
-class _KrishiSathiAppState extends State<KrishiSathiApp> {
+class _KrishiSathiAppState extends State<KrishiSathiApp>
+    with WidgetsBindingObserver {
   late final router = createAppRouter(widget.controller);
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(widget.controller.refreshPermissionStates());
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     router.dispose();
     super.dispose();
   }

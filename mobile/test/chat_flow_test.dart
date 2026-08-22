@@ -11,6 +11,24 @@ import 'package:provider/provider.dart';
 import 'support/test_controller.dart';
 
 void main() {
+  testWidgets('Saathi home suggestions keep readable light-theme contrast', (
+    tester,
+  ) async {
+    final controller = await createTestController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_screen(controller, const SaathiScreen()));
+    await tester.pumpAndSettle();
+
+    const prompt = 'What should I do before rain?';
+    final surface = tester.widget<Material>(
+      find.byKey(const ValueKey('saathi-home-prompt-$prompt')),
+    );
+    final label = tester.widget<Text>(find.text(prompt));
+    expect(surface.color, const Color(0xFFE7F0E5));
+    expect(label.style?.color, AppColors.ink);
+  });
+
   testWidgets('new chat keeps the selected farm visible', (tester) async {
     final controller = await createTestController();
     addTearDown(controller.dispose);
@@ -64,6 +82,12 @@ void main() {
     );
 
     const starter = 'Help me think through a crop problem';
+    final surface = tester.widget<Material>(
+      find.byKey(const ValueKey('general-chat-prompt-$starter')),
+    );
+    final label = tester.widget<Text>(find.text(starter));
+    expect(surface.color, const Color(0xFFE7F0E5));
+    expect(label.style?.color, AppColors.ink);
     await tester.tap(find.text(starter));
     await tester.pump();
     final composer = tester.widget<TextField>(
@@ -204,6 +228,11 @@ void main() {
     expect(find.text('Why this matters'), findsOneWidget);
     expect(find.text('General precautions'), findsOneWidget);
     expect(find.text('Can it spread?'), findsOneWidget);
+    final followUp = tester.widget<ActionChip>(
+      find.byKey(const ValueKey('follow-up-question-Can it spread?')),
+    );
+    expect(followUp.backgroundColor, const Color(0xFFE7F0E5));
+    expect(followUp.labelStyle?.color, AppColors.ink);
     expect(find.byTooltip('Copy response'), findsOneWidget);
     expect(find.text('Read aloud'), findsOneWidget);
     expect(find.byKey(const ValueKey('chat-composer')), findsOneWidget);

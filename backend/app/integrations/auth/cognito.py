@@ -60,6 +60,7 @@ class CognitoAuthProvider:
                 signing_key,
                 algorithms=["RS256"],
                 issuer=self._issuer,
+                leeway=10,
                 options={
                     "verify_aud": False,
                     "require": ["sub", "iss", "exp", "token_use", "client_id"],

@@ -1,6 +1,6 @@
 import 'package:permission_handler/permission_handler.dart';
 
-enum AppPermissionKind { location, camera, notifications }
+enum AppPermissionKind { location, camera, microphone, notifications }
 
 enum AppPermissionState {
   granted,
@@ -41,6 +41,7 @@ class DeviceAppPermissionService implements AppPermissionService {
   Permission _permission(AppPermissionKind kind) => switch (kind) {
     AppPermissionKind.location => Permission.locationWhenInUse,
     AppPermissionKind.camera => Permission.camera,
+    AppPermissionKind.microphone => Permission.microphone,
     AppPermissionKind.notifications => Permission.notification,
   };
 

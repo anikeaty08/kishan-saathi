@@ -1,4 +1,4 @@
-"""Transaction-isolated, backend-owned plot forecast tool."""
+"""Transaction-isolated, backend-owned plot weather tools."""
 
 from typing import Protocol
 from uuid import UUID

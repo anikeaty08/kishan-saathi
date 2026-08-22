@@ -1,6 +1,8 @@
 """Task-policy based model routing without feature-specific condition chains."""
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from typing import Any
 from uuid import UUID
 
 from app.core.config import Settings
@@ -38,6 +40,13 @@ class LLMRouter:
 
     async def respond(self, request: LLMRequest) -> LLMResult:
         return await self._provider.respond(request, model=self._policies[request.task].model)
+
+    async def respond_stream(self, request: LLMRequest) -> AsyncIterator[dict[str, Any]]:
+        async for chunk in self._provider.respond_stream(
+            request,
+            model=self._policies[request.task].model,
+        ):
+            yield chunk
 
     async def extract_memories(self, request: MemoryExtractionRequest) -> MemoryExtraction:
         return await self._provider.extract_memories(

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import '../../../core/models/app_models.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/network/krishi_api.dart';
@@ -14,6 +16,20 @@ class CreateChatCommand {
   final String? farmId;
   final String? plotId;
   final String? diagnosisCaseId;
+}
+
+class ChatSendResult {
+  const ChatSendResult({
+    required this.userMessage,
+    required this.assistantMessage,
+    required this.followUpQuestions,
+    this.reminderProposal,
+  });
+
+  final ChatMessageModel userMessage;
+  final ChatMessageModel assistantMessage;
+  final List<String> followUpQuestions;
+  final ReminderProposalModel? reminderProposal;
 }
 
 class ChatRepository {
@@ -86,7 +102,7 @@ class ChatRepository {
     );
   }
 
-  Future<ChatTurnModel> enqueueMessage(
+  Future<ChatSendResult> sendMessage(
     String id,
     String content, {
     required String idempotencyKey,
@@ -94,25 +110,54 @@ class ChatRepository {
     final payload = await _api.sendChatMessage(id, {
       'content': content.trim(),
     }, idempotencyKey: idempotencyKey);
-    return _turn(_map(payload, contract: 'chat turn'));
+    return _sendResult(_map(payload, contract: 'chat send'));
   }
 
-  Future<List<ChatTurnModel>> recentTurns(String id) async {
-    final payload = await _api.listChatTurns(id, activeOnly: false);
-    return _list(
-      payload,
-      contract: 'chat turns',
-    ).map(_turn).toList(growable: false);
-  }
-
-  Future<ChatTurnModel> getTurn(String chatId, String turnId) async {
-    final payload = await _api.getChatTurn(chatId, turnId);
-    return _turn(_map(payload, contract: 'chat turn'));
-  }
-
-  Future<ChatTurnModel> retryTurn(String chatId, String turnId) async {
-    final payload = await _api.retryChatTurn(chatId, turnId);
-    return _turn(_map(payload, contract: 'chat turn'));
+  Future<ChatSendResult> streamMessage(
+    String id,
+    String content, {
+    required String idempotencyKey,
+    required void Function(String delta) onDelta,
+  }) async {
+    final lines = await _api.streamChatMessage(id, {
+      'content': content.trim(),
+    }, idempotencyKey: idempotencyKey);
+    ChatSendResult? completed;
+    try {
+      await for (final line in lines) {
+        if (line.trim().isEmpty) continue;
+        final event = _map(jsonDecode(line), contract: 'chat stream event');
+        switch (event['event']) {
+          case 'token':
+            final delta = event['data'];
+            if (delta is String && delta.isNotEmpty) onDelta(delta);
+          case 'done':
+            completed = _sendResult(
+              _map(event['result'], contract: 'completed chat stream'),
+            );
+          case 'error':
+            final code = event['error_code'] as String? ?? 'CHAT_STREAM_FAILED';
+            throw ApiException(code: code, message: _streamErrorMessage(code));
+        }
+      }
+    } on FormatException {
+      throw const ApiException(
+        code: 'INVALID_RESPONSE',
+        message: 'The chat response stream could not be read',
+      );
+    } on TypeError {
+      throw const ApiException(
+        code: 'INVALID_RESPONSE',
+        message: 'The chat response stream was malformed',
+      );
+    }
+    if (completed == null) {
+      throw const ApiException(
+        code: 'CHAT_STREAM_INCOMPLETE',
+        message: 'The response ended before the message was saved',
+      );
+    }
+    return completed;
   }
 
   Future<ChatThreadModel> updateChat(
@@ -179,33 +224,19 @@ class ChatRepository {
     );
   }
 
-  ChatTurnModel _turn(Map<String, dynamic> row) {
-    final result = row['result'];
-    final messages = <ChatMessageModel>[];
-    if (result is Map<String, dynamic>) {
-      if (result['user_message'] case final Map<String, dynamic> message) {
-        messages.add(_message(message));
-      }
-      if (result['assistant_message'] case final Map<String, dynamic> message) {
-        messages.add(_message(message));
-      }
-    }
-    return ChatTurnModel(
-      id: _requiredString(row, 'id'),
-      chatId: _requiredString(row, 'chat_id'),
-      idempotencyKey: _requiredString(row, 'idempotency_key'),
-      content: _requiredString(row, 'content'),
-      status: _requiredString(row, 'status'),
-      createdAt: _requiredDateTime(row, 'created_at'),
-      queuePosition: (row['queue_position'] as num?)?.toInt(),
-      errorCode: row['error_code'] as String?,
-      messages: messages,
-      reminderProposal: result is Map<String, dynamic>
-          ? switch (result['reminder_proposal']) {
-              final Map<String, dynamic> value => _proposal(value),
-              _ => null,
-            }
-          : null,
+  ChatSendResult _sendResult(Map<String, dynamic> row) {
+    return ChatSendResult(
+      userMessage: _message(
+        _map(row['user_message'], contract: 'sent user message'),
+      ),
+      assistantMessage: _message(
+        _map(row['assistant_message'], contract: 'sent assistant message'),
+      ),
+      followUpQuestions: _strings(row['follow_up_questions']),
+      reminderProposal: switch (row['reminder_proposal']) {
+        final Map<String, dynamic> value => _proposal(value),
+        _ => null,
+      },
     );
   }
 
@@ -250,6 +281,14 @@ class ChatRepository {
     );
   }
 }
+
+String _streamErrorMessage(String code) => switch (code) {
+  'CHAT_ARCHIVED' => 'Restore this conversation before sending a message',
+  'IDEMPOTENCY_KEY_REUSED' => 'This message could not be retried safely',
+  'LLM_TEMPORARILY_UNAVAILABLE' => 'Saathi is temporarily unavailable',
+  'LLM_UNSAFE_OUTPUT_BLOCKED' => 'The response was blocked for safety',
+  _ => 'The live response could not be completed',
+};
 
 Map<String, dynamic> _map(Object? value, {required String contract}) {
   if (value is Map<String, dynamic>) return value;

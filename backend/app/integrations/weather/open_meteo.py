@@ -36,7 +36,14 @@ class OpenMeteoForecastProvider:
                 },
             )
             response.raise_for_status()
-            payload: dict[str, Any] = response.json()
+            if not response.content:
+                raise ApplicationError(code="FORECAST_WEATHER_UNAVAILABLE", status_code=503)
+            try:
+                payload: dict[str, Any] = response.json()
+            except ValueError as exc:
+                raise ApplicationError(
+                    code="FORECAST_WEATHER_INVALID_RESPONSE", status_code=502
+                ) from exc
             daily = payload["daily"]
             days = [
                 ForecastDay(

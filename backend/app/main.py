@@ -35,7 +35,6 @@ from app.integrations.memory.provider import MemoryProvider
 from app.integrations.progression.provider import ProgressionProvider
 from app.integrations.storage.provider import ObjectStorageProvider
 from app.integrations.weather.provider import CurrentWeatherProvider, ForecastWeatherProvider
-from app.modules.chats.worker import ChatTurnWorker
 from app.modules.memories.worker import MemoryCaptureWorker
 from app.modules.reports.worker import ReportRetentionWorker
 from app.modules.storage_cleanup.worker import ObjectCleanupWorker
@@ -106,14 +105,6 @@ def create_app(
         llm_provider=resolved_llm_provider,
         memory_provider=resolved_memory_provider,
     )
-    chat_turn_worker = ChatTurnWorker(
-        settings=resolved_settings,
-        database=resolved_database,
-        llm_provider=resolved_llm_provider,
-        memory_provider=resolved_memory_provider,
-        current_weather_provider=resolved_current_weather,
-        forecast_weather_provider=resolved_forecast_weather,
-    )
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -122,11 +113,9 @@ def create_app(
         await cleanup_worker.start()
         await report_retention_worker.start()
         await memory_capture_worker.start()
-        await chat_turn_worker.start()
         try:
             yield
         finally:
-            await chat_turn_worker.stop()
             await memory_capture_worker.stop()
             await report_retention_worker.stop()
             await cleanup_worker.stop()

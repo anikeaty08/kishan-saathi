@@ -8,6 +8,7 @@ import '../../../core/localization/app_language.dart';
 import '../../../core/localization/app_strings.dart';
 import '../../../core/models/app_models.dart';
 import '../../../core/network/api_exception.dart';
+import '../../../core/permissions/app_permission_service.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/ui/app_ui.dart';
 import '../../shared/presentation/app_controller.dart';
@@ -118,7 +119,9 @@ class ProfileScreen extends StatelessWidget {
                                   const SizedBox(height: 2),
                                 ],
                                 Text(
-                                  'Private farmer account',
+                                  controller.farmerEmail.isNotEmpty
+                                      ? controller.farmerEmail
+                                      : 'Private farmer account',
                                   style: Theme.of(context).textTheme.bodySmall
                                       ?.copyWith(
                                         color: Colors.white.withValues(
@@ -147,7 +150,7 @@ class ProfileScreen extends StatelessWidget {
               ),
               const SizedBox(height: 50),
               _SettingsSection(
-                title: 'Preferences',
+                title: context.tr('preferences'),
                 children: [
                   _SettingsTile(
                     icon: LucideIcons.languages,
@@ -158,64 +161,62 @@ class ProfileScreen extends StatelessWidget {
                   _SettingsTile(
                     icon: LucideIcons.bell,
                     title: context.tr('notifications'),
-                    subtitle:
-                        controller.farmReminderNotificationsEnabled ||
-                            controller.weatherAlertNotificationsEnabled
-                        ? 'Enabled'
-                        : 'Disabled',
+                    subtitle: context.tr('notificationPermissionBody'),
                     onTap: () => context.push('/settings/notifications'),
+                  ),
+                  _SettingsTile(
+                    icon: LucideIcons.shieldCheck,
+                    title: context.tr('permissionsTitle'),
+                    subtitle: context.tr('devicePermissionMatters'),
+                    onTap: () => context.push('/settings/permissions'),
                   ),
 
                   _SettingsTile(
                     icon: LucideIcons.sunMoon,
                     title: context.tr('appearance'),
                     subtitle: switch (controller.themeMode) {
-                      ThemeMode.light => 'Light',
-                      ThemeMode.dark => 'Dark',
+                      ThemeMode.light => context.tr('lightTheme'),
+                      ThemeMode.dark => context.tr('darkTheme'),
                       _ => context.tr('systemTheme'),
                     },
                     onTap: () => _showThemeSheet(context, controller),
                   ),
                   _SettingsTile(
                     icon: LucideIcons.ruler,
-                    title: 'Area measurements',
+                    title: context.tr('areaMeasurements'),
                     subtitle: controller.preferredAreaUnit == 'hectare'
-                        ? 'Hectares'
-                        : 'Acres',
+                        ? context.tr('hectares')
+                        : context.tr('acres'),
                     onTap: () => _showAreaUnitSheet(context, controller),
                   ),
                 ],
               ),
               _SettingsSection(
-                title: 'Data and trust',
+                title: context.tr('dataAndTrust'),
                 children: [
-                  _SettingsTile(
-                    icon: LucideIcons.shieldCheck,
-                    title: context.tr('privacy'),
-                    subtitle: 'Sharing, reports and pending deletion',
-                    onTap: () => context.push('/settings/privacy'),
-                  ),
                   _SettingsTile(
                     icon: LucideIcons.brain,
                     title: context.tr('memory'),
-                    subtitle: '${controller.memories.length} saved facts',
+                    subtitle: context.tr('savedFactsCount', {
+                      'count': controller.memories.length,
+                    }),
                     onTap: () => context.push('/settings/memory'),
                   ),
                 ],
               ),
               _SettingsSection(
-                title: 'Support',
+                title: context.tr('support'),
                 children: [
                   _SettingsTile(
                     icon: LucideIcons.circleHelp,
                     title: context.tr('help'),
-                    subtitle: 'Guides, contact and troubleshooting',
+                    subtitle: context.tr('supportBody'),
                     onTap: () => context.push('/help'),
                   ),
                   _SettingsTile(
                     icon: LucideIcons.info,
                     title: context.tr('about'),
-                    subtitle: 'Version 1.0.0',
+                    subtitle: context.tr('versionValue', {'version': '1.0.1'}),
                     onTap: () => context.push('/about'),
                   ),
                 ],
@@ -248,6 +249,7 @@ class ProfileScreen extends StatelessWidget {
           controller: text,
           autofocus: true,
           textCapitalization: TextCapitalization.words,
+          inputFormatters: [LengthLimitingTextInputFormatter(100)],
           decoration: InputDecoration(labelText: context.tr('nameHint')),
         ),
         actions: [
@@ -257,8 +259,17 @@ class ProfileScreen extends StatelessWidget {
           ),
           FilledButton(
             onPressed: () async {
-              await controller.setFarmerName(text.text);
-              if (dialogContext.mounted) Navigator.pop(dialogContext);
+              try {
+                await controller.setFarmerName(text.text);
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+              } on ApiException catch (error) {
+                if (dialogContext.mounted) {
+                  showAppSnackBar(
+                    dialogContext,
+                    dialogContext.localizedError(error),
+                  );
+                }
+              }
             },
             child: Text(context.tr('save')),
           ),
@@ -272,9 +283,7 @@ class ProfileScreen extends StatelessWidget {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text(context.tr('signOut')),
-        content: const Text(
-          'You can sign in again to restore private server data. Local preview data will reset.',
-        ),
+        content: Text(context.tr('signOutBody')),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
@@ -316,15 +325,15 @@ class ProfileScreen extends StatelessWidget {
                     icon: const Icon(LucideIcons.monitorSmartphone),
                     label: Text(context.tr('systemTheme')),
                   ),
-                  const ButtonSegment(
+                  ButtonSegment(
                     value: ThemeMode.light,
-                    icon: Icon(LucideIcons.sun),
-                    label: Text('Light'),
+                    icon: const Icon(LucideIcons.sun),
+                    label: Text(context.tr('lightTheme')),
                   ),
-                  const ButtonSegment(
+                  ButtonSegment(
                     value: ThemeMode.dark,
-                    icon: Icon(LucideIcons.moon),
-                    label: Text('Dark'),
+                    icon: const Icon(LucideIcons.moon),
+                    label: Text(context.tr('darkTheme')),
                   ),
                 ],
                 selected: {controller.themeMode},
@@ -352,33 +361,39 @@ class ProfileScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Area measurements',
+                context.tr('areaMeasurements'),
                 style: Theme.of(context).textTheme.headlineMedium,
               ),
               const SizedBox(height: 8),
               Text(
-                'Existing plot values are converted for display. New plot forms start with this unit.',
+                context.tr('areaMeasurementsBody'),
                 style: Theme.of(context).textTheme.bodyMedium
                     ?.copyWith(color: AppColors.mutedInk),
               ),
               const SizedBox(height: 18),
               SegmentedButton<String>(
-                segments: const [
+                segments: [
                   ButtonSegment(
                     value: 'acre',
-                    icon: Icon(LucideIcons.ruler),
-                    label: Text('Acres'),
+                    icon: const Icon(LucideIcons.ruler),
+                    label: Text(context.tr('acres')),
                   ),
                   ButtonSegment(
                     value: 'hectare',
-                    icon: Icon(LucideIcons.map),
-                    label: Text('Hectares'),
+                    icon: const Icon(LucideIcons.map),
+                    label: Text(context.tr('hectares')),
                   ),
                 ],
                 selected: {controller.preferredAreaUnit},
                 onSelectionChanged: (value) async {
-                  await controller.setPreferredAreaUnit(value.first);
-                  if (context.mounted) Navigator.pop(context);
+                  try {
+                    await controller.setPreferredAreaUnit(value.first);
+                    if (context.mounted) Navigator.pop(context);
+                  } on ApiException catch (error) {
+                    if (context.mounted) {
+                      showAppSnackBar(context, context.localizedError(error));
+                    }
+                  }
                 },
               ),
             ],
@@ -584,19 +599,26 @@ class NotificationSettingsScreen extends StatelessWidget {
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 16,
                       ),
-                      title: const Text('Farm reminders'),
-                      subtitle: const Text(
-                        'Accepted tasks, due times and recurring work',
-                      ),
+                      title: Text(context.tr('farmReminders')),
+                      subtitle: Text(context.tr('farmRemindersBody')),
                       value: controller.farmReminderNotificationsEnabled,
                       onChanged: (value) async {
-                        final status = await controller
-                            .setFarmReminderNotifications(value);
-                        if (context.mounted && value && !status.isAllowed) {
-                          showAppSnackBar(
-                            context,
-                            'Notification permission was not granted by this device.',
-                          );
+                        try {
+                          final status = await controller
+                              .setFarmReminderNotifications(value);
+                          if (context.mounted && value && !status.isAllowed) {
+                            showAppSnackBar(
+                              context,
+                              context.tr('error.permissionDenied'),
+                            );
+                          }
+                        } on ApiException catch (error) {
+                          if (context.mounted) {
+                            showAppSnackBar(
+                              context,
+                              context.localizedError(error),
+                            );
+                          }
                         }
                       },
                     ),
@@ -605,19 +627,26 @@ class NotificationSettingsScreen extends StatelessWidget {
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 16,
                       ),
-                      title: const Text('Weather alerts'),
-                      subtitle: const Text(
-                        'Important rain, heat and wind changes',
-                      ),
+                      title: Text(context.tr('weatherAlerts')),
+                      subtitle: Text(context.tr('weatherAlertsBody')),
                       value: controller.weatherAlertNotificationsEnabled,
                       onChanged: (value) async {
-                        final status = await controller
-                            .setWeatherAlertNotifications(value);
-                        if (context.mounted && value && !status.isAllowed) {
-                          showAppSnackBar(
-                            context,
-                            'Notification permission was not granted by this device.',
-                          );
+                        try {
+                          final status = await controller
+                              .setWeatherAlertNotifications(value);
+                          if (context.mounted && value && !status.isAllowed) {
+                            showAppSnackBar(
+                              context,
+                              context.tr('error.permissionDenied'),
+                            );
+                          }
+                        } on ApiException catch (error) {
+                          if (context.mounted) {
+                            showAppSnackBar(
+                              context,
+                              context.localizedError(error),
+                            );
+                          }
                         }
                       },
                     ),
@@ -625,9 +654,9 @@ class NotificationSettingsScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 24),
-              const InlineNotice(
-                title: 'Device permission matters',
-                message: 'These preferences do not override notification permission in Android or iPhone Settings.',
+              InlineNotice(
+                title: context.tr('devicePermissionMatters'),
+                message: context.tr('notificationPermissionBody'),
                 icon: LucideIcons.smartphone,
               ),
             ],
@@ -638,113 +667,145 @@ class NotificationSettingsScreen extends StatelessWidget {
   }
 }
 
-class PrivacyScreen extends StatelessWidget {
-  const PrivacyScreen({super.key});
+class PermissionSettingsScreen extends StatelessWidget {
+  const PermissionSettingsScreen({super.key});
+
+  Future<void> _handleResult(
+    BuildContext context,
+    AppPermissionState state,
+  ) async {
+    if (state.isAllowed || !context.mounted) return;
+    if (!state.requiresSettings) {
+      showAppSnackBar(context, context.tr('error.permissionDenied'));
+      return;
+    }
+    final shouldOpen = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(context.tr('permissionBlocked')),
+        content: Text(context.tr('permissionBlockedBody')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(context.tr('notNow')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(context.tr('openSettings')),
+          ),
+        ],
+      ),
+    );
+    if ((shouldOpen ?? false) && context.mounted) {
+      await context.read<AppController>().openAppPermissionSettings();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
-    final activeReports = controller.diagnosisReports
-        .where((report) => report.isActive)
-        .toList();
     return Scaffold(
-      appBar: AppBar(title: Text(context.tr('privacy'))),
+      appBar: AppBar(title: Text(context.tr('permissionsTitle'))),
       body: SafeArea(
         top: false,
         child: AppContent(
-          maxWidth: 720,
+          maxWidth: 680,
           child: ListView(
-            padding: const EdgeInsets.only(top: 8, bottom: 36),
+            padding: const EdgeInsets.fromLTRB(16, 24, 16, 32),
             children: [
-              Text(
-                'Your data stays under your control',
-                style: Theme.of(context).textTheme.headlineMedium,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Farm records, images and conversations are private to your authenticated account. Sharing is explicit and temporary.',
-                style: Theme.of(context).textTheme.bodyLarge
-                    ?.copyWith(color: AppColors.mutedInk),
+              Material(
+                clipBehavior: Clip.antiAlias,
+                color: Theme.of(context).colorScheme.surface,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppRadius.medium),
+                  side: BorderSide(
+                    color: Theme.of(context).colorScheme.outlineVariant
+                        .withValues(alpha: 0.5),
+                  ),
+                ),
+                child: Column(
+                  children: [
+                    SwitchListTile(
+                      secondary: const Icon(LucideIcons.mapPin),
+                      title: Text(context.tr('locationPermission')),
+                      value: controller.locationEnabled,
+                      onChanged: (value) async {
+                        final state = await controller.setLocationEnabled(
+                          value,
+                        );
+                        if (value && context.mounted) {
+                          await _handleResult(context, state);
+                        }
+                      },
+                    ),
+                    const Divider(height: 1, indent: 56),
+                    SwitchListTile(
+                      secondary: const Icon(LucideIcons.bell),
+                      title: Text(context.tr('notificationPermission')),
+                      value: controller.notificationsEnabled,
+                      onChanged: (value) async {
+                        try {
+                          final state = await controller.setNotifications(
+                            value,
+                          );
+                          if (value && context.mounted) {
+                            await _handleResult(context, state);
+                          }
+                        } on ApiException catch (error) {
+                          if (context.mounted) {
+                            showAppSnackBar(
+                              context,
+                              context.localizedError(error),
+                            );
+                          }
+                        }
+                      },
+                    ),
+                    const Divider(height: 1, indent: 56),
+                    SwitchListTile(
+                      secondary: const Icon(LucideIcons.camera),
+                      title: Text(context.tr('cameraPermission')),
+                      value: controller.cameraEnabled,
+                      onChanged: (value) async {
+                        final state = await controller.setCameraEnabled(value);
+                        if (value && context.mounted) {
+                          await _handleResult(context, state);
+                        }
+                      },
+                    ),
+                    const Divider(height: 1, indent: 56),
+                    ListTile(
+                      leading: const Icon(LucideIcons.mic),
+                      title: Text(context.tr('voiceWithSaathi')),
+                      subtitle: Text(
+                        controller.microphonePermission.isAllowed
+                            ? context.tr('voiceConversationWithSaathi')
+                            : context.tr('error.VOICE_PERMISSION_DENIED'),
+                      ),
+                      trailing: Icon(
+                        controller.microphonePermission.isAllowed
+                            ? LucideIcons.circleCheck
+                            : LucideIcons.chevronRight,
+                        color: controller.microphonePermission.isAllowed
+                            ? AppColors.leaf
+                            : null,
+                      ),
+                      onTap: () async {
+                        final state = await controller
+                            .requestMicrophonePermission();
+                        if (context.mounted) {
+                          await _handleResult(context, state);
+                        }
+                      },
+                    ),
+                  ],
+                ),
               ),
               const SizedBox(height: 24),
-              const _PrivacyRow(
-                icon: LucideIcons.image,
-                title: 'Private images',
-                body:
-                    'Diagnosis and activity images require your access token.',
-              ),
-              const _PrivacyRow(
-                icon: LucideIcons.link,
-                title: 'Approved reports',
-                body: 'You choose every field and image before a temporary link is created.',
-              ),
-              const _PrivacyRow(
-                icon: LucideIcons.rotateCcwKey,
-                title: 'Revocable access',
-                body: 'Shared diagnosis reports can be revoked immediately.',
-              ),
-              const SizedBox(height: 26),
-              SectionHeader(title: 'Active shared reports'),
-              const SizedBox(height: 10),
-              if (activeReports.isEmpty)
-                Container(
-                  padding: const EdgeInsets.all(32),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surface,
-                    borderRadius: BorderRadius.circular(AppRadius.medium),
-                    border: Border.all(
-                      color: Theme.of(context).colorScheme.outlineVariant
-                          .withValues(alpha: 0.5),
-                    ),
-                  ),
-                  child: const AppStateView(
-                    kind: AppStateKind.empty,
-                    title: 'No active links',
-                    message: 'Reports you approve will appear here with their expiry and revoke action.',
-                    compact: true,
-                  ),
-                )
-              else
-                ...activeReports.map(
-                  (report) => Card(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    child: ListTile(
-                      leading: const Icon(
-                        LucideIcons.fileCheck2,
-                        color: AppColors.forest,
-                      ),
-                      title: Text(report.title),
-                      subtitle: Text(
-                        context.tr('date.expires', {
-                          'date': context.strings.formatDateTime(
-                            report.expiresAt.toLocal(),
-                          ),
-                        }),
-                      ),
-                      trailing: TextButton(
-                        onPressed: controller.busy
-                            ? null
-                            : () => _revoke(context, report.id),
-                        child: const Text('Revoke'),
-                      ),
-                    ),
-                  ),
-                ),
-              const SizedBox(height: 22),
-              SectionHeader(title: 'Pending deletion'),
-              const SizedBox(height: 10),
               InlineNotice(
-                title: 'Object cleanup is healthy',
-                message: 'Private image cleanup is retried automatically. You can also request a retry now.',
-                icon: LucideIcons.circleCheck,
-                color: AppColors.leaf,
-                action: TextButton.icon(
-                  onPressed: controller.busy
-                      ? null
-                      : () => _retryCleanup(context),
-                  icon: const Icon(LucideIcons.refreshCw, size: 17),
-                  label: const Text('Retry pending deletion'),
-                ),
+                title: context.tr('devicePermissionMatters'),
+                message: context.tr('permissionBlockedBody'),
+                icon: LucideIcons.smartphone,
               ),
             ],
           ),
@@ -752,80 +813,6 @@ class PrivacyScreen extends StatelessWidget {
       ),
     );
   }
-
-  Future<void> _revoke(BuildContext context, String reportId) async {
-    try {
-      await context.read<AppController>().revokeDiagnosisReport(reportId);
-      if (context.mounted) {
-        showAppSnackBar(context, 'Report access revoked.', success: true);
-      }
-    } on ApiException catch (error) {
-      if (context.mounted) {
-        showAppSnackBar(context, context.localizedError(error));
-      }
-    }
-  }
-
-  Future<void> _retryCleanup(BuildContext context) async {
-    try {
-      await context.read<AppController>().retryObjectDeletions();
-      if (context.mounted) {
-        showAppSnackBar(
-          context,
-          'Pending image cleanup retried.',
-          success: true,
-        );
-      }
-    } on ApiException catch (error) {
-      if (context.mounted) {
-        showAppSnackBar(context, context.localizedError(error));
-      }
-    }
-  }
-}
-
-class _PrivacyRow extends StatelessWidget {
-  const _PrivacyRow({
-    required this.icon,
-    required this.title,
-    required this.body,
-  });
-  final IconData icon;
-  final String title;
-  final String body;
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 16),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(
-            color: AppColors.leaf.withValues(alpha: 0.09),
-            borderRadius: BorderRadius.circular(AppRadius.medium),
-          ),
-          child: Icon(icon, color: AppColors.forest, size: 20),
-        ),
-        const SizedBox(width: 13),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: Theme.of(context).textTheme.titleMedium),
-              const SizedBox(height: 3),
-              Text(
-                body,
-                style: Theme.of(context).textTheme.bodyMedium
-                    ?.copyWith(color: AppColors.mutedInk),
-              ),
-            ],
-          ),
-        ),
-      ],
-    ),
-  );
 }
 
 class MemoryScreen extends StatelessWidget {
@@ -843,9 +830,9 @@ class MemoryScreen extends StatelessWidget {
           child: ListView(
             padding: const EdgeInsets.only(top: 8, bottom: 32),
             children: [
-              const InlineNotice(
-                title: 'Only useful facts are saved',
-                message: 'Saathi memory is evidence-based, scoped to a farm or plot, and can be removed at any time.',
+              InlineNotice(
+                title: context.tr('onlyUsefulFactsSaved'),
+                message: context.tr('onlyUsefulFactsSavedBody'),
                 icon: LucideIcons.brain,
                 color: AppColors.leaf,
               ),
@@ -861,10 +848,10 @@ class MemoryScreen extends StatelessWidget {
                           .withValues(alpha: 0.5),
                     ),
                   ),
-                  child: const AppStateView(
+                  child: AppStateView(
                     kind: AppStateKind.empty,
-                    title: 'No saved facts',
-                    message: 'Facts accepted from future conversations will appear here.',
+                    title: context.tr('noSavedFacts'),
+                    message: context.tr('noSavedFactsBody'),
                   ),
                 )
               else
@@ -878,7 +865,9 @@ class MemoryScreen extends StatelessWidget {
                         color: AppColors.forest,
                       ),
                       title: Text(memory.text),
-                      subtitle: Text('${memory.scope} · ${memory.status}'),
+                      subtitle: Text(
+                        '${context.tr(memory.scope)} · ${context.tr(memory.status)}',
+                      ),
                       trailing: IconButton(
                         tooltip: context.tr('delete'),
                         onPressed: () => _confirmDelete(context, memory),
@@ -898,7 +887,7 @@ class MemoryScreen extends StatelessWidget {
     showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Delete this memory?'),
+        title: Text(context.tr('deleteMemoryQuestion')),
         content: Text(memory.text),
         actions: [
           TextButton(
@@ -959,7 +948,7 @@ class RemindersScreen extends StatelessWidget {
             builder: (_) => const _ManualReminderSheet(),
           ),
           icon: const Icon(LucideIcons.plus),
-          label: const Text('Add reminder'),
+          label: Text(context.tr('addReminder')),
         ),
         body: SafeArea(
           top: false,
@@ -998,9 +987,9 @@ class _ReminderList extends StatelessWidget {
                   .withValues(alpha: 0.5),
             ),
           ),
-          child: const AppStateView(
+          child: AppStateView(
             kind: AppStateKind.empty,
-            title: 'No reminders here',
+            title: context.tr('noRemindersHere'),
             message:
                 'Accepted and manually created reminders appear in this list.',
           ),
@@ -1030,22 +1019,25 @@ class _ReminderList extends StatelessWidget {
             ),
             trailing: item.status == ReminderStatus.pending
                 ? PopupMenuButton<String>(
-                    tooltip: 'Reminder actions',
+                    tooltip: context.tr('reminderActions'),
                     onSelected: (action) => _act(context, item, action),
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(value: 'done', child: Text('Mark done')),
+                    itemBuilder: (_) => [
+                      PopupMenuItem(
+                        value: 'done',
+                        child: Text(context.tr('markDone')),
+                      ),
                       PopupMenuItem(
                         value: 'skip',
-                        child: Text('Skip this reminder'),
+                        child: Text(context.tr('skipReminder')),
                       ),
                       PopupMenuItem(
                         value: 'reschedule',
-                        child: Text('Reschedule'),
+                        child: Text(context.tr('reschedule')),
                       ),
                       PopupMenuDivider(),
                       PopupMenuItem(
                         value: 'cancel',
-                        child: Text('Cancel reminder'),
+                        child: Text(context.tr('cancelReminder')),
                       ),
                     ],
                   )
@@ -1085,7 +1077,7 @@ class _ReminderList extends StatelessWidget {
       dueAt = DateTime(date.year, date.month, date.day, time.hour, time.minute);
       if (!dueAt.isAfter(DateTime.now())) {
         if (context.mounted) {
-          showAppSnackBar(context, 'Choose a future reminder time.');
+          showAppSnackBar(context, context.tr('chooseFutureReminderTime'));
         }
         return;
       }
@@ -1163,7 +1155,7 @@ class _ManualReminderSheetState extends State<_ManualReminderSheet> {
   Future<void> _save() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     if (!_dueAt.isAfter(DateTime.now())) {
-      showAppSnackBar(context, 'Choose a future reminder time.');
+      showAppSnackBar(context, context.tr('chooseFutureReminderTime'));
       return;
     }
     setState(() => _saving = true);
@@ -1177,7 +1169,7 @@ class _ManualReminderSheetState extends State<_ManualReminderSheet> {
       );
       if (!mounted) return;
       Navigator.pop(context);
-      showAppSnackBar(context, 'Reminder scheduled.', success: true);
+      showAppSnackBar(context, context.tr('reminderScheduled'), success: true);
     } on ApiException catch (error) {
       if (mounted) showAppSnackBar(context, context.localizedError(error));
     } finally {
@@ -1215,7 +1207,7 @@ class _ManualReminderSheetState extends State<_ManualReminderSheet> {
                 controller: _title,
                 autofocus: true,
                 textCapitalization: TextCapitalization.sentences,
-                decoration: const InputDecoration(labelText: 'Task'),
+                decoration: InputDecoration(labelText: context.tr('task')),
                 validator: (value) => value?.trim().isEmpty ?? true
                     ? 'Enter the task to remember'
                     : null,
@@ -1224,9 +1216,14 @@ class _ManualReminderSheetState extends State<_ManualReminderSheet> {
               DropdownButtonFormField<String?>(
                 initialValue: _plotId,
                 isExpanded: true,
-                decoration: const InputDecoration(labelText: 'Plot (optional)'),
+                decoration: InputDecoration(
+                  labelText: context.tr('plotOptional'),
+                ),
                 items: [
-                  const DropdownMenuItem(value: null, child: Text('No plot')),
+                  DropdownMenuItem(
+                    value: null,
+                    child: Text(context.tr('noPlot')),
+                  ),
                   ...plots.map(
                     (plot) => DropdownMenuItem(
                       value: plot.id,
@@ -1240,7 +1237,7 @@ class _ManualReminderSheetState extends State<_ManualReminderSheet> {
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(LucideIcons.calendarClock),
-                title: const Text('Date and time'),
+                title: Text(context.tr('dateAndTime')),
                 subtitle: Text(context.strings.formatDateTime(_dueAt)),
                 trailing: const Icon(LucideIcons.chevronRight),
                 onTap: _pickDateTime,
@@ -1248,12 +1245,24 @@ class _ManualReminderSheetState extends State<_ManualReminderSheet> {
               const SizedBox(height: 8),
               DropdownButtonFormField<int?>(
                 initialValue: _recurrenceDays,
-                decoration: const InputDecoration(labelText: 'Repeat'),
-                items: const [
-                  DropdownMenuItem(value: null, child: Text('Does not repeat')),
-                  DropdownMenuItem(value: 1, child: Text('Every day')),
-                  DropdownMenuItem(value: 7, child: Text('Every week')),
-                  DropdownMenuItem(value: 30, child: Text('Every 30 days')),
+                decoration: InputDecoration(labelText: context.tr('repeat')),
+                items: [
+                  DropdownMenuItem(
+                    value: null,
+                    child: Text(context.tr('doesNotRepeat')),
+                  ),
+                  DropdownMenuItem(
+                    value: 1,
+                    child: Text(context.tr('everyDay')),
+                  ),
+                  DropdownMenuItem(
+                    value: 7,
+                    child: Text(context.tr('everyWeek')),
+                  ),
+                  DropdownMenuItem(
+                    value: 30,
+                    child: Text(context.tr('every30Days')),
+                  ),
                 ],
                 onChanged: (value) => setState(() => _recurrenceDays = value),
               ),
@@ -1263,8 +1272,8 @@ class _ManualReminderSheetState extends State<_ManualReminderSheet> {
                 minLines: 2,
                 maxLines: 4,
                 textCapitalization: TextCapitalization.sentences,
-                decoration: const InputDecoration(
-                  labelText: 'Notes (optional)',
+                decoration: InputDecoration(
+                  labelText: context.tr('notesOptional'),
                   alignLabelWithHint: true,
                 ),
               ),
@@ -1273,7 +1282,9 @@ class _ManualReminderSheetState extends State<_ManualReminderSheet> {
                 width: double.infinity,
                 child: FilledButton(
                   onPressed: _saving ? null : _save,
-                  child: Text(_saving ? 'Scheduling...' : 'Schedule reminder'),
+                  child: Text(
+                    context.tr(_saving ? 'scheduling' : 'scheduleReminder'),
+                  ),
                 ),
               ),
             ],
@@ -1305,10 +1316,10 @@ class _ProposalList extends StatelessWidget {
                   .withValues(alpha: 0.5),
             ),
           ),
-          child: const AppStateView(
+          child: AppStateView(
             kind: AppStateKind.empty,
-            title: 'No suggestions waiting',
-            message: 'Saathi can suggest a reminder, but it is scheduled only after you accept it.',
+            title: context.tr('noSuggestionsWaiting'),
+            message: context.tr('noSuggestionsWaitingBody'),
           ),
         ),
       );
@@ -1342,13 +1353,13 @@ class _ProposalList extends StatelessWidget {
                     TextButton(
                       onPressed: () =>
                           _decide(context, proposal.id, accepted: false),
-                      child: const Text('Not now'),
+                      child: Text(context.tr('notNow')),
                     ),
                     const SizedBox(width: 8),
                     FilledButton(
                       onPressed: () =>
                           _decide(context, proposal.id, accepted: true),
-                      child: const Text('Schedule'),
+                      child: Text(context.tr('schedule')),
                     ),
                   ],
                 ),
@@ -1373,7 +1384,7 @@ class _ProposalList extends StatelessWidget {
       if (context.mounted) {
         showAppSnackBar(
           context,
-          accepted ? 'Reminder scheduled.' : 'Suggestion declined.',
+          context.tr(accepted ? 'reminderScheduled' : 'suggestionDeclined'),
           success: true,
         );
       }
@@ -1397,31 +1408,31 @@ class HelpScreen extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.only(top: 8),
           children: [
-            const _HelpTile(
+            _HelpTile(
               icon: LucideIcons.scanLine,
-              title: 'Taking a clear leaf photo',
-              body: 'Use daylight, fill the frame and avoid wet leaves.',
+              title: context.tr('helpClearLeafPhoto'),
+              body: context.tr('helpClearLeafPhotoBody'),
             ),
-            const _HelpTile(
+            _HelpTile(
               icon: LucideIcons.map,
-              title: 'Setting up a farm and plot',
-              body: 'A plot needs a location and at least one crop.',
+              title: context.tr('helpFarmPlotSetup'),
+              body: context.tr('helpFarmPlotSetupBody'),
             ),
-            const _HelpTile(
+            _HelpTile(
               icon: LucideIcons.cloudOff,
-              title: 'Using KrishiSathi offline',
-              body: 'Farm records remain readable; scans can be held locally for later.',
+              title: context.tr('helpOfflineUse'),
+              body: context.tr('helpOfflineUseBody'),
             ),
-            const _HelpTile(
+            _HelpTile(
               icon: LucideIcons.shieldCheck,
-              title: 'Privacy and report sharing',
-              body: 'Nothing is shared until you approve specific fields.',
+              title: context.tr('helpPrivacySharing'),
+              body: context.tr('helpPrivacySharingBody'),
             ),
             const SizedBox(height: 20),
             OutlinedButton.icon(
               onPressed: () => _showSupport(context),
               icon: const Icon(LucideIcons.mail),
-              label: const Text('Contact support'),
+              label: Text(context.tr('contactSupport')),
             ),
           ],
         ),
@@ -1445,7 +1456,7 @@ class HelpScreen extends StatelessWidget {
                 style: Theme.of(context).textTheme.headlineMedium,
               ),
               const SizedBox(height: 16),
-              const ListTile(
+              ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: Icon(LucideIcons.mapPin),
                 title: Text('Koramangala, Bengaluru'),
@@ -1455,9 +1466,9 @@ class HelpScreen extends StatelessWidget {
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(LucideIcons.phone),
                 title: const Text('7903422423'),
-                subtitle: const Text('Support contact'),
+                subtitle: Text(context.tr('supportContact')),
                 trailing: IconButton(
-                  tooltip: 'Copy number',
+                  tooltip: context.tr('copyNumber'),
                   onPressed: () async {
                     await Clipboard.setData(
                       const ClipboardData(text: '7903422423'),
@@ -1537,11 +1548,14 @@ class AboutScreen extends StatelessWidget {
             ),
             const SizedBox(height: 28),
             const Divider(),
-            const ListTile(title: Text('Version'), trailing: Text('1.0.0 (1)')),
+            ListTile(
+              title: Text(context.tr('version')),
+              trailing: const Text('1.0.1 (4)'),
+            ),
             const Divider(),
-            const ListTile(
-              title: Text('Application ID'),
-              trailing: Text('com.krishisathi.mobile'),
+            ListTile(
+              title: Text(context.tr('applicationId')),
+              trailing: const Text('com.krishisathi.mobile'),
             ),
           ],
         ),

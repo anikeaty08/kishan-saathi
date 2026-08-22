@@ -125,8 +125,8 @@ class FarmRepository {
     final body = <String, Object?>{
       'farm_id': command.farmId,
       'name': command.name.trim(),
-      'latitude': command.location.latitude,
-      'longitude': command.location.longitude,
+      'latitude': double.parse(command.location.latitude.toStringAsFixed(6)),
+      'longitude': double.parse(command.location.longitude.toStringAsFixed(6)),
       'location_label': command.location.displayLabel,
       if (command.area != null) 'area_value': command.area,
       if (command.areaUnit != null) 'area_unit': command.areaUnit,
@@ -150,14 +150,13 @@ class FarmRepository {
   }) async {
     final payload = await _api.updatePlot(current.id, {
       'name': name.trim(),
-      'latitude': location.latitude,
-      'longitude': location.longitude,
+      'latitude': double.parse(location.latitude.toStringAsFixed(6)),
+      'longitude': double.parse(location.longitude.toStringAsFixed(6)),
       'location_label': location.displayLabel,
-      'area_value': ?area,
-      'area_unit': ?areaUnit,
-      if (_present(soilNotes)) 'soil_notes': soilNotes!.trim(),
-      if (_present(irrigationDetails))
-        'irrigation_details': irrigationDetails!.trim(),
+      'area_value': area,
+      'area_unit': areaUnit,
+      'soil_notes': _nullableText(soilNotes),
+      'irrigation_details': _nullableText(irrigationDetails),
     });
     final updated = _plot(_map(payload, contract: 'plot'));
     return updated.copyWith(activities: current.activities);
@@ -422,6 +421,11 @@ DateTime? _optionalDateTime(Object? value) =>
     value is String ? DateTime.tryParse(value) : null;
 
 bool _present(String? value) => value?.trim().isNotEmpty ?? false;
+
+String? _nullableText(String? value) {
+  final normalized = value?.trim();
+  return normalized == null || normalized.isEmpty ? null : normalized;
+}
 
 String _date(DateTime value) =>
     '${value.year.toString().padLeft(4, '0')}-'

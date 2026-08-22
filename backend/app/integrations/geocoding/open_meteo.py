@@ -8,10 +8,14 @@ from app.core.errors import ApplicationError
 from app.integrations.geocoding.provider import GeocodingResult
 
 
+class _OpenMeteoResult(GeocodingResult):
+    model_config = ConfigDict(extra="ignore")
+
+
 class _GeocodingEnvelope(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    results: list[GeocodingResult] = Field(default_factory=list)
+    results: list[_OpenMeteoResult] = Field(default_factory=list)
 
 
 class OpenMeteoGeocodingProvider:
@@ -31,11 +35,14 @@ class OpenMeteoGeocodingProvider:
                     "count": limit,
                     "language": language,
                     "format": "json",
+                    "countryCode": "IN",
                 },
             )
             response.raise_for_status()
             payload = _GeocodingEnvelope.model_validate(response.json())
-            return tuple(payload.results)
+            return tuple(
+                GeocodingResult.model_validate(result.model_dump()) for result in payload.results
+            )
         except httpx.HTTPStatusError as exc:
             raise ApplicationError(code="GEOCODING_PROVIDER_ERROR", status_code=502) from exc
         except httpx.RequestError as exc:

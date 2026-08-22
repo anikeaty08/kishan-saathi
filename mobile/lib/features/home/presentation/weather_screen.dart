@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:provider/provider.dart';
 
@@ -18,6 +17,8 @@ class WeatherScreen extends StatefulWidget {
 }
 
 class _WeatherScreenState extends State<WeatherScreen> {
+  bool _loading = false;
+
   @override
   void initState() {
     super.initState();
@@ -30,12 +31,58 @@ class _WeatherScreenState extends State<WeatherScreen> {
   }
 
   Future<void> _refresh({bool requestPermission = true}) async {
+    final controller = context.read<AppController>();
+    if (!controller.locationEnabled) {
+      await _enableLocation();
+      return;
+    }
+    if (_loading) return;
+    setState(() => _loading = true);
     try {
-      await context.read<AppController>().refreshCurrentWeather(
+      await controller.refreshCurrentWeather(
         requestPermission: requestPermission,
       );
     } on ApiException catch (error) {
       if (mounted) showAppSnackBar(context, context.localizedError(error));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _enableLocation() async {
+    if (_loading) return;
+    setState(() => _loading = true);
+    final controller = context.read<AppController>();
+    try {
+      await controller.enableLocationAndFetchWeather();
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      if (controller.locationPermission.requiresSettings) {
+        final shouldOpen = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: Text(context.tr('permissionBlocked')),
+            content: Text(context.tr('permissionBlockedBody')),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: Text(context.tr('notNow')),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: Text(context.tr('openSettings')),
+              ),
+            ],
+          ),
+        );
+        if ((shouldOpen ?? false) && mounted) {
+          await controller.openAppPermissionSettings();
+        }
+      } else {
+        showAppSnackBar(context, context.localizedError(error));
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -48,9 +95,14 @@ class _WeatherScreenState extends State<WeatherScreen> {
         title: Text(context.tr('weather')),
         actions: [
           IconButton(
-            tooltip: 'Refresh current weather',
-            onPressed: controller.locationEnabled ? _refresh : null,
-            icon: const Icon(LucideIcons.refreshCw, size: 20),
+            tooltip: context.tr('refreshCurrentWeather'),
+            onPressed: _loading ? null : _refresh,
+            icon: _loading
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(LucideIcons.refreshCw, size: 20),
           ),
         ],
       ),
@@ -76,10 +128,13 @@ class _WeatherScreenState extends State<WeatherScreen> {
                 ),
                 const SizedBox(height: 20),
                 if (!controller.locationEnabled)
-                  _LocationRequired(
-                    onOpenSettings: () {
-                      context.push('/settings/privacy');
-                    },
+                  _LocationRequired(onEnable: _enableLocation)
+                else if (_loading && weather == null)
+                  AppStateView(
+                    kind: AppStateKind.loading,
+                    title: context.tr('weatherNotLoaded'),
+                    message: context.tr('currentLocationWeatherPrivacy'),
+                    compact: true,
                   )
                 else if (weather != null) ...[
                   _WeatherHero(weather: weather),
@@ -90,7 +145,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
                 ] else
                   AppStateView(
                     kind: AppStateKind.empty,
-                    title: 'Weather is not loaded yet',
+                    title: context.tr('weatherNotLoaded'),
                     message:
                         'Load conditions using this phone’s current location.',
                     actionLabel: 'Load weather',
@@ -418,17 +473,17 @@ class _FieldNote extends StatelessWidget {
 }
 
 class _LocationRequired extends StatelessWidget {
-  const _LocationRequired({required this.onOpenSettings});
+  const _LocationRequired({required this.onEnable});
 
-  final VoidCallback onOpenSettings;
+  final VoidCallback onEnable;
 
   @override
   Widget build(BuildContext context) => AppStateView(
     kind: AppStateKind.empty,
-    title: 'Turn on location for weather',
-    message: 'KrishiSathi uses this phone’s current location only when loading weather.',
-    actionLabel: 'Open privacy settings',
-    onAction: onOpenSettings,
+    title: context.tr('turnOnLocationForWeather'),
+    message: context.tr('currentLocationWeatherPrivacy'),
+    actionLabel: context.tr('turnOnLocationForWeather'),
+    onAction: onEnable,
     compact: true,
   );
 }

@@ -5,16 +5,16 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:provider/provider.dart';
 
 import '../../../core/models/app_models.dart';
+import '../../../core/localization/app_strings.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../shared/presentation/app_controller.dart';
 import 'live_voice_session_controller.dart';
-import 'voice_composer_controller.dart';
 
 class LiveVoiceScreen extends StatefulWidget {
-  const LiveVoiceScreen({super.key, required this.chatId, this.voiceFactory});
+  const LiveVoiceScreen({super.key, required this.chatId, this.session});
 
   final String chatId;
-  final VoiceTurnIO Function(AppController app)? voiceFactory;
+  final LiveVoiceSessionController? session;
 
   @override
   State<LiveVoiceScreen> createState() => _LiveVoiceScreenState();
@@ -29,17 +29,16 @@ class _LiveVoiceScreenState extends State<LiveVoiceScreen>
   void initState() {
     super.initState();
     _app = context.read<AppController>();
-    final voice =
-        widget.voiceFactory?.call(_app) ??
-        VoiceComposerController(
+    _session =
+        widget.session ??
+        LiveVoiceSessionController(
+          chatId: widget.chatId,
           transcribe: _app.transcribeChatVoice,
+          sendMessage: _app.sendMessage,
           loadSpeech: _app.loadAssistantSpeech,
+          messages: () => _chat?.messages ?? const [],
         );
-    _session = LiveVoiceSessionController(
-      chatId: widget.chatId,
-      voice: voice,
-      sendMessage: (text) => _app.sendMessage(widget.chatId, text),
-    )..addListener(_refresh);
+    _session.addListener(_refresh);
     WidgetsBinding.instance.addObserver(this);
     _app.addListener(_handleChatUpdate);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -110,8 +109,8 @@ class _LiveVoiceScreenState extends State<LiveVoiceScreen>
   Widget build(BuildContext context) {
     final chat = _chat;
     if (chat == null) {
-      return const Scaffold(
-        body: Center(child: Text('Conversation not found')),
+      return Scaffold(
+        body: Center(child: Text(context.tr('conversationNotFound'))),
       );
     }
     final dark = Theme.of(context).brightness == Brightness.dark;
@@ -127,16 +126,16 @@ class _LiveVoiceScreenState extends State<LiveVoiceScreen>
         appBar: AppBar(
           automaticallyImplyLeading: false,
           leading: IconButton(
-            tooltip: 'End voice conversation',
+            tooltip: context.tr('endVoiceConversation'),
             onPressed: _endAndClose,
             icon: const Icon(LucideIcons.x),
           ),
           title: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Voice with Saathi'),
+              Text(context.tr('voiceWithSaathi')),
               Text(
-                chat.scopeLabel ?? 'This conversation',
+                chat.scopeLabel ?? context.tr('thisConversation'),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
@@ -238,7 +237,9 @@ class _ContextPill extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: AppColors.mineral,
+        color: Theme.of(context).brightness == Brightness.dark
+            ? Theme.of(context).colorScheme.surfaceContainerHigh
+            : AppColors.mineral,
         borderRadius: BorderRadius.circular(999),
       ),
       child: Padding(
@@ -250,7 +251,9 @@ class _ContextPill extends StatelessWidget {
             const SizedBox(width: 8),
             Flexible(
               child: Text(
-                label == null ? 'Conversation context' : 'Using $label',
+                label == null
+                    ? context.tr('conversationContext')
+                    : context.tr('usingContext', {'label': label}),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.labelLarge,
@@ -376,10 +379,14 @@ class _VoiceCaptions extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             if (farmer != null)
-              _Caption(label: 'You', text: farmer!, farmer: true),
+              _Caption(label: context.tr('you'), text: farmer!, farmer: true),
             if (assistant != null) ...[
               const SizedBox(height: 10),
-              _Caption(label: 'Saathi', text: assistant!, farmer: false),
+              _Caption(
+                label: context.tr('saathi'),
+                text: assistant!,
+                farmer: false,
+              ),
             ],
           ],
         ),
@@ -466,7 +473,7 @@ class _VoiceControls extends StatelessWidget {
       children: [
         _RoundControl(
           key: const ValueKey('live-voice-end'),
-          label: 'End',
+          label: context.tr('end'),
           icon: LucideIcons.phoneOff,
           color: AppColors.danger,
           onTap: onEnd,
@@ -475,7 +482,7 @@ class _VoiceControls extends StatelessWidget {
             state == LiveVoiceSessionState.speaking)
           _RoundControl(
             key: const ValueKey('live-voice-pause'),
-            label: 'Pause',
+            label: context.tr('pause'),
             icon: LucideIcons.micOff,
             color: AppColors.soil,
             onTap: onPause,

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:krishisathi/core/network/api_client.dart';
 import 'package:krishisathi/core/network/krishi_api.dart';
@@ -35,18 +37,14 @@ void main() {
     expect(page.nextBeforeSequence, 12);
   });
 
-  test('parses a typed reminder proposal from a completed turn', () async {
+  test('streams deltas and returns the persisted direct-send result', () async {
     final api = _FakeKrishiApi()
-      ..turnsPayload = [
-        {
-          'id': 'turn-1',
-          'chat_id': 'chat-1',
-          'idempotency_key': 'request-123',
-          'content': 'Remind me tomorrow',
-          'status': 'completed',
-          'created_at': '2026-08-13T10:00:00Z',
-          'queue_position': null,
-          'error_code': null,
+      ..streamLines = [
+        jsonEncode({'event': 'routing', 'status': 'Thinking...'}),
+        jsonEncode({'event': 'token', 'data': 'Inspect '}),
+        jsonEncode({'event': 'token', 'data': 'the leaves.'}),
+        jsonEncode({
+          'event': 'done',
           'result': {
             'user_message': _message('message-1', sequence: 1),
             'assistant_message': _message(
@@ -64,15 +62,23 @@ void main() {
               'recurrence_days': null,
             },
           },
-        },
+        }),
       ];
     final repository = ChatRepository(api);
+    final deltas = <String>[];
 
-    final turn = (await repository.recentTurns('chat-1')).single;
+    final result = await repository.streamMessage(
+      'chat-1',
+      'Remind me tomorrow',
+      idempotencyKey: 'request-123',
+      onDelta: deltas.add,
+    );
 
-    expect(turn.reminderProposal?.id, 'proposal-1');
-    expect(turn.reminderProposal?.chatId, 'chat-1');
-    expect(turn.reminderProposal?.plotId, 'plot-1');
+    expect(deltas.join(), 'Inspect the leaves.');
+    expect(result.userMessage.id, 'message-1');
+    expect(result.assistantMessage.id, 'message-2');
+    expect(result.reminderProposal?.id, 'proposal-1');
+    expect(api.lastIdempotencyKey, 'request-123');
   });
 }
 
@@ -110,9 +116,10 @@ class _FakeKrishiApi extends KrishiApi {
 
   Object? chatsPayload;
   Object? messagesPayload;
-  Object? turnsPayload;
+  List<String> streamLines = const [];
   Map<String, String>? lastChatFilters;
   Map<String, String>? lastMessagePaging;
+  String? lastIdempotencyKey;
 
   @override
   Future<Object?> listChats({Map<String, String>? filters}) async {
@@ -130,7 +137,12 @@ class _FakeKrishiApi extends KrishiApi {
   }
 
   @override
-  Future<Object?> listChatTurns(String id, {bool activeOnly = true}) async {
-    return turnsPayload;
+  Future<Stream<String>> streamChatMessage(
+    String id,
+    Map<String, Object?> body, {
+    required String idempotencyKey,
+  }) async {
+    lastIdempotencyKey = idempotencyKey;
+    return Stream.fromIterable(streamLines);
   }
 }

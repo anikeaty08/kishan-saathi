@@ -16,6 +16,7 @@ async def test_open_meteo_geocoding_maps_location_results() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.params["name"] == "Pune"
         assert request.url.params["language"] == "mr"
+        assert request.url.params["countryCode"] == "IN"
         return httpx.Response(
             200,
             json={
@@ -44,6 +45,40 @@ async def test_open_meteo_geocoding_maps_location_results() -> None:
     assert results[0].name == "Pune"
     assert results[0].admin1 == "Maharashtra"
     assert results[0].latitude == 18.52
+
+
+@pytest.mark.asyncio
+async def test_open_meteo_scopes_pincode_search_to_india() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["name"] == "560088"
+        assert request.url.params["countryCode"] == "IN"
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "name": "Hesaraghatta",
+                        "latitude": 13.1377,
+                        "longitude": 77.4786,
+                        "country": "India",
+                        "admin1": "Karnataka",
+                        "postcodes": ["560088"],
+                    }
+                ]
+            },
+        )
+
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="https://geocoding.test"
+    )
+    provider = OpenMeteoGeocodingProvider(Settings(_env_file=None), client=client)
+    try:
+        results = await provider.search(query="560088", language="en", limit=5)
+    finally:
+        await client.aclose()
+
+    assert results[0].name == "Hesaraghatta"
+    assert results[0].country == "India"
 
 
 def test_http_client_info_urls_are_suppressed() -> None:

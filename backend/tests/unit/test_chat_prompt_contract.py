@@ -4,6 +4,7 @@ import json
 from datetime import UTC, datetime
 from uuid import UUID
 
+from app.integrations.llm.provider import AssistantReply
 from app.modules.chats.models import ChatMessage
 from app.modules.chats.service import ChatService, PromptContext
 from app.modules.users.schemas import SupportedLanguage
@@ -14,9 +15,9 @@ def test_instructions_require_native_script_and_classifier_authority() -> None:
 
     assert "Hindi" in instructions
     assert "Devanagari" in instructions
-    assert "Reply naturally in the language and script used by CURRENT_MESSAGE" in instructions
     assert "selected Hindi language and Devanagari script" in instructions
-    assert "CURRENT_MESSAGE" in instructions
+    assert "Understand Roman-script and code-switched" in instructions
+    assert "Never change language because a current or older message" in instructions
     assert "trained_leaf_classifier" in instructions
     assert "never override or rerank classifier candidates" in instructions
 
@@ -58,3 +59,22 @@ def test_plot_classifier_context_counts_as_diagnosis_authority() -> None:
     )
 
     assert ChatService._has_classifier_authority(context)
+
+
+def test_optional_ungrounded_diagnosis_text_is_removed_from_safe_reply() -> None:
+    sanitized = ChatService._validate_diagnosis_discussion(
+        AssistantReply(
+            short_answer="Check the soil below the surface before watering.",
+            explanation_points=[
+                "Dry soil below two centimetres means watering may be useful.",
+                "Avoid root rot by checking drainage.",
+            ],
+        ),
+        PromptContext(),
+        allow_diagnosis=False,
+    )
+
+    assert sanitized.short_answer == "Check the soil below the surface before watering."
+    assert sanitized.explanation_points == [
+        "Dry soil below two centimetres means watering may be useful."
+    ]

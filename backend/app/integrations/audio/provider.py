@@ -1,5 +1,6 @@
 """Typed speech provider contracts."""
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -37,10 +38,20 @@ class SpeechSynthesisResult:
     voice: str
 
 
+@dataclass(frozen=True, slots=True)
+class SpeechSynthesisStream:
+    content: AsyncIterator[bytes]
+    media_type: str
+    model: str
+    voice: str
+
+
 class AudioProvider(Protocol):
     async def transcribe(self, request: AudioTranscriptionRequest) -> AudioTranscriptionResult: ...
 
     async def synthesize(self, request: SpeechSynthesisRequest) -> SpeechSynthesisResult: ...
+
+    async def synthesize_stream(self, request: SpeechSynthesisRequest) -> SpeechSynthesisStream: ...
 
     async def close(self) -> None: ...
 
@@ -51,6 +62,10 @@ class UnavailableAudioProvider:
         raise ApplicationError(code="VOICE_PROVIDER_NOT_CONFIGURED", status_code=503)
 
     async def synthesize(self, request: SpeechSynthesisRequest) -> SpeechSynthesisResult:
+        del request
+        raise ApplicationError(code="VOICE_PROVIDER_NOT_CONFIGURED", status_code=503)
+
+    async def synthesize_stream(self, request: SpeechSynthesisRequest) -> SpeechSynthesisStream:
         del request
         raise ApplicationError(code="VOICE_PROVIDER_NOT_CONFIGURED", status_code=503)
 

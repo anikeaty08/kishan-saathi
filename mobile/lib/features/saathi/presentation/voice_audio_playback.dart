@@ -1,26 +1,37 @@
-import 'dart:typed_data';
+import 'package:just_audio/just_audio.dart';
 
-import 'package:audioplayers/audioplayers.dart';
+import '../../../core/network/api_client.dart';
 
 abstract interface class VoiceAudioPlayback {
   Stream<void> get onComplete;
-  Future<void> play(List<int> bytes);
+  Future<void> play(AuthenticatedResource source);
   Future<void> stop();
   Future<void> dispose();
 }
 
 class DeviceVoiceAudioPlayback implements VoiceAudioPlayback {
   DeviceVoiceAudioPlayback([AudioPlayer? player])
-    : _player = player ?? AudioPlayer();
+    : _player =
+          player ??
+          AudioPlayer(
+            useProxyForRequestHeaders: false,
+            userAgent: 'KrishiSathi Android',
+          );
 
   final AudioPlayer _player;
 
   @override
-  Stream<void> get onComplete => _player.onPlayerComplete;
+  Stream<void> get onComplete => _player.processingStateStream
+      .where((state) => state == ProcessingState.completed)
+      .map((_) {});
 
   @override
-  Future<void> play(List<int> bytes) =>
-      _player.play(BytesSource(Uint8List.fromList(bytes)));
+  Future<void> play(AuthenticatedResource source) async {
+    await _player.setAudioSource(
+      AudioSource.uri(source.uri, headers: source.headers),
+    );
+    await _player.play();
+  }
 
   @override
   Future<void> stop() => _player.stop();

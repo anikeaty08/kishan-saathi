@@ -24,19 +24,25 @@ class CognitoAccountAuthProvider:
         self._owns_http_client = http_client is None
 
     async def sign_up(self, name: str, email: str, password: str) -> bool:
-        payload = await self._call(
-            "SignUp",
-            {
-                "ClientId": self._client_id,
-                "Username": email,
-                "Password": password,
-                "UserAttributes": [
-                    {"Name": "email", "Value": email},
-                    {"Name": "name", "Value": name},
-                ],
-            },
-        )
-        return payload.get("UserConfirmed") is True
+        try:
+            payload = await self._call(
+                "SignUp",
+                {
+                    "ClientId": self._client_id,
+                    "Username": email,
+                    "Password": password,
+                    "UserAttributes": [
+                        {"Name": "email", "Value": email},
+                        {"Name": "name", "Value": name},
+                    ],
+                },
+            )
+            return payload.get("UserConfirmed") is True
+        except ApplicationError as exc:
+            if exc.code == "AUTH_ACCOUNT_EXISTS":
+                await self._resend_existing_unconfirmed_account(email)
+                return False
+            raise
 
     async def confirm_sign_up(self, email: str, code: str) -> None:
         await self._call(
@@ -53,6 +59,17 @@ class CognitoAccountAuthProvider:
             "ResendConfirmationCode",
             {"ClientId": self._client_id, "Username": email},
         )
+
+    async def _resend_existing_unconfirmed_account(self, email: str) -> None:
+        try:
+            await self.resend_confirmation(email)
+        except ApplicationError as exc:
+            if exc.code == "AUTH_PROVIDER_REJECTED":
+                raise ApplicationError(
+                    code="AUTH_ACCOUNT_EXISTS",
+                    status_code=409,
+                ) from exc
+            raise
 
     async def sign_in(self, email: str, password: str) -> AuthTokens:
         payload = await self._call(
@@ -142,10 +159,19 @@ class CognitoAccountAuthProvider:
             return {}
         raise ApplicationError(
             code=self._error_code(operation, provider_code),
-            status_code=429
-            if provider_code in {"LimitExceededException", "TooManyRequestsException"}
-            else 400,
+            status_code=self._status_code(operation, provider_code),
         )
+
+    @staticmethod
+    def _status_code(operation: str, provider_code: str) -> int:
+        if provider_code in {"LimitExceededException", "TooManyRequestsException"}:
+            return 429
+        if provider_code == "UsernameExistsException" or (
+            operation == "ResendConfirmationCode"
+            and provider_code == "InvalidParameterException"
+        ):
+            return 409
+        return 400
 
     @staticmethod
     def _error_code(operation: str, provider_code: str) -> str:
@@ -161,6 +187,11 @@ class CognitoAccountAuthProvider:
             return "AUTH_CONFIRMATION_CODE_EXPIRED"
         if provider_code == "InvalidPasswordException":
             return "AUTH_PASSWORD_INVALID"
+        if (
+            operation == "ResendConfirmationCode"
+            and provider_code == "InvalidParameterException"
+        ):
+            return "AUTH_ACCOUNT_EXISTS"
         if provider_code == "ResourceNotFoundException":
             return "AUTH_CONFIGURATION_INVALID"
         if provider_code in {"NotAuthorizedException", "UserNotFoundException"}:

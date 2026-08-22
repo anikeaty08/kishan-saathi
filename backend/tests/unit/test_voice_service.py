@@ -14,6 +14,7 @@ from app.integrations.audio.provider import (
     AudioTranscriptionResult,
     SpeechSynthesisRequest,
     SpeechSynthesisResult,
+    SpeechSynthesisStream,
 )
 from app.modules.chats.repository import ChatRepository
 from app.modules.voice.service import IncomingAudio, VoiceService
@@ -64,6 +65,19 @@ class FakeAudioProvider(AudioProvider):
         self.speech_requests.append(request)
         return SpeechSynthesisResult(
             content=b"mp3",
+            media_type="audio/mpeg",
+            model="tts-1",
+            voice="coral",
+        )
+
+    async def synthesize_stream(self, request: SpeechSynthesisRequest) -> SpeechSynthesisStream:
+        self.speech_requests.append(request)
+
+        async def content():
+            yield b"mp3"
+
+        return SpeechSynthesisStream(
+            content=content(),
             media_type="audio/mpeg",
             model="tts-1",
             voice="coral",

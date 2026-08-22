@@ -14,7 +14,6 @@ import 'package:krishisathi/features/home/data/weather_repository.dart';
 import 'package:krishisathi/features/profile/data/memory_repository.dart';
 import 'package:krishisathi/features/profile/data/reminder_repository.dart';
 import 'package:krishisathi/features/saathi/data/chat_repository.dart';
-import 'package:krishisathi/features/saathi/data/chat_outbox_store.dart';
 import 'package:krishisathi/features/saathi/data/voice_repository.dart';
 import 'package:krishisathi/features/scan/data/diagnosis_repository.dart';
 import 'package:krishisathi/features/scan/data/scan_queue_repository.dart';
@@ -27,9 +26,9 @@ Future<AppController> createTestController({
   bool live = false,
   String farmerName = 'Test Farmer',
   ChatRepository? chatRepository,
-  ChatOutboxStore? chatOutboxStore,
   AppPermissionService? permissionService,
   SecureTokenStore? tokenStore,
+  ApiClient? apiClient,
 }) async {
   SharedPreferences.setMockInitialValues({
     'onboarding_complete': onboardingComplete,
@@ -47,22 +46,20 @@ Future<AppController> createTestController({
     environment: 'test',
   );
   final resolvedTokenStore = tokenStore ?? SecureTokenStore();
-  final apiClient = ApiClient(
-    baseUri: config.apiBaseUri,
-    tokenStore: resolvedTokenStore,
-  );
-  final api = KrishiApi(apiClient);
+  final resolvedApiClient =
+      apiClient ??
+      ApiClient(baseUri: config.apiBaseUri, tokenStore: resolvedTokenStore);
+  final api = KrishiApi(resolvedApiClient);
   final privateLocalStore = InMemoryPrivateLocalStore();
   final controller =
       AppController(
           config: config,
           preferences: preferences,
           tokenStore: resolvedTokenStore,
-          apiClient: apiClient,
+          apiClient: resolvedApiClient,
           farmRepository: FarmRepository(api),
           locationRepository: LocationRepository(api),
           chatRepository: chatRepository ?? ChatRepository(api),
-          chatOutboxStore: chatOutboxStore ?? InMemoryChatOutboxStore(),
           voiceRepository: VoiceRepository(api),
           diagnosisRepository: DiagnosisRepository(api),
           weatherRepository: WeatherRepository(api),

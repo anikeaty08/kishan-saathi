@@ -12,8 +12,8 @@ class WeatherRepository {
     required double longitude,
   }) async {
     final payload = await _api.currentWeather({
-      'latitude': latitude,
-      'longitude': longitude,
+      'latitude': double.parse(latitude.toStringAsFixed(6)),
+      'longitude': double.parse(longitude.toStringAsFixed(6)),
     });
     return _current(payload);
   }

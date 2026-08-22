@@ -7,6 +7,13 @@ import 'package:http/http.dart' as http;
 import 'api_exception.dart';
 import 'token_store.dart';
 
+class AuthenticatedResource {
+  const AuthenticatedResource({required this.uri, required this.headers});
+
+  final Uri uri;
+  final Map<String, String> headers;
+}
+
 class ApiClient {
   ApiClient({
     required this.baseUri,
@@ -24,6 +31,7 @@ class ApiClient {
   Future<void> Function()? sessionExpiredHandler;
   static const _timeout = Duration(seconds: 20);
   static const _uploadTimeout = Duration(seconds: 60);
+  static const _streamIdleTimeout = Duration(seconds: 90);
 
   Future<Object?> get(
     String path, {
@@ -38,6 +46,81 @@ class ApiClient {
     Map<String, String>? headers,
     bool auth = true,
   }) => _send('POST', path, body: body, headers: headers, auth: auth);
+
+  Future<Stream<String>> postStream(
+    String path, {
+    Object? body,
+    Map<String, String>? headers,
+    bool auth = true,
+  }) => _withAuthRetry(auth, () async {
+    try {
+      final request = http.Request('POST', _resolve(path));
+      request.headers.addAll(await _headers(auth: auth, extra: headers));
+      if (body != null) request.body = jsonEncode(body);
+      final streamed = await _client.send(request).timeout(_timeout);
+      if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
+        throw _exceptionFrom(await http.Response.fromStream(streamed));
+      }
+      final lines = streamed.stream
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .timeout(
+            _streamIdleTimeout,
+            onTimeout: (sink) {
+              sink.addError(
+                const ApiException(
+                  code: 'BACKEND_TIMEOUT',
+                  message: 'The response stream timed out',
+                ),
+              );
+              sink.close();
+            },
+          );
+      return lines.transform(
+        StreamTransformer<String, String>.fromHandlers(
+          handleData: (line, sink) => sink.add(line),
+          handleError: (error, stackTrace, sink) {
+            if (error is ApiException) {
+              sink.addError(error, stackTrace);
+            } else if (error is TimeoutException) {
+              sink.addError(
+                const ApiException(
+                  code: 'BACKEND_TIMEOUT',
+                  message: 'The response stream timed out',
+                ),
+                stackTrace,
+              );
+            } else {
+              sink.addError(
+                const ApiException(
+                  code: 'BACKEND_UNREACHABLE',
+                  message: 'The response stream was interrupted',
+                ),
+                stackTrace,
+              );
+            }
+          },
+        ),
+      );
+    } on ApiException {
+      rethrow;
+    } on TimeoutException {
+      throw const ApiException(
+        code: 'BACKEND_TIMEOUT',
+        message: 'The response stream could not be opened in time',
+      );
+    } on http.ClientException {
+      throw const ApiException(
+        code: 'BACKEND_UNREACHABLE',
+        message: 'The network request could not be completed',
+      );
+    } on IOException {
+      throw const ApiException(
+        code: 'BACKEND_UNREACHABLE',
+        message: 'The backend could not be reached',
+      );
+    }
+  });
 
   Future<Object?> patch(String path, {Object? body, bool auth = true}) =>
       _send('PATCH', path, body: body, auth: auth);
@@ -122,6 +205,17 @@ class ApiClient {
       );
     }
   });
+
+  Future<AuthenticatedResource> authenticatedResource(
+    String path, {
+    Map<String, String>? headers,
+  }) async {
+    final resolvedHeaders = await _headers(auth: true, extra: headers);
+    return AuthenticatedResource(
+      uri: _resolve(path),
+      headers: Map.unmodifiable(resolvedHeaders),
+    );
+  }
 
   Future<Object?> multipart(
     String path, {

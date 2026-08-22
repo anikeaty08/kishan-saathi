@@ -59,4 +59,56 @@ void main() {
     expect(controller.farmReminderNotificationsEnabled, isFalse);
     expect(controller.weatherAlertNotificationsEnabled, isTrue);
   });
+
+  test(
+    'permission state is reconciled after returning from settings',
+    () async {
+      final permissions = MutablePermissionService();
+      final controller = await createTestController(
+        permissionService: permissions,
+      );
+      addTearDown(controller.dispose);
+      controller.preferences
+        ..setBool('location_enabled', true)
+        ..setBool('camera_enabled', true)
+        ..setBool('notifications_enabled', true)
+        ..setBool('farm_reminder_notifications_enabled', true)
+        ..setBool('weather_alert_notifications_enabled', false);
+
+      permissions.states
+        ..[AppPermissionKind.location] = AppPermissionState.granted
+        ..[AppPermissionKind.camera] = AppPermissionState.granted
+        ..[AppPermissionKind.microphone] = AppPermissionState.granted
+        ..[AppPermissionKind.notifications] = AppPermissionState.granted;
+      await controller.refreshPermissionStates();
+
+      expect(controller.locationEnabled, isTrue);
+      expect(controller.cameraEnabled, isTrue);
+      expect(controller.microphonePermission, AppPermissionState.granted);
+      expect(controller.farmReminderNotificationsEnabled, isTrue);
+      expect(controller.weatherAlertNotificationsEnabled, isFalse);
+
+      permissions.states[AppPermissionKind.location] =
+          AppPermissionState.permanentlyDenied;
+      await controller.refreshPermissionStates();
+
+      expect(controller.locationEnabled, isFalse);
+      expect(controller.locationPermission.requiresSettings, isTrue);
+    },
+  );
+}
+
+class MutablePermissionService implements AppPermissionService {
+  final states = <AppPermissionKind, AppPermissionState>{};
+
+  @override
+  Future<bool> openSettings() async => true;
+
+  @override
+  Future<AppPermissionState> request(AppPermissionKind kind) async =>
+      states[kind] ?? AppPermissionState.denied;
+
+  @override
+  Future<AppPermissionState> status(AppPermissionKind kind) async =>
+      states[kind] ?? AppPermissionState.denied;
 }

@@ -1,8 +1,11 @@
+import 'dart:typed_data';
+
 import 'package:record/record.dart';
 
 abstract interface class VoiceAudioRecorder {
   Future<bool> hasPermission();
   Future<void> start(String path);
+  Future<Stream<Uint8List>> startStream();
   Future<String?> stop();
   Future<void> dispose();
 }
@@ -25,6 +28,15 @@ class DeviceVoiceAudioRecorder implements VoiceAudioRecorder {
       numChannels: 1,
     ),
     path: path,
+  );
+
+  @override
+  Future<Stream<Uint8List>> startStream() => _recorder.startStream(
+    const RecordConfig(
+      encoder: AudioEncoder.pcm16bits,
+      sampleRate: 24000,
+      numChannels: 1,
+    ),
   );
 
   @override
